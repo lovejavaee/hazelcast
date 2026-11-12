@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ package com.hazelcast.cache.impl;
 
 import com.hazelcast.cache.impl.event.CacheWanEventPublisher;
 import com.hazelcast.cache.impl.operation.CacheReplicationOperation;
+import com.hazelcast.config.CacheConfig;
+import com.hazelcast.config.CacheSimpleConfig;
 import com.hazelcast.config.InMemoryFormat;
 import com.hazelcast.internal.nearcache.impl.invalidation.MetaDataGenerator;
 import com.hazelcast.internal.partition.MigrationAwareService;
@@ -26,8 +28,10 @@ import com.hazelcast.internal.partition.PartitionReplicationEvent;
 import com.hazelcast.internal.services.DistributedObjectNamespace;
 import com.hazelcast.internal.services.ObjectNamespace;
 import com.hazelcast.internal.services.ServiceNamespace;
+import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.operationservice.Operation;
 
+import javax.annotation.Nonnull;
 import java.util.Collection;
 
 import static com.hazelcast.internal.partition.MigrationEndpoint.DESTINATION;
@@ -54,7 +58,7 @@ import static com.hazelcast.internal.partition.MigrationEndpoint.SOURCE;
  * <p><b>Distributed Cache Name</b> is used for providing a unique name to a cache object to overcome cache manager
  * scoping which depends on URI and class loader parameters. It's a simple concatenation of CacheNamePrefix and
  * cache name where CacheNamePrefix is calculated by each cache manager
- * using {@link AbstractHazelcastCacheManager#getCacheNamePrefix()}.
+ * using {@code AbstractHazelcastCacheManager#getCacheNamePrefix()}.
  * </p>
  */
 public class CacheService extends AbstractCacheService {
@@ -162,7 +166,50 @@ public class CacheService extends AbstractCacheService {
         // NOP intentionally
     }
 
+    /**
+     * Checks if the given namespace is referenced by a hot restart enabled
+     * cache configuration.
+     *
+     * @param namespace  the namespace.
+     * @return {@code true} if the namespace is referenced by a hot restart
+     * enabled data structure, {@code false} otherwise.
+     */
+    public boolean isNamespaceReferencedWithHotRestart(@Nonnull String namespace)  {
+        return nodeEngine.getConfig()
+                .getCacheConfigs()
+                .values()
+                .stream()
+                .filter(cacheConfig -> cacheConfig.getDataPersistenceConfig().isEnabled())
+                .map(CacheSimpleConfig::getUserCodeNamespace)
+                .anyMatch(namespace::equals)
+                || getCacheConfigs()
+                .stream()
+                .filter(cacheConfig -> cacheConfig.getHotRestartConfig().isEnabled())
+                .map(CacheConfig::getUserCodeNamespace)
+                .anyMatch(namespace::equals);
+    }
+
     public static ObjectNamespace getObjectNamespace(String cacheName) {
         return new DistributedObjectNamespace(SERVICE_NAME, cacheName);
+    }
+
+    /**
+     * Looks up the User Code Namespace name associated with the specified cache name. This is done
+     * by checking the Node's config tree directly.
+     *
+     * @param engine    {@link NodeEngine} implementation of this member for service and config lookups
+     * @param cacheName The name of the {@link com.hazelcast.cache.ICache} to lookup for
+     * @return the Namespace Name if found, or {@code null} otherwise.
+     */
+    public static String lookupNamespace(NodeEngine engine, String cacheName) {
+        if (engine.getNamespaceService().isEnabled()) {
+            // No regular containers available, fallback to config
+            CacheService service = engine.getService(CacheService.SERVICE_NAME);
+            var config = service.getCacheConfig(cacheName);
+            if (config != null) {
+                return config.getUserCodeNamespace();
+            }
+        }
+        return null;
     }
 }

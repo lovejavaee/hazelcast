@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,8 @@
 
 package com.hazelcast.config;
 
+import com.hazelcast.config.cp.CPMapConfig;
+import com.hazelcast.config.rest.RestConfig;
 import com.hazelcast.config.tpc.TpcConfig;
 import com.hazelcast.config.tpc.TpcSocketConfig;
 import com.hazelcast.config.cp.CPSubsystemConfig;
@@ -23,6 +25,7 @@ import com.hazelcast.config.cp.FencedLockConfig;
 import com.hazelcast.config.cp.RaftAlgorithmConfig;
 import com.hazelcast.config.cp.SemaphoreConfig;
 import com.hazelcast.config.security.AbstractClusterLoginConfig;
+import com.hazelcast.config.security.AccessControlServiceConfig;
 import com.hazelcast.config.security.JaasAuthenticationConfig;
 import com.hazelcast.config.security.KerberosAuthenticationConfig;
 import com.hazelcast.config.security.KerberosIdentityConfig;
@@ -35,12 +38,13 @@ import com.hazelcast.config.security.UsernamePasswordIdentityConfig;
 import com.hazelcast.internal.cluster.Versions;
 import com.hazelcast.internal.config.ConfigXmlGeneratorHelper;
 import com.hazelcast.internal.config.PersistenceAndHotRestartPersistenceMerger;
+import com.hazelcast.internal.config.SensitiveDataMasker;
+import com.hazelcast.internal.namespace.ResourceDefinition;
 import com.hazelcast.internal.util.CollectionUtil;
 import com.hazelcast.internal.util.MapUtil;
 import com.hazelcast.jet.config.EdgeConfig;
 import com.hazelcast.jet.config.JetConfig;
-import com.hazelcast.logging.ILogger;
-import com.hazelcast.logging.Logger;
+import com.hazelcast.jet.config.ResourceType;
 import com.hazelcast.memory.Capacity;
 import com.hazelcast.nio.serialization.DataSerializableFactory;
 import com.hazelcast.nio.serialization.PortableFactory;
@@ -78,16 +82,17 @@ import static com.hazelcast.internal.dynamicconfig.DynamicConfigXmlGenerator.rin
 import static com.hazelcast.internal.dynamicconfig.DynamicConfigXmlGenerator.scheduledExecutorXmlGenerator;
 import static com.hazelcast.internal.dynamicconfig.DynamicConfigXmlGenerator.setXmlGenerator;
 import static com.hazelcast.internal.dynamicconfig.DynamicConfigXmlGenerator.topicXmlGenerator;
+import static com.hazelcast.internal.dynamicconfig.DynamicConfigXmlGenerator.vectorCollectionXmlGenerator;
 import static com.hazelcast.internal.dynamicconfig.DynamicConfigXmlGenerator.wanReplicationXmlGenerator;
 import static com.hazelcast.internal.util.Preconditions.isNotNull;
-import static com.hazelcast.internal.util.StringUtil.formatXml;
 import static com.hazelcast.internal.util.StringUtil.isNullOrEmpty;
+import static com.hazelcast.internal.util.XmlUtil.format;
 import static java.util.Arrays.asList;
 
 /**
  * The ConfigXmlGenerator is responsible for transforming a {@link Config} to a Hazelcast XML string.
  */
-@SuppressWarnings({"checkstyle:methodcount"})
+@SuppressWarnings({"checkstyle:methodcount", "ClassFanOutComplexity"})
 public class ConfigXmlGenerator {
 
     /**
@@ -96,8 +101,6 @@ public class ConfigXmlGenerator {
     public static final String MASK_FOR_SENSITIVE_DATA = "****";
 
     private static final int INDENT = 5;
-
-    private static final ILogger LOGGER = Logger.getLogger(ConfigXmlGenerator.class);
 
     private final boolean formatted;
     private final boolean maskSensitiveFields;
@@ -141,7 +144,7 @@ public class ConfigXmlGenerator {
         isNotNull(config, "Config");
 
         StringBuilder xml = new StringBuilder();
-        XmlGenerator gen = new XmlGenerator(xml);
+        XmlGenerator gen = new XmlGenerator(xml, maskSensitiveFields);
 
         PersistenceAndHotRestartPersistenceMerger.merge(config.getHotRestartPersistenceConfig(),
                 config.getPersistenceConfig());
@@ -151,9 +154,9 @@ public class ConfigXmlGenerator {
                 .append("xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n")
                 .append("xsi:schemaLocation=\"http://www.hazelcast.com/schema/config ")
                 .append("http://www.hazelcast.com/schema/config/hazelcast-config-")
-                .append(Versions.CURRENT_CLUSTER_VERSION.toString())
+                .append(Versions.CURRENT_CLUSTER_VERSION)
                 .append(".xsd\">");
-        gen.node("license-key", getOrMaskValue(config.getLicenseKey()))
+        gen.node("license-key", config.getLicenseKey())
                 .node("instance-name", config.getInstanceName())
                 .node("cluster-name", config.getClusterName())
         ;
@@ -200,15 +203,14 @@ public class ConfigXmlGenerator {
         integrityCheckerXmlGenerator(gen, config);
         dataConnectionConfiguration(gen, config);
         tpcConfiguration(gen, config);
-
+        namespacesConfiguration(gen, config);
+        restServerConfiguration(gen, config);
+        vectorCollectionXmlGenerator(gen, config);
+        memberAttributesXmlGenerator(gen, config);
         xml.append("</hazelcast>");
 
         String xmlString = xml.toString();
-        return formatted ? formatXml(xmlString, INDENT) : xmlString;
-    }
-
-    private String getOrMaskValue(String value) {
-        return maskSensitiveFields ? MASK_FOR_SENSITIVE_DATA : value;
+        return formatted ? format(xmlString, INDENT) : xmlString;
     }
 
     private void managementCenterXmlGenerator(XmlGenerator gen, Config config) {
@@ -272,7 +274,8 @@ public class ConfigXmlGenerator {
         }
 
         appendSecurityPermissions(gen, "client-permissions", c.getClientPermissionConfigs(),
-                "on-join-operation", c.getOnJoinPermissionOperation());
+                "on-join-operation", c.getOnJoinPermissionOperation(),
+                "priority-grant", c.isPermissionPriorityGrant());
         gen.close();
     }
 
@@ -301,14 +304,18 @@ public class ConfigXmlGenerator {
             }
             UsernamePasswordIdentityConfig upi = c.getUsernamePasswordIdentityConfig();
             if (upi != null) {
-                gen.node("username-password", null, "username", upi.getUsername(), "password", getOrMaskValue(upi.getPassword()));
+                gen.node("username-password", null, "username", upi.getUsername(), "password", upi.getPassword());
             }
             TokenIdentityConfig ti = c.getTokenIdentityConfig();
             if (ti != null) {
-                gen.node("token", getOrMaskValue(ti.getTokenEncoded()), "encoding", ti.getEncoding().toString());
+                gen.node("token", ti.getTokenEncoded(), "encoding", ti.getEncoding().toString());
             }
             kerberosIdentityGenerator(gen, c.getKerberosIdentityConfig());
             gen.close();
+        }
+        AccessControlServiceConfig acs = c.getAccessControlServiceConfig();
+        if (acs != null) {
+            factoryWithPropertiesXmlGenerator(gen, "access-control-service", acs);
         }
         gen.close();
     }
@@ -322,7 +329,7 @@ public class ConfigXmlGenerator {
                 .close();
     }
 
-    private static void ldapAuthenticationGenerator(XmlGenerator gen, LdapAuthenticationConfig c) {
+    private void ldapAuthenticationGenerator(XmlGenerator gen, LdapAuthenticationConfig c) {
         if (c == null) {
             return;
         }
@@ -350,7 +357,7 @@ public class ConfigXmlGenerator {
                 .close();
     }
 
-    private static void kerberosAuthenticationGenerator(XmlGenerator gen, KerberosAuthenticationConfig c) {
+    private void kerberosAuthenticationGenerator(XmlGenerator gen, KerberosAuthenticationConfig c) {
         if (c == null) {
             return;
         }
@@ -365,7 +372,7 @@ public class ConfigXmlGenerator {
         kerberosGen.close();
     }
 
-    private static void simpleAuthenticationGenerator(XmlGenerator gen, SimpleAuthenticationConfig c) {
+    private void simpleAuthenticationGenerator(XmlGenerator gen, SimpleAuthenticationConfig c) {
         if (c == null) {
             return;
         }
@@ -414,34 +421,32 @@ public class ConfigXmlGenerator {
     private static void appendSecurityPermissions(XmlGenerator gen, String tag, Set<PermissionConfig> cpc, Object... attributes) {
         final List<PermissionConfig.PermissionType> clusterPermTypes = asList(ALL, CONFIG, TRANSACTION);
 
-        if (!cpc.isEmpty()) {
-            gen.open(tag, attributes);
-            for (PermissionConfig p : cpc) {
-                if (clusterPermTypes.contains(p.getType())) {
-                    gen.open(p.getType().getNodeName(), "principal", p.getPrincipal());
-                } else {
-                    gen.open(p.getType().getNodeName(), "principal", p.getPrincipal(), "name", p.getName());
-                }
+        gen.open(tag, attributes);
+        for (PermissionConfig p : cpc) {
+            if (clusterPermTypes.contains(p.getType())) {
+                gen.open(p.getType().getNodeName(), "principal", p.getPrincipal(), "deny", p.isDeny());
+            } else {
+                gen.open(p.getType().getNodeName(), "principal", p.getPrincipal(), "name", p.getName(), "deny", p.isDeny());
+            }
 
-                if (!p.getEndpoints().isEmpty()) {
-                    gen.open("endpoints");
-                    for (String endpoint : p.getEndpoints()) {
-                        gen.node("endpoint", endpoint);
-                    }
-                    gen.close();
+            if (!p.getEndpoints().isEmpty()) {
+                gen.open("endpoints");
+                for (String endpoint : p.getEndpoints()) {
+                    gen.node("endpoint", endpoint);
                 }
+                gen.close();
+            }
 
-                if (!p.getActions().isEmpty()) {
-                    gen.open("actions");
-                    for (String action : p.getActions()) {
-                        gen.node("action", action);
-                    }
-                    gen.close();
+            if (!p.getActions().isEmpty()) {
+                gen.open("actions");
+                for (String action : p.getActions()) {
+                    gen.node("action", action);
                 }
                 gen.close();
             }
             gen.close();
         }
+        gen.close();
     }
 
     private static void appendLoginModules(XmlGenerator gen, String tag, List<LoginModuleConfig> loginModuleConfigs) {
@@ -462,7 +467,7 @@ public class ConfigXmlGenerator {
         gen.close();
     }
 
-    @SuppressWarnings({"checkstyle:npathcomplexity"})
+    @SuppressWarnings("checkstyle:npathcomplexity")
     private static void serializationXmlGenerator(XmlGenerator gen, Config config) {
         SerializationConfig c = config.getSerializationConfig();
         if (c == null) {
@@ -518,20 +523,15 @@ public class ConfigXmlGenerator {
         }
         gen.node("check-class-def-errors", c.isCheckClassDefErrors());
         JavaSerializationFilterConfig javaSerializationFilterConfig = c.getJavaSerializationFilterConfig();
-        if (javaSerializationFilterConfig != null) {
-            gen.open("java-serialization-filter", "defaults-disabled", javaSerializationFilterConfig.isDefaultsDisabled());
-            appendFilterList(gen, "blacklist", javaSerializationFilterConfig.getBlacklist());
-            appendFilterList(gen, "whitelist", javaSerializationFilterConfig.getWhitelist());
-            gen.close();
-        }
-
+        ConfigXmlGeneratorHelper.appendClassFilter(gen, "java-serialization-filter", javaSerializationFilterConfig);
         ConfigXmlGeneratorHelper.compactSerialization(gen, c.getCompactSerializationConfig());
 
         // close serialization
         gen.close();
     }
 
-    private static String classNameOrClass(String className, Class clazz) {
+
+    private static String classNameOrClass(String className, Class<?> clazz) {
         return !isNullOrEmpty(className) ? className
                 : clazz != null ? clazz.getName()
                 : null;
@@ -602,9 +602,6 @@ public class ConfigXmlGenerator {
 
     private void advancedNetworkConfigXmlGenerator(XmlGenerator gen, Config config) {
         AdvancedNetworkConfig netCfg = config.getAdvancedNetworkConfig();
-        if (!netCfg.isEnabled()) {
-            return;
-        }
 
         gen.open("advanced-network", "enabled", netCfg.isEnabled());
 
@@ -646,8 +643,7 @@ public class ConfigXmlGenerator {
         socketInterceptorConfigXmlGenerator(gen, endpointConfig.getSocketInterceptorConfig());
         symmetricEncInterceptorConfigXmlGenerator(gen, endpointConfig.getSymmetricEncryptionConfig());
 
-        if (endpointConfig instanceof RestServerEndpointConfig) {
-            RestServerEndpointConfig rsec = (RestServerEndpointConfig) endpointConfig;
+        if (endpointConfig instanceof RestServerEndpointConfig rsec) {
             gen.open("endpoint-groups");
             for (RestEndpointGroup group : RestEndpointGroup.values()) {
                 gen.node("endpoint-group", null, "name", group.name(),
@@ -670,8 +666,7 @@ public class ConfigXmlGenerator {
         gen.node("keep-count", endpointConfig.getSocketKeepCount());
         gen.close();
 
-        if (endpointConfig instanceof ServerSocketEndpointConfig) {
-            ServerSocketEndpointConfig serverSocketEndpointConfig = (ServerSocketEndpointConfig) endpointConfig;
+        if (endpointConfig instanceof ServerSocketEndpointConfig serverSocketEndpointConfig) {
             gen.node("port", serverSocketEndpointConfig.getPort(),
                     "port-count", serverSocketEndpointConfig.getPortCount(),
                     "auto-increment", serverSocketEndpointConfig.isPortAutoIncrement())
@@ -777,36 +772,32 @@ public class ConfigXmlGenerator {
             if (factoryClassName != null) {
                 ssl.setFactoryClassName(factoryClassName);
             }
-            Properties props = ssl.getProperties();
-
-            if (maskSensitiveFields && props.containsKey("trustStorePassword")) {
-                props.setProperty("trustStorePassword", MASK_FOR_SENSITIVE_DATA);
-            }
-
-            if (maskSensitiveFields && props.containsKey("keyStorePassword")) {
-                props.setProperty("keyStorePassword", MASK_FOR_SENSITIVE_DATA);
-            }
         }
 
         factoryWithPropertiesXmlGenerator(gen, "ssl", ssl);
     }
 
     protected void factoryWithPropertiesXmlGenerator(XmlGenerator gen, String elementName,
-                                                     AbstractFactoryWithPropertiesConfig<?> factoryWithProps) {
-        gen.open(elementName, "enabled", factoryWithProps != null && factoryWithProps.isEnabled());
+                                                     AbstractBaseFactoryWithPropertiesConfig<?> factoryWithProps) {
         if (factoryWithProps != null) {
+            if (factoryWithProps instanceof AbstractFactoryWithPropertiesConfig cfgWithEnabled) {
+                gen.open(elementName, "enabled", cfgWithEnabled.isEnabled());
+            } else {
+                gen.open(elementName);
+            }
             gen.node("factory-class-name", factoryWithProps.getFactoryClassName())
                     .appendProperties(factoryWithProps.getProperties());
+            gen.close();
         }
-        gen.close();
     }
 
     private static void socketInterceptorConfigXmlGenerator(XmlGenerator gen, SocketInterceptorConfig socket) {
-        gen.open("socket-interceptor", "enabled", socket != null && socket.isEnabled());
-        if (socket != null) {
-            gen.node("class-name", classNameOrImplClass(socket.getClassName(), socket.getImplementation()))
-                    .appendProperties(socket.getProperties());
+        if (socket == null) {
+            return;
         }
+        gen.open("socket-interceptor", "enabled", socket.isEnabled());
+        gen.node("class-name", classNameOrImplClass(socket.getClassName(), socket.getImplementation()))
+                .appendProperties(socket.getProperties());
         gen.close();
     }
 
@@ -816,7 +807,7 @@ public class ConfigXmlGenerator {
             return;
         }
         gen.node("algorithm", sec.getAlgorithm())
-                .node("salt", getOrMaskValue(sec.getSalt()));
+                .node("salt", sec.getSalt());
     }
 
     private void symmetricEncInterceptorConfigXmlGenerator(XmlGenerator gen, SymmetricEncryptionConfig sec) {
@@ -825,7 +816,7 @@ public class ConfigXmlGenerator {
         }
         gen.open("symmetric-encryption", "enabled", sec.isEnabled());
         commonSymmetricEncInterceptorConfigXmlBodyGenerator(gen, sec);
-        gen.node("password", getOrMaskValue(sec.getPassword()))
+        gen.node("password", sec.getPassword())
                 .node("iteration-count", sec.getIterationCount());
         gen.close();
     }
@@ -915,10 +906,10 @@ public class ConfigXmlGenerator {
     private void secureStoreXmlGenerator(XmlGenerator gen, SecureStoreConfig secureStoreConfig) {
         if (secureStoreConfig != null) {
             gen.open("secure-store");
-            if (secureStoreConfig instanceof JavaKeyStoreSecureStoreConfig) {
-                javaKeyStoreSecureStoreXmlGenerator(gen, (JavaKeyStoreSecureStoreConfig) secureStoreConfig);
-            } else if (secureStoreConfig instanceof VaultSecureStoreConfig) {
-                vaultSecureStoreXmlGenerator(gen, (VaultSecureStoreConfig) secureStoreConfig);
+            if (secureStoreConfig instanceof JavaKeyStoreSecureStoreConfig config) {
+                javaKeyStoreSecureStoreXmlGenerator(gen, config);
+            } else if (secureStoreConfig instanceof VaultSecureStoreConfig config) {
+                vaultSecureStoreXmlGenerator(gen, config);
             }
             gen.close();
         }
@@ -928,7 +919,7 @@ public class ConfigXmlGenerator {
         gen.open("keystore")
                 .node("path", secureStoreConfig.getPath().getAbsolutePath())
                 .node("type", secureStoreConfig.getType())
-                .node("password", getOrMaskValue(secureStoreConfig.getPassword()))
+                .node("password", secureStoreConfig.getPassword())
                 .node("polling-interval", secureStoreConfig.getPollingInterval())
                 .node("current-key-alias", secureStoreConfig.getCurrentKeyAlias());
         gen.close();
@@ -938,7 +929,7 @@ public class ConfigXmlGenerator {
         gen.open("vault")
                 .node("address", secureStoreConfig.getAddress())
                 .node("secret-path", secureStoreConfig.getSecretPath())
-                .node("token", getOrMaskValue(secureStoreConfig.getToken()))
+                .node("token", secureStoreConfig.getToken())
                 .node("polling-interval", secureStoreConfig.getPollingInterval());
         sslConfigXmlGenerator(gen, secureStoreConfig.getSSLConfig());
         gen.close();
@@ -985,7 +976,9 @@ public class ConfigXmlGenerator {
                 .node("persistence-enabled", cpSubsystemConfig.isPersistenceEnabled())
                 .node("base-dir", cpSubsystemConfig.getBaseDir().getAbsolutePath())
                 .node("data-load-timeout-seconds", cpSubsystemConfig.getDataLoadTimeoutSeconds())
-                .node("cp-member-priority", cpSubsystemConfig.getCPMemberPriority());
+                .node("cp-member-priority", cpSubsystemConfig.getCPMemberPriority())
+                .node("auto-step-down-when-leader", cpSubsystemConfig.isAutoStepDownWhenLeader())
+                .node("map-limit", cpSubsystemConfig.getCPMapLimit());
 
         RaftAlgorithmConfig raftAlgorithmConfig = cpSubsystemConfig.getRaftAlgorithmConfig();
         gen.open("raft-algorithm")
@@ -1018,6 +1011,16 @@ public class ConfigXmlGenerator {
                     .close();
         }
 
+        gen.close().open("maps");
+
+        for (CPMapConfig cpMapConfig : cpSubsystemConfig.getCpMapConfigs().values()) {
+            gen.open("map")
+               .node("name", cpMapConfig.getName())
+               .node("max-size-mb", cpMapConfig.getMaxSizeMb())
+               .node("purge-enabled", cpMapConfig.isPurgeEnabled())
+               .close();
+        }
+
         gen.close().close();
     }
 
@@ -1043,9 +1046,12 @@ public class ConfigXmlGenerator {
 
     private static void sqlConfig(XmlGenerator gen, Config config) {
         SqlConfig sqlConfig = config.getSqlConfig();
+        JavaSerializationFilterConfig filterConfig = sqlConfig.getJavaReflectionFilterConfig();
         gen.open("sql")
                 .node("statement-timeout-millis", sqlConfig.getStatementTimeoutMillis())
-                .close();
+                .node("catalog-persistence-enabled", sqlConfig.isCatalogPersistenceEnabled());
+        ConfigXmlGeneratorHelper.appendClassFilter(gen, "java-reflection-filter", filterConfig);
+        gen.close();
     }
 
     private static void jetConfig(XmlGenerator gen, Config config) {
@@ -1080,10 +1086,7 @@ public class ConfigXmlGenerator {
     private static void handleSplitBrainProtectionFunction(XmlGenerator gen,
                                                            SplitBrainProtectionConfig splitBrainProtectionConfig) {
         if (splitBrainProtectionConfig.
-                getFunctionImplementation() instanceof ProbabilisticSplitBrainProtectionFunction) {
-            ProbabilisticSplitBrainProtectionFunction qf =
-                    (ProbabilisticSplitBrainProtectionFunction)
-                            splitBrainProtectionConfig.getFunctionImplementation();
+                getFunctionImplementation() instanceof ProbabilisticSplitBrainProtectionFunction qf) {
             long acceptableHeartbeatPause = qf.getAcceptableHeartbeatPauseMillis();
             double threshold = qf.getSuspicionThreshold();
             int maxSampleSize = qf.getMaxSampleSize();
@@ -1096,10 +1099,7 @@ public class ConfigXmlGenerator {
                     "heartbeat-interval-millis", firstHeartbeatEstimate);
             gen.close();
         } else if (splitBrainProtectionConfig.
-                getFunctionImplementation() instanceof RecentlyActiveSplitBrainProtectionFunction) {
-            RecentlyActiveSplitBrainProtectionFunction qf =
-                    (RecentlyActiveSplitBrainProtectionFunction)
-                            splitBrainProtectionConfig.getFunctionImplementation();
+                getFunctionImplementation() instanceof RecentlyActiveSplitBrainProtectionFunction qf) {
             gen.open("recently-active-split-brain-protection", "heartbeat-tolerance-millis",
                     qf.getHeartbeatToleranceMillis());
             gen.close();
@@ -1183,28 +1183,11 @@ public class ConfigXmlGenerator {
         if (MapUtil.isNullOrEmpty(factoryMap)) {
             return;
         }
-        for (Map.Entry factory : factoryMap.entrySet()) {
+        for (Map.Entry<Integer, ?> factory : factoryMap.entrySet()) {
             Object value = factory.getValue();
-            String className = value instanceof String ? (String) value : value.getClass().getName();
+            String className = value instanceof String s ? s : value.getClass().getName();
             gen.node(elementName, className, "factory-id", factory.getKey().toString());
         }
-    }
-
-    private static void appendFilterList(XmlGenerator gen, String listName, ClassFilter classFilterList) {
-        if (classFilterList.isEmpty()) {
-            return;
-        }
-        gen.open(listName);
-        for (String className : classFilterList.getClasses()) {
-            gen.node("class", className);
-        }
-        for (String packageName : classFilterList.getPackages()) {
-            gen.node("package", packageName);
-        }
-        for (String prefix : classFilterList.getPrefixes()) {
-            gen.node("prefix", prefix);
-        }
-        gen.close();
     }
 
     private static void integrityCheckerXmlGenerator(final XmlGenerator gen, final Config config) {
@@ -1237,36 +1220,177 @@ public class ConfigXmlGenerator {
                 .close();
     }
 
+    public static void namespacesConfiguration(XmlGenerator gen, Config config) {
+        UserCodeNamespacesConfig userCodeNamespacesConfig = config.getNamespacesConfig();
+        if (userCodeNamespacesConfig == null) {
+            return;
+        }
+        gen.open("user-code-namespaces", "enabled", userCodeNamespacesConfig.isEnabled());
+        JavaSerializationFilterConfig filterConfig = userCodeNamespacesConfig.getClassFilterConfig();
+        ConfigXmlGeneratorHelper.appendClassFilter(gen, "class-filter", filterConfig);
+        namespaceConfigurations(gen, config);
+        gen.close();
+    }
+
+
+    private void restServerConfiguration(final XmlGenerator gen, final Config config) {
+        RestConfig restConfig = config.getRestConfig();
+        gen.open("rest", "enabled", restConfig.isEnabled())
+                .node("port", restConfig.getPort())
+                .node("security-realm", restConfig.getSecurityRealm())
+                .node("token-validity-seconds", restConfig.getTokenValidityDuration().toSeconds())
+                .node("request-timeout-seconds", restConfig.getRequestTimeoutDuration().toSeconds())
+                .node("max-login-attempts", restConfig.getMaxLoginAttempts())
+                .node("lockout-duration-seconds", restConfig.getLockoutDuration().toSeconds());
+        restServerSslConfiguration(gen, restConfig.getSsl());
+        gen.close();
+    }
+
+    private void restServerSslConfiguration(XmlGenerator gen, RestConfig.Ssl ssl) {
+        gen.open("ssl", "enabled", ssl.isEnabled())
+                .node("client-auth", ssl.getClientAuth().name())
+                .node("ciphers", ssl.getCiphers())
+                .node("enabled-protocols", ssl.getEnabledProtocols())
+                .node("key-alias", ssl.getKeyAlias())
+                .node("key-password", ssl.getKeyPassword())
+                .node("key-store", ssl.getKeyStore())
+                .node("key-store-password", ssl.getKeyStorePassword())
+                .node("key-store-type", ssl.getKeyStoreType())
+                .node("key-store-provider", ssl.getKeyStoreProvider())
+                .node("trust-store", ssl.getTrustStore())
+                .node("trust-store-password", ssl.getTrustStorePassword())
+                .node("trust-store-type", ssl.getTrustStoreType())
+                .node("trust-store-provider", ssl.getTrustStoreProvider())
+                .node("protocol", ssl.getProtocol())
+                .node("certificate", ssl.getCertificate())
+                .node("certificate-key", ssl.getCertificatePrivateKey())
+                .node("trust-certificate", ssl.getTrustCertificate())
+                .node("trust-certificate-key", ssl.getTrustCertificatePrivateKey())
+                .close();
+    }
+
+    private void memberAttributesXmlGenerator(XmlGenerator gen, Config config) {
+        MemberAttributeConfig memberAttributeConfig = config.getMemberAttributeConfig();
+        if (!memberAttributeConfig.getAttributes().isEmpty()) {
+            gen.open("member-attributes");
+            for (Map.Entry<String, String> attribute : memberAttributeConfig.getAttributes().entrySet()) {
+                gen.node("attribute", attribute.getValue(), "name", attribute.getKey());
+            }
+            gen.close();
+        }
+    }
+
+    public static void namespaceConfigurations(XmlGenerator gen, Config config) {
+        Map<String, UserCodeNamespaceConfig> namespaces = config.getNamespacesConfig().getNamespaceConfigs();
+        for (Map.Entry<String, UserCodeNamespaceConfig> entry : namespaces.entrySet()) {
+            UserCodeNamespaceConfig userCodeNamespaceConfig = entry.getValue();
+            gen.open("namespace", "name", entry.getKey());
+            Collection<ResourceDefinition> resourceDefinition =  userCodeNamespaceConfig.getResourceConfigs();
+            resourceDefinition.forEach(resource -> {
+                String resourceId = resource.id();
+                gen.open(translateResourceType(resource.type()), "id", resourceId);
+                gen.node("url", resource.url());
+                gen.close();
+            });
+            gen.close();
+        }
+    }
+
+    private static String translateResourceType(ResourceType type) {
+        if (ResourceType.JAR == type) {
+            return "jar";
+        } else if (ResourceType.JARS_IN_ZIP == type) {
+            return "jars-in-zip";
+        } else if (ResourceType.CLASS == type) {
+            return "class";
+        } else {
+            throw new IllegalArgumentException("Unknown resource type: " + type);
+        }
+    }
+
     /**
-     * Utility class to build xml using a {@link StringBuilder}.
-     */
+         * Utility class to build xml using a {@link StringBuilder}.
+         */
     public static final class XmlGenerator {
 
         private static final int CAPACITY = 64;
 
         private final StringBuilder xml;
+        private final boolean maskSensitiveFields;
         private final ArrayDeque<String> openNodes = new ArrayDeque<>();
 
         public XmlGenerator(StringBuilder xml) {
+            this(xml, false);
+        }
+
+        /**
+         * @param maskSensitiveFields whether element and attribute values are masked with
+         *                            {@link SensitiveDataMasker#mask(String, String)}, keyed by
+         *                            the element or attribute name, or by the {@code name}
+         *                            attribute of {@code <property>} and {@code <attribute>}.
+         *                            Leave it {@code false} for any output that is parsed
+         *                            back as configuration.
+         */
+        public XmlGenerator(StringBuilder xml, boolean maskSensitiveFields) {
             this.xml = xml;
+            this.maskSensitiveFields = maskSensitiveFields;
+        }
+
+        /**
+         * Returns the value to write for a free-form property. If this generator masks
+         * sensitive fields and the value is a string, the result of
+         * {@link SensitiveDataMasker#mask(String, String)}, the value itself otherwise.
+         */
+        private Object propertyValue(String key, Object value) {
+            if (maskSensitiveFields && value instanceof String stringValue) {
+                return SensitiveDataMasker.mask(key, stringValue);
+            }
+            return value;
         }
 
         public XmlGenerator open(String name, Object... attributes) {
-            appendOpenNode(xml, name, attributes);
+            appendOpenNode(xml, name, maskAttributes(attributes));
             openNodes.addLast(name);
             return this;
         }
 
         public XmlGenerator node(String name, Object contents, Object... attributes) {
-            appendNode(xml, name, contents, attributes);
+            appendNode(xml, name, maskContents(name, contents, attributes), maskAttributes(attributes));
             return this;
         }
 
         public XmlGenerator nodeIfContents(String name, Object contents, Object... attributes) {
             if (contents != null) {
-                appendNode(xml, name, contents, attributes);
+                node(name, contents, attributes);
             }
             return this;
+        }
+
+        private Object maskContents(String name, Object contents, Object... attributes) {
+            if (!maskSensitiveFields) {
+                return contents;
+            }
+            String key = name;
+            // free-form entries carry their key in the name attribute: <property name="password">
+            if (name.equals("property") || name.equals("attribute")) {
+                for (int i = 0; i < attributes.length - 1; i += 2) {
+                    if ("name".equals(attributes[i]) && attributes[i + 1] != null) {
+                        key = attributes[i + 1].toString();
+                    }
+                }
+            }
+            return propertyValue(key, contents);
+        }
+
+        private Object[] maskAttributes(Object... attributes) {
+            if (!maskSensitiveFields || attributes.length == 0) {
+                return attributes;
+            }
+            Object[] masked = attributes.clone();
+            for (int i = 0; i < masked.length - 1; i += 2) {
+                masked[i + 1] = propertyValue(String.valueOf(masked[i]), masked[i + 1]);
+            }
+            return masked;
         }
 
         public XmlGenerator close() {
@@ -1290,17 +1414,24 @@ public class ConfigXmlGenerator {
                 open("properties");
                 Set keys = props.keySet();
                 for (Object key : keys) {
-                    node("property", props.getProperty(key.toString()), "name", key.toString());
+                    String name = key.toString();
+                    node("property", props.getProperty(name), "name", name);
                 }
                 close();
             }
             return this;
         }
 
+        /**
+         * Appends the properties as &lt;property name="key"&gt;value&lt;/property&gt; elements inside a &lt;properties&gt;
+         * It uses the default tag name as "properties"
+         * @param props Properties to be added
+         * @return The xml generator
+         */
         public XmlGenerator appendProperties(Map<String, ? extends Comparable> props) {
             if (!MapUtil.isNullOrEmpty(props)) {
                 open("properties");
-                for (Map.Entry entry : props.entrySet()) {
+                for (Map.Entry<String, ?> entry : props.entrySet()) {
                     node("property", entry.getValue(), "name", entry.getKey());
                 }
                 close();

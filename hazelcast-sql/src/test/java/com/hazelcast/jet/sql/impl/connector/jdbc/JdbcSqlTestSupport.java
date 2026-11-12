@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,25 +18,30 @@ package com.hazelcast.jet.sql.impl.connector.jdbc;
 
 import com.hazelcast.config.Config;
 import com.hazelcast.config.DataConnectionConfig;
+import com.hazelcast.dataconnection.impl.DataConnectionTestUtil;
 import com.hazelcast.jet.sql.SqlTestSupport;
 import com.hazelcast.jet.test.IgnoreInJenkinsOnWindows;
 import com.hazelcast.sql.SqlResult;
 import com.hazelcast.sql.SqlService;
 import com.hazelcast.test.jdbc.TestDatabaseProvider;
+import com.hazelcast.test.jdbc.TestDatabaseRecordProvider;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.experimental.categories.Category;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 
 import javax.annotation.Nonnull;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Properties;
+import java.util.stream.Stream;
 
 import static com.hazelcast.test.DockerTestUtil.assumeDockerEnabled;
 import static java.util.Objects.requireNonNull;
@@ -52,40 +57,51 @@ public abstract class JdbcSqlTestSupport extends SqlTestSupport {
     protected static final String TEST_DATABASE_REF = "testDatabaseRef";
 
     protected static TestDatabaseProvider databaseProvider;
+    protected static TestDatabaseRecordProvider recordProvider;
 
     protected static String dbConnectionUrl;
     protected static SqlService sqlService;
 
     @BeforeClass
+    @BeforeAll
     public static void checkDockerEnabled() {
         assumeDockerEnabled();
     }
 
     public static void initialize(TestDatabaseProvider provider) {
-        initialize(provider, smallInstanceConfig());
+        Config config = smallInstanceConfig();
+        config.getJetConfig().getDefaultEdgeConfig().setQueueSize(16);
+        initialize(provider, config);
     }
 
     public static void initialize(TestDatabaseProvider provider, Config config) {
         databaseProvider = provider;
-        dbConnectionUrl = databaseProvider.createDatabase(JdbcSqlTestSupport.class.getName());
-        Properties properties = new Properties();
-        properties.setProperty("jdbcUrl", dbConnectionUrl);
+        recordProvider = provider.recordProvider();
+        dbConnectionUrl = databaseProvider.createDatabase(JdbcSqlTestSupport.class.getSimpleName());
         config.addDataConnectionConfig(
                 new DataConnectionConfig(TEST_DATABASE_REF)
-                        .setType("jdbc")
-                        .setProperties(properties)
+                        .setType(databaseProvider.dataConnectionType())
+                        .setProperties(databaseProvider.properties())
         );
         initialize(2, config);
         sqlService = instance().getSql();
     }
 
     @AfterClass
-    public static void afterClass() throws SQLException {
-        if (dbConnectionUrl != null) {
+    @AfterAll
+    public static void afterClass() {
+        if (databaseProvider != null) {
             databaseProvider.shutdown();
             databaseProvider = null;
             dbConnectionUrl = null;
         }
+    }
+
+    /**
+     * Return url for the database for the existing container
+     */
+    protected static String urlForDatabaseName(String databaseName) {
+        return dbConnectionUrl.replace(JdbcSqlTestSupport.class.getSimpleName(), databaseName);
     }
 
     @Nonnull
@@ -93,40 +109,57 @@ public abstract class JdbcSqlTestSupport extends SqlTestSupport {
         return "table_" + randomName();
     }
 
-    protected String quote(String... parts) {
-        return Arrays.stream(parts)
-                     .map(part -> '\"' + part.replaceAll("\"", "\"\"") + '\"')
-                     .collect(joining("."));
+    /**
+     * Quotes given compound identifier using the {@link #databaseProvider}
+     */
+    protected static String quote(String... parts) {
+        return databaseProvider.quote(parts);
+    }
+
+    /**
+     * Creates a table with id VARCHAR, name VARCHAR columns
+     * Quotes the given tableName.
+     */
+    public static void createTable(String tableName) throws SQLException {
+        createTableNoQuote(quote(tableName), quote("id") + " INT PRIMARY KEY", quote("name") + " VARCHAR(100)");
+    }
+
+    /**
+     * Creates table with given column definitions
+     * Quotes given table name and column names - first token from each column definition
+     */
+    public static void createTable(String tableName, String... columns) throws SQLException {
+        executeJdbc("CREATE TABLE " + quote(tableName) + " ("
+                + Stream.of(columns)
+                        .map(s -> {
+                            int spaceIndex = s.indexOf(' ');
+                            return quote(s.substring(0, spaceIndex)) + s.substring(spaceIndex);
+                        }).collect(joining(", "))
+                + ")"
+        );
     }
 
     /**
      * Creates table with id INT, name VARCHAR columns
+     * Does not quote the given tableName.
      */
-    public static void createTable(String tableName) throws SQLException {
-        createTable(tableName, "id INT PRIMARY KEY", "name VARCHAR(100)");
+    public static void createTableNoQuote(String tableName) throws SQLException {
+        createTableNoQuote(tableName, quote("id") + " INT PRIMARY KEY", quote("name") + " VARCHAR(100)");
     }
 
-    public static void createTable(String tableName, String... columns) throws SQLException {
+    /**
+     * Creates table with given column definitions
+     * Does not quote the given tableName nor the column names.
+     */
+    public static void createTableNoQuote(String tableName, String... columns) throws SQLException {
         executeJdbc("CREATE TABLE " + tableName + " (" + String.join(", ", columns) + ")");
     }
 
-    static void createTableWithAllTypes(String tableName) throws SQLException {
-        executeJdbc("CREATE TABLE " + tableName + " (" +
-                "v VARCHAR(100)," +
-                "b BOOLEAN, " +
-                "ti TINYINT, " +
-                "si SMALLINT, " +
-                "i INTEGER, " +
-                "bi BIGINT, " +
-                "dc DECIMAL, " +
-                "r REAL, " +
-                "dbl DOUBLE, " +
-                "tm TIME, " +
-                "dt DATE, " +
-                "ts TIMESTAMP, " +
-                "tstz TIMESTAMP WITH TIME ZONE" +
-                ")"
-        );
+    /**
+     * Creates table with given column definitions
+     */
+    public static void dropTable(String tableName) throws SQLException {
+        executeJdbc("DROP TABLE " + tableName);
     }
 
     public static void executeJdbc(String sql) throws SQLException {
@@ -135,47 +168,87 @@ public abstract class JdbcSqlTestSupport extends SqlTestSupport {
         try (Connection conn = DriverManager.getConnection(dbConnectionUrl);
              Statement stmt = conn.createStatement()
         ) {
-            stmt.execute(sql);
+            String[] parts = sql.split("\n\n");
+            for (String part : parts) {
+                stmt.execute(part);
+            }
+        }
+    }
+
+    public static void executeJdbc(List<String> sql) throws SQLException {
+        for (String s : sql) {
+            executeJdbc(s);
+        }
+    }
+
+    public static void executeJdbcWithQuotes(String sql, String tableName) throws SQLException {
+        requireNonNull(dbConnectionUrl, "dbConnectionUrl must be set");
+        //Put the table name in quotations
+        String[] substrings = sql.split(" ");
+        StringBuilder finalSql = new StringBuilder();
+        for (String str : substrings) {
+            if (str.equals(tableName)) {
+                finalSql.append(quote(str)).append(" ");
+            } else {
+                finalSql.append(str).append(" ");
+            }
+        }
+        DataConnectionTestUtil.executeJdbc(dbConnectionUrl, finalSql.toString());
+    }
+
+    public static void insertItems(String tableName, int start, int count) throws SQLException {
+        int end = start + count;
+        String sql = String.format("INSERT INTO %s VALUES(?, ?)", tableName);
+
+        try (Connection conn = DriverManager.getConnection(dbConnectionUrl);
+             PreparedStatement stmt = conn.prepareStatement(sql)
+        ) {
+
+            for (int i = start; i < end; i++) {
+                stmt.setInt(1, i);
+                stmt.setString(2, String.format("name-%d", i));
+                stmt.addBatch();
+                stmt.clearParameters();
+            }
+            stmt.executeBatch();
         }
     }
 
     public static void insertItems(String tableName, int count) throws SQLException {
-        try (Connection conn = DriverManager.getConnection(dbConnectionUrl);
-             Statement stmt = conn.createStatement()
-        ) {
-            for (int i = 0; i < count; i++) {
-                stmt.execute(String.format("INSERT INTO " + tableName + " VALUES(%d, 'name-%d')", i, i));
-            }
-        }
+        insertItems(quote(tableName), 0, count);
+    }
+
+    public static void insertItemsNoQuote(String tableName, int count) throws SQLException {
+        insertItems(tableName, 0, count);
     }
 
     protected static void createMapping(String tableName) {
         execute(
                 "CREATE MAPPING \"" + tableName + "\" ("
-                        + " id INT, "
-                        + " name VARCHAR "
-                        + ") "
-                        + "DATA CONNECTION " + TEST_DATABASE_REF
+                + " id INT, "
+                + " name VARCHAR "
+                + ") "
+                + "DATA CONNECTION " + TEST_DATABASE_REF
         );
     }
 
     protected static void createMapping(String tableName, String mappingName) {
         execute(
                 "CREATE MAPPING \"" + mappingName + "\""
-                        + " EXTERNAL NAME " + tableName + " "
-                        + " ("
-                        + " id INT, "
-                        + " name VARCHAR "
-                        + ") "
-                        + "DATA CONNECTION " + TEST_DATABASE_REF
+                + " EXTERNAL NAME " + tableName + " "
+                + " ("
+                + " id INT, "
+                + " name VARCHAR "
+                + ") "
+                + "DATA CONNECTION " + TEST_DATABASE_REF
         );
     }
 
     protected static void createJdbcMappingUsingDataConnection(String name, String dataConnection) {
         try (SqlResult result = instance().getSql().execute("CREATE OR REPLACE MAPPING " + name +
-                " DATA CONNECTION " + quoteName(dataConnection) + "\n"
+                                                            " DATA CONNECTION " + quoteName(dataConnection) + "\n"
         )) {
-            assertThat(result.updateCount()).isEqualTo(0);
+            assertThat(result.updateCount()).isZero();
         }
     }
 
@@ -194,29 +267,70 @@ public abstract class JdbcSqlTestSupport extends SqlTestSupport {
         assertThat(actualRows).containsExactlyInAnyOrderElementsOf(Arrays.asList(rows));
     }
 
+    protected static void assertJdbcRowsAnyOrder(String tableName, List<Class<?>> columnTypes, Row... rows) {
+        List<Row> actualRows = jdbcRowsTable(tableName, columnTypes);
+        assertThat(actualRows).containsExactlyInAnyOrderElementsOf(Arrays.asList(rows));
+    }
+
+    protected static void assertJdbcQueryRowsAnyOrder(String query, Row... rows) {
+        List<Row> actualRows = jdbcRows(query);
+        assertThat(actualRows).containsExactlyInAnyOrderElementsOf(Arrays.asList(rows));
+    }
+
+    protected static void assertJdbcQueryRowsAnyOrder(String query, List<Class<?>> columnTypes, Row... rows) {
+        List<Row> actualRows = jdbcRows(query, columnTypes);
+        assertThat(actualRows).containsExactlyInAnyOrderElementsOf(Arrays.asList(rows));
+    }
+
     protected static List<Row> jdbcRowsTable(String tableName) {
-        return jdbcRows("SELECT * FROM " + tableName);
+        return jdbcRows("SELECT * FROM " + quote(tableName));
+    }
+
+    protected static List<Row> jdbcRowsTable(String tableName, List<Class<?>> columnType) {
+        return jdbcRows("SELECT * FROM " + quote(tableName), columnType);
+    }
+
+    protected static void assertJdbcRowsAnyOrderNoQuote(String tableName, List<Class<?>> columnTypes, Row... rows) {
+        List<Row> actualRows = jdbcRowsTableNoQuote(tableName, columnTypes);
+        assertThat(actualRows).containsExactlyInAnyOrderElementsOf(Arrays.asList(rows));
+    }
+
+    protected static List<Row> jdbcRowsTableNoQuote(String tableName, List<Class<?>> columnType) {
+        return jdbcRows("SELECT * FROM " + tableName, columnType);
     }
 
     @Nonnull
     protected static List<Row> jdbcRows(String query) {
+        return jdbcRows(query, dbConnectionUrl);
+    }
+
+    protected static List<Row> jdbcRows(String query, List<Class<?>> columnType) {
+        return jdbcRows(query, dbConnectionUrl, columnType);
+    }
+
+    public static List<Row> jdbcRows(String query, String connectionUrl) {
+        return jdbcRows(query, connectionUrl, null);
+    }
+
+    public static List<Row> jdbcRows(String query, String connectionUrl, List<Class<?>> columnTypes) {
         List<Row> rows = new ArrayList<>();
-        try (Connection conn = DriverManager.getConnection(dbConnectionUrl);
-             Statement stmt = conn.createStatement()
-        ) {
-            stmt.execute(query);
-            ResultSet resultSet = stmt.getResultSet();
+        try (Connection connection = DriverManager.getConnection(connectionUrl);
+             Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery(query)) {
             while (resultSet.next()) {
                 Object[] values = new Object[resultSet.getMetaData().getColumnCount()];
                 for (int i = 0; i < values.length; i++) {
-                    values[i] = resultSet.getObject(i + 1);
+                    if (columnTypes == null) {
+                        values[i] = resultSet.getObject(i + 1);
+                    } else {
+                        values[i] = resultSet.getObject(i + 1, columnTypes.get(i));
+                    }
                 }
                 rows.add(new Row(values));
             }
             return rows;
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
+        } catch (SQLException sqlException) {
+            throw new RuntimeException(sqlException);
         }
     }
-
 }

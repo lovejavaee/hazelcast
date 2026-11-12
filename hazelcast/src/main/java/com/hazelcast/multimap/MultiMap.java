@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,7 +69,7 @@ public interface MultiMap<K, V> extends BaseMultiMap<K, V> {
      * some of the key/value-pairs get written, while others are not.
      * <p>
      * <b>Warning:</b> There is no warning if the input Map collection items are discarded due to uniqueness
-     * eg. passing in List into a Set type MultiMap
+     * e.g. passing in List into a Set type MultiMap
      * <p>
      * <b>Warning:</b> The Map and result of the put cannot be fetched
      * from the Future.
@@ -89,7 +89,7 @@ public interface MultiMap<K, V> extends BaseMultiMap<K, V> {
      * some of the key/value-pairs get written, while others are not.
      * <p>
      * <b>Warning:</b> There is no warning if the input Collection items are discarded due to uniqueness
-     * eg. passing in List into a Set type MultiMap
+     * e.g. passing in List into a Set type MultiMap
      * <p>
      * <b>Warning:</b> The Map and result of the put cannot be fetched
      * from the Future.
@@ -113,6 +113,7 @@ public interface MultiMap<K, V> extends BaseMultiMap<K, V> {
      * @return {@code true} if size of the multimap is increased,
      * {@code false} if the multimap already contains the key-value pair and doesn't allow duplicates
      */
+    @Override
     boolean put(@Nonnull K key, @Nonnull V value);
 
     /**
@@ -130,6 +131,7 @@ public interface MultiMap<K, V> extends BaseMultiMap<K, V> {
      * @return the collection of the values associated with the key
      */
     @Nonnull
+    @Override
     Collection<V> get(@Nonnull K key);
 
     /**
@@ -144,6 +146,7 @@ public interface MultiMap<K, V> extends BaseMultiMap<K, V> {
      * @return {@code true} if the size of the multimap changed after the remove operation,
      * {@code false} otherwise
      */
+    @Override
     boolean remove(@Nonnull Object key, @Nonnull Object value);
 
     /**
@@ -159,9 +162,10 @@ public interface MultiMap<K, V> extends BaseMultiMap<K, V> {
      *
      * @param key the key of the entries to remove
      * @return the collection of removed values associated with the given key.
-     * The returned collection might be modifiable but it has no effect on the multimap.
+     * The returned collection might be modifiable, but it has no effect on the multimap.
      */
     @Nonnull
+    @Override
     Collection<V> remove(@Nonnull Object key);
 
     /**
@@ -201,7 +205,7 @@ public interface MultiMap<K, V> extends BaseMultiMap<K, V> {
      * and vice-versa.
      *
      * @return the set of keys in the multimap (the returned set might be
-     * modifiable but it has no effect on the multimap)
+     * modifiable, but it has no effect on the multimap)
      */
     @Nonnull
     Set<K> keySet();
@@ -214,7 +218,7 @@ public interface MultiMap<K, V> extends BaseMultiMap<K, V> {
      * and vice-versa.
      *
      * @return the collection of values in the multimap (the returned
-     * collection might be modifiable but it has no effect on the multimap)
+     * collection might be modifiable, but it has no effect on the multimap)
      */
     @Nonnull
     Collection<V> values();
@@ -227,7 +231,7 @@ public interface MultiMap<K, V> extends BaseMultiMap<K, V> {
      * and vice-versa.
      *
      * @return the set of key-value pairs in the multimap (the returned
-     * set might be modifiable but it has no effect on the multimap)
+     * set might be modifiable, but it has no effect on the multimap)
      */
     @Nonnull
     Set<Map.Entry<K, V>> entrySet();
@@ -275,6 +279,7 @@ public interface MultiMap<K, V> extends BaseMultiMap<K, V> {
      *
      * @return the number of key-value pairs in the multimap
      */
+    @Override
     int size();
 
     /**
@@ -292,6 +297,7 @@ public interface MultiMap<K, V> extends BaseMultiMap<K, V> {
      * @param key the key whose values count is to be returned
      * @return the number of values that match the given key in the multimap
      */
+    @Override
     int valueCount(@Nonnull K key);
 
     /**
@@ -466,11 +472,14 @@ public interface MultiMap<K, V> extends BaseMultiMap<K, V> {
      * <li>the specified waiting time elapses.
      * </ul>
      * <p>
+     * The specified waiting time limits how long the lock operation waits to acquire
+     * the lock on the partition owner. It does not limit the total duration of this call.
+     * <p>
      * <b>Warning:</b> This method uses {@code hashCode} and {@code equals} of
      * the binary form of the {@code key}, not the actual implementations of
      * {@code hashCode} and {@code equals} defined in the {@code key}'s class.
      *
-     * @param time     the maximum time to wait for the lock
+     * @param time     the maximum time for the lock operation to wait for the lock on the partition owner
      * @param timeunit the time unit of the {@code time} argument
      * @return {@code true} if the lock was acquired, {@code false} if the
      * waiting time elapsed before the lock was acquired
@@ -492,12 +501,16 @@ public interface MultiMap<K, V> extends BaseMultiMap<K, V> {
      * <li>the lock is acquired by the current thread, or
      * <li>the specified waiting time elapses.
      * </ul>
+     * <p>
+     * The specified waiting time limits how long the lock operation waits to acquire
+     * the lock on the partition owner. It does not limit the total duration of this call.
+     * <p>
      * <b>Warning:</b> This method uses {@code hashCode} and {@code equals} of
      * the binary form of the {@code key}, not the actual implementations of
      * {@code hashCode} and {@code equals} defined in the {@code key}'s class.
      *
      * @param key           key to lock in this map
-     * @param time          maximum time to wait for the lock
+     * @param time          maximum time for the lock operation to wait for the lock on the partition owner
      * @param timeunit      time unit of the {@code time} argument
      * @param leaseTime     time to wait before releasing the lock
      * @param leaseTimeunit unit of time to specify lease time
@@ -513,7 +526,7 @@ public interface MultiMap<K, V> extends BaseMultiMap<K, V> {
     /**
      * Releases the lock for the specified key.
      * <p>
-     * It never blocks and returns immediately.
+     * When the cluster is stable, this method completes immediately without blocking.
      * <p>
      * <b>Warning:</b> This method uses {@code hashCode} and {@code equals} of
      * the binary form of the {@code key}, not the actual implementations of
@@ -526,7 +539,8 @@ public interface MultiMap<K, V> extends BaseMultiMap<K, V> {
     /**
      * Releases the lock for the specified key regardless of the lock owner.
      * <p>
-     * It always successfully unlocks the key, never blocks and returns immediately.
+     * When the cluster is stable, this method always successfully unlocks the key,
+     * never blocks, and returns immediately.
      * <p>
      * <b>Warning:</b> This method uses {@code hashCode} and {@code equals} of
      * the binary form of the {@code key}, not the actual implementations of
@@ -540,10 +554,10 @@ public interface MultiMap<K, V> extends BaseMultiMap<K, V> {
      * Returns {@code LocalMultiMapStats} for this map.
      * <p>
      * {@code LocalMultiMapStats} is the statistics for the local portion of this
-     * distributed multi map and contains information such as ownedEntryCount
+     * distributed multimap and contains information such as ownedEntryCount
      * backupEntryCount, lastUpdateTime, and lockedEntryCount.
      * <p>
-     * Since this stats are only for the local portion of this multi map, if you
+     * Since these stats are only for the local portion of this multimap, if you
      * need the cluster-wide MultiMapStats, then you need to get the {@link LocalMapStats LocalMapStats}
      * from all members of the cluster and combine them.
      *

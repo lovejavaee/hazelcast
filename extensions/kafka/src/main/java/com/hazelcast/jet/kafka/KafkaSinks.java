@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -223,6 +223,35 @@ public final class KafkaSinks {
     ) {
         return Sinks.fromProcessor("kafkaSink(" + topic + ")",
                 writeKafkaP(dataConnectionRef, topic, extractKeyFn, extractValueFn, true));
+    }
+
+    /**
+     * Convenience for {@link #kafka(Properties, FunctionEx)} which creates
+     * a {@code ProducerRecord} using the given topic and the given key and value
+     * mapping functions with additional properties available
+     *
+     * @param <E>               type of stream item
+     * @param <K>               type of the key published to Kafka
+     * @param <V>               type of the value published to Kafka
+     * @param dataConnectionRef producer properties which should contain broker
+     *                          address and key/value serializers
+     * @param properties        additional properties
+     * @param topic             name of the Kafka topic to publish to
+     * @param extractKeyFn      function that extracts the key from the stream item
+     * @param extractValueFn    function that extracts the value from the stream item
+     * @since 5.3
+     */
+    @Beta
+    @Nonnull
+    public static <E, K, V> Sink<E> kafka(
+            @Nonnull DataConnectionRef dataConnectionRef,
+            @Nonnull Properties properties,
+            @Nonnull String topic,
+            @Nonnull FunctionEx<? super E, K> extractKeyFn,
+            @Nonnull FunctionEx<? super E, V> extractValueFn
+    ) {
+        return Sinks.fromProcessor("kafkaSink(" + topic + ")",
+                writeKafkaP(dataConnectionRef, properties, topic, extractKeyFn, extractValueFn, true));
     }
 
     /**

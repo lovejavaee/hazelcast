@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,9 @@ import com.hazelcast.internal.iteration.IterationPointer;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.map.EntryProcessor;
 import com.hazelcast.map.IMap;
+import com.hazelcast.map.impl.MapContainer;
 import com.hazelcast.map.impl.MapEntries;
+import com.hazelcast.map.impl.MapServiceContext;
 import com.hazelcast.map.impl.query.Query;
 import com.hazelcast.query.Predicate;
 import com.hazelcast.spi.impl.operationservice.Operation;
@@ -29,6 +31,7 @@ import com.hazelcast.spi.merge.SplitBrainMergePolicy;
 import com.hazelcast.spi.merge.SplitBrainMergeTypes.MapMergeTypes;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -36,6 +39,7 @@ import java.util.UUID;
  * Provides {@link com.hazelcast.config.InMemoryFormat InMemoryFormat} specific
  * operations for {@link IMap IMap}.
  */
+@SuppressWarnings("MethodCount")
 public interface MapOperationProvider {
 
     MapOperation createPutOperation(String name, Data key, Data value, long ttl, long maxIdle);
@@ -162,7 +166,7 @@ public interface MapOperationProvider {
 
     OperationFactory createLoadAllOperationFactory(String name, List<Data> keys, boolean replaceExistingValues);
 
-    OperationFactory createGetAllOperationFactory(String name, List<Data> keys);
+    OperationFactory createGetAllOperationFactory(String name, Map<Integer, List<Data>> keysForPartitions);
 
     OperationFactory createMapSizeOperationFactory(String name);
 
@@ -173,4 +177,6 @@ public interface MapOperationProvider {
                                                  List<MapMergeTypes<Object, Object>>[] mergingEntries,
                                                  SplitBrainMergePolicy<Object, MapMergeTypes<Object, Object>,
                                                          Object> mergePolicy);
+
+    OperationFactory createMapPartitionDestroyOperationFactory(MapContainer mapContainer, MapServiceContext mapServiceContext);
 }

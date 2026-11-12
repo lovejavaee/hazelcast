@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -139,11 +139,5 @@ public class Slf4jLoggerTest extends AbstractLoggerTest {
     public void logSevere_shouldLogError_withThrowable() {
         hazelcastLogger.severe(MESSAGE, THROWABLE);
         verify(mockLogger, times(1)).error(MESSAGE, THROWABLE);
-    }
-
-    @Test
-    public void logEvent_shouldLogWithCorrectLevel() {
-        hazelcastLogger.log(LOG_EVENT);
-        verify(mockLogger, times(1)).warn(MESSAGE, THROWABLE);
     }
 }

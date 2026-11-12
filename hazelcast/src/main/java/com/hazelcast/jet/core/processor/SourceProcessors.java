@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,24 +49,25 @@ import com.hazelcast.jet.pipeline.SourceBuilder.SourceBuffer;
 import com.hazelcast.jet.pipeline.SourceBuilder.TimestampedSourceBuffer;
 import com.hazelcast.jet.pipeline.Sources;
 import com.hazelcast.jet.pipeline.file.FileSources;
+import com.hazelcast.jet.pipeline.impl.ConnectorNames;
 import com.hazelcast.map.EventJournalMapEvent;
 import com.hazelcast.projection.Projection;
 import com.hazelcast.query.Predicate;
 import com.hazelcast.security.impl.function.SecuredFunctions;
-import com.hazelcast.security.permission.ConnectorPermission;
+import jakarta.jms.Connection;
+import jakarta.jms.Message;
+import jakarta.jms.MessageConsumer;
+import jakarta.jms.Session;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import javax.jms.Connection;
-import javax.jms.Message;
-import javax.jms.MessageConsumer;
-import javax.jms.Session;
 import java.nio.charset.Charset;
 import java.nio.file.Path;
 import java.security.Permission;
 import java.sql.ResultSet;
 import java.util.List;
 import java.util.Map.Entry;
+import java.util.Properties;
 import java.util.function.BiConsumer;
 import java.util.stream.Stream;
 
@@ -79,7 +80,7 @@ import static com.hazelcast.jet.Util.mapPutEvents;
 import static com.hazelcast.jet.impl.connector.StreamEventJournalP.streamRemoteCacheSupplier;
 import static com.hazelcast.jet.impl.util.ImdgUtil.asXmlString;
 import static com.hazelcast.jet.impl.util.Util.checkSerializable;
-import static com.hazelcast.security.permission.ActionConstants.ACTION_READ;
+import static com.hazelcast.security.impl.function.SecuredFunctions.validateContext;
 
 /**
  * Static utility class with factories of source processors (the DAG
@@ -117,7 +118,7 @@ public final class SourceProcessors {
 
     /**
      * Returns a supplier of processors for
-     * {@link Sources#mapJournal(String, JournalInitialPosition)} )}.
+     * {@link Sources#mapJournal(String, JournalInitialPosition)}.
      */
     @Nonnull
     public static <K, V> ProcessorMetaSupplier streamMapP(
@@ -143,28 +144,6 @@ public final class SourceProcessors {
         return StreamEventJournalP.streamMapSupplier(mapName, predicateFn, projectionFn, initialPos, eventTimePolicy);
     }
 
-    /**
-     * Returns a supplier of processors for
-     * {@link Sources#remoteMap(String, ClientConfig)}.
-     */
-    @Nonnull
-    public static ProcessorSupplier readRemoteMapP(@Nonnull String mapName, @Nonnull ClientConfig clientConfig) {
-        return HazelcastReaders.readRemoteMapSupplier(mapName, clientConfig);
-    }
-
-    /**
-     * Returns a supplier of processors for
-     * {@link Sources#remoteMap(String, ClientConfig, Predicate, Projection)}.
-     */
-    @Nonnull
-    public static <T, K, V> ProcessorSupplier readRemoteMapP(
-            @Nonnull String mapName,
-            @Nonnull ClientConfig clientConfig,
-            @Nonnull Predicate<K, V> predicate,
-            @Nonnull Projection<? super Entry<K, V>, ? extends T> projection
-    ) {
-        return HazelcastReaders.readRemoteMapSupplier(mapName, clientConfig, predicate, projection);
-    }
 
     /**
      * Returns a supplier of processors for
@@ -357,7 +336,8 @@ public final class SourceProcessors {
             boolean ignoreFileNotFound,
             @Nonnull FunctionEx<? super Path, ? extends Stream<I>> readFileFn
     ) {
-        return ReadFilesP.metaSupplier(directory, glob, sharedFileSystem, ignoreFileNotFound, readFileFn);
+        return ReadFilesP.metaSupplier(directory, glob, sharedFileSystem, ignoreFileNotFound, readFileFn,
+                ConnectorNames.FILES);
     }
 
     /**
@@ -393,7 +373,6 @@ public final class SourceProcessors {
             @Nonnull FunctionEx<? super Message, ? extends T> projectionFn
     ) {
         return ProcessorMetaSupplier.preferLocalParallelismOne(
-                ConnectorPermission.jms(destination, ACTION_READ),
                 new StreamJmsP.Supplier<>(destination, maxGuarantee, eventTimePolicy,
                         newConnectionFn, consumerFn, messageIdFn, projectionFn)
         );
@@ -422,10 +401,9 @@ public final class SourceProcessors {
     ) {
         ProcessorSupplier pSupplier = new StreamJmsP.Supplier<>(
                 destination, maxGuarantee, eventTimePolicy, newConnectionFn, consumerFn, messageIdFn, projectionFn);
-        ConnectorPermission permission = ConnectorPermission.jms(destination, ACTION_READ);
         return isSharedConsumer
-                ? ProcessorMetaSupplier.preferLocalParallelismOne(permission, pSupplier)
-                : ProcessorMetaSupplier.forceTotalParallelismOne(pSupplier, newUnsecureUuidString(), permission);
+                ? ProcessorMetaSupplier.preferLocalParallelismOne(pSupplier)
+                : ProcessorMetaSupplier.forceTotalParallelismOne(pSupplier, newUnsecureUuidString());
     }
 
     /**
@@ -437,7 +415,10 @@ public final class SourceProcessors {
             @Nonnull ToResultSetFunction resultSetFn,
             @Nonnull FunctionEx<? super ResultSet, ? extends T> mapOutputFn
     ) {
-        return ReadJdbcP.supplier(context -> newConnectionFn.get(), resultSetFn, mapOutputFn);
+        return ReadJdbcP.supplier(context -> {
+            validateContext(context);
+            return newConnectionFn.get();
+        }, resultSetFn, mapOutputFn);
     }
 
     /**
@@ -463,7 +444,74 @@ public final class SourceProcessors {
             @Nonnull String query,
             @Nonnull FunctionEx<? super ResultSet, ? extends T> mapOutputFn
     ) {
-        return ReadJdbcP.supplier(connectionURL, query, mapOutputFn);
+        Properties properties = new Properties();
+        return ReadJdbcP.supplier(connectionURL, query, properties, mapOutputFn);
+    }
+
+    public static <T> ProcessorMetaSupplier readJdbcP(
+            @Nonnull String connectionURL,
+            @Nonnull String query,
+            @Nonnull Properties properties,
+            @Nonnull FunctionEx<? super ResultSet, ? extends T> mapOutputFn
+    ) {
+        return ReadJdbcP.supplier(connectionURL, query, properties, mapOutputFn);
+    }
+
+    /**
+     * Returns a supplier of processors for a source that the user can create
+     * using the {@link SourceBuilder}. This variant creates a source that
+     * emits items without timestamps.
+     *
+     * @param createFn function that creates the source's context object
+     * @param initFn function invoked after the source is created on the node and job is about to start running
+     * @param fillBufferFn function that fills Jet's buffer with items to emit
+     * @param createSnapshotFn function that returns a snapshot of the context object's state
+     * @param restoreSnapshotFn function that restores the context object's state from a snapshot
+     * @param destroyFn function that cleans up the resources held by the context object
+     * @param preferredLocalParallelism preferred local parallelism of the source vertex. Special values:
+     *                                  {@value Vertex#LOCAL_PARALLELISM_USE_DEFAULT} -> use the cluster's
+     *                                  default local parallelism;
+     *                                  0 -> create a single processor for the entire cluster (total parallelism = 1)
+     * @param isBatch true, if the fillBufferFn will call {@code buffer.close()}, that is whether
+     *                the source reads a bounded or unbounded set of data
+     *
+     * @param <C> type of the source's context object
+     * @param <T> type of items the source emits
+     * @param <S> type of object saved to state snapshot
+     */
+    @Nonnull
+    @SuppressWarnings({ "unchecked", "checkstyle:ParameterNumber" })
+    public static <C, T, S> ProcessorMetaSupplier convenientSourceP(
+            @Nonnull FunctionEx<? super Context, ? extends C> createFn,
+            @Nonnull ConsumerEx<? super C> initFn,
+            @Nonnull BiConsumerEx<? super C, ? super SourceBuffer<T>> fillBufferFn,
+            @Nonnull FunctionEx<? super C, ? extends S> createSnapshotFn,
+            @Nonnull BiConsumerEx<? super C, ? super List<S>> restoreSnapshotFn,
+            @Nonnull ConsumerEx<? super C> destroyFn,
+            int preferredLocalParallelism,
+            boolean isBatch,
+            @Nullable Permission permission
+    ) {
+        checkSerializable(createFn, "createFn");
+        checkSerializable(initFn, "initFn");
+        checkSerializable(fillBufferFn, "fillBufferFn");
+        checkSerializable(destroyFn, "destroyFn");
+        checkSerializable(createSnapshotFn, "createSnapshotFn");
+        checkSerializable(restoreSnapshotFn, "restoreSnapshotFn");
+        checkNotNegative(preferredLocalParallelism + 1, "preferredLocalParallelism must >= -1");
+        ProcessorSupplier procSup = ProcessorSupplier.of(
+                () -> new ConvenientSourceP<>(
+                        createFn,
+                        initFn,
+                        (BiConsumer<? super C, ? super SourceBufferConsumerSide<?>>) fillBufferFn,
+                        createSnapshotFn,
+                        restoreSnapshotFn,
+                        destroyFn,
+                        new SourceBufferImpl.Plain<>(isBatch),
+                        null));
+        return preferredLocalParallelism != 0
+                ? ProcessorMetaSupplier.of(preferredLocalParallelism, permission, procSup)
+                : ProcessorMetaSupplier.forceTotalParallelismOne(procSup, permission);
     }
 
     /**
@@ -486,9 +534,14 @@ public final class SourceProcessors {
      * @param <C> type of the source's context object
      * @param <T> type of items the source emits
      * @param <S> type of object saved to state snapshot
+     *
+     * @deprecated use
+     * {@link #convenientSourceP(FunctionEx, ConsumerEx, BiConsumerEx, FunctionEx, BiConsumerEx, ConsumerEx, int, boolean, Permission)}
+     * instead.
      */
+    @Deprecated(since = "6.0", forRemoval = true)
     @Nonnull
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings("checkstyle:ParameterNumber")
     public static <C, T, S> ProcessorMetaSupplier convenientSourceP(
             @Nonnull FunctionEx<? super Context, ? extends C> createFn,
             @Nonnull BiConsumerEx<? super C, ? super SourceBuffer<T>> fillBufferFn,
@@ -499,7 +552,45 @@ public final class SourceProcessors {
             boolean isBatch,
             @Nullable Permission permission
     ) {
+        return convenientSourceP(createFn, ConsumerEx.noop(), fillBufferFn, createSnapshotFn, restoreSnapshotFn,
+                                 destroyFn, preferredLocalParallelism, isBatch, permission);
+    }
+
+    /**
+     * Returns a supplier of processors for a source that the user can create
+     * using the {@link SourceBuilder}. This variant creates a source that
+     * emits timestamped events.
+     *
+     * @param createFn function that creates the source's context object
+     * @param initFn function invoked after the source is created on the node and job is about to start running
+     * @param fillBufferFn function that fills Jet's buffer with items to emit
+     * @param eventTimePolicy parameters for watermark generation
+     * @param createSnapshotFn function that returns a snapshot of the context object's state
+     * @param restoreSnapshotFn function that restores the context object's state from a snapshot
+     * @param destroyFn function that cleans up the resources held by the context object
+     * @param preferredLocalParallelism preferred local parallelism of the source vertex. Special values:
+     *                                  {@value Vertex#LOCAL_PARALLELISM_USE_DEFAULT} ->
+     *                                  use the cluster's default local parallelism;
+     *                                  0 -> create a single processor for the entire cluster (total parallelism = 1)
+     *
+     * @param <C> type of the context object
+     * @param <T> type of items the source emits
+     * @param <S> type of the object saved to state snapshot
+     */
+    @Nonnull
+    @SuppressWarnings("unchecked")
+    public static <C, T, S> ProcessorMetaSupplier convenientTimestampedSourceP(
+            @Nonnull FunctionEx<? super Context, ? extends C> createFn,
+            @Nonnull ConsumerEx<? super C> initFn,
+            @Nonnull BiConsumerEx<? super C, ? super TimestampedSourceBuffer<T>> fillBufferFn,
+            @Nonnull EventTimePolicy<? super T> eventTimePolicy,
+            @Nonnull FunctionEx<? super C, ? extends S> createSnapshotFn,
+            @Nonnull BiConsumerEx<? super C, ? super List<S>> restoreSnapshotFn,
+            @Nonnull ConsumerEx<? super C> destroyFn,
+            int preferredLocalParallelism
+    ) {
         checkSerializable(createFn, "createFn");
+        checkSerializable(initFn, "initFn");
         checkSerializable(fillBufferFn, "fillBufferFn");
         checkSerializable(destroyFn, "destroyFn");
         checkSerializable(createSnapshotFn, "createSnapshotFn");
@@ -508,15 +599,17 @@ public final class SourceProcessors {
         ProcessorSupplier procSup = ProcessorSupplier.of(
                 () -> new ConvenientSourceP<>(
                         createFn,
+                        initFn,
                         (BiConsumer<? super C, ? super SourceBufferConsumerSide<?>>) fillBufferFn,
                         createSnapshotFn,
                         restoreSnapshotFn,
                         destroyFn,
-                        new SourceBufferImpl.Plain<>(isBatch),
-                        null));
-        return preferredLocalParallelism != 0
-                ? ProcessorMetaSupplier.of(preferredLocalParallelism, permission, procSup)
-                : ProcessorMetaSupplier.forceTotalParallelismOne(procSup, permission);
+                        new SourceBufferImpl.Timestamped<>(),
+                        eventTimePolicy
+                ));
+        return preferredLocalParallelism > 0
+                ? ProcessorMetaSupplier.of(preferredLocalParallelism, procSup)
+                : ProcessorMetaSupplier.forceTotalParallelismOne(procSup);
     }
 
     /**
@@ -538,9 +631,13 @@ public final class SourceProcessors {
      * @param <C> type of the context object
      * @param <T> type of items the source emits
      * @param <S> type of the object saved to state snapshot
+     *
+     * @deprecated Use
+     * {@link #convenientTimestampedSourceP(FunctionEx, ConsumerEx, BiConsumerEx, EventTimePolicy, FunctionEx, BiConsumerEx, ConsumerEx, int)}
+     * instead.
      */
+    @Deprecated(since = "6.0", forRemoval = true)
     @Nonnull
-    @SuppressWarnings("unchecked")
     public static <C, T, S> ProcessorMetaSupplier convenientTimestampedSourceP(
             @Nonnull FunctionEx<? super Context, ? extends C> createFn,
             @Nonnull BiConsumerEx<? super C, ? super TimestampedSourceBuffer<T>> fillBufferFn,
@@ -550,24 +647,7 @@ public final class SourceProcessors {
             @Nonnull ConsumerEx<? super C> destroyFn,
             int preferredLocalParallelism
     ) {
-        checkSerializable(createFn, "createFn");
-        checkSerializable(fillBufferFn, "fillBufferFn");
-        checkSerializable(destroyFn, "destroyFn");
-        checkSerializable(createSnapshotFn, "createSnapshotFn");
-        checkSerializable(restoreSnapshotFn, "restoreSnapshotFn");
-        checkNotNegative(preferredLocalParallelism + 1, "preferredLocalParallelism must >= -1");
-        ProcessorSupplier procSup = ProcessorSupplier.of(
-                () -> new ConvenientSourceP<>(
-                        createFn,
-                        (BiConsumer<? super C, ? super SourceBufferConsumerSide<?>>) fillBufferFn,
-                        createSnapshotFn,
-                        restoreSnapshotFn,
-                        destroyFn,
-                        new SourceBufferImpl.Timestamped<>(),
-                        eventTimePolicy
-                ));
-        return preferredLocalParallelism > 0
-                ? ProcessorMetaSupplier.of(preferredLocalParallelism, procSup)
-                : ProcessorMetaSupplier.forceTotalParallelismOne(procSup);
+        return convenientTimestampedSourceP(createFn, ConsumerEx.noop(), fillBufferFn, eventTimePolicy, createSnapshotFn,
+                                            restoreSnapshotFn, destroyFn, preferredLocalParallelism);
     }
 }

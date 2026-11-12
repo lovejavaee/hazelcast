@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,10 +19,11 @@ package com.hazelcast.jet.sql.impl.connector.jdbc.h2;
 import com.hazelcast.jet.sql.impl.connector.jdbc.JdbcTable;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.dialect.H2SqlDialect;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -30,27 +31,24 @@ import java.util.Collections;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
-public class H2UpsertQueryBuilderTest {
+@ExtendWith(MockitoExtension.class)
+class H2UpsertQueryBuilderTest {
 
     @Mock
     JdbcTable table;
 
-    SqlDialect sqlDialect = H2SqlDialect.DEFAULT;
+    SqlDialect dialect = H2SqlDialect.DEFAULT;
 
-    @Before
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
-
-        when(table.getExternalName()).thenReturn(new String[]{"table1"});
+    @BeforeEach
+    void setUp() {
         when(table.getExternalNameList()).thenReturn(Collections.singletonList("table1"));
         when(table.getPrimaryKeyList()).thenReturn(Arrays.asList("pk1", "pk2"));
         when(table.dbFieldNames()).thenReturn(Arrays.asList("field1", "field2"));
-        when(table.sqlDialect()).thenReturn(sqlDialect);
     }
 
     @Test
-    public void appendMergeClause() {
-        H2UpsertQueryBuilder builder = new H2UpsertQueryBuilder(table);
+    void appendMergeClause() {
+        H2UpsertQueryBuilder builder = new H2UpsertQueryBuilder(table, dialect);
         StringBuilder sb = new StringBuilder();
         builder.appendMergeClause(sb);
 
@@ -59,8 +57,8 @@ public class H2UpsertQueryBuilderTest {
     }
 
     @Test
-    public void appendKeyClause() {
-        H2UpsertQueryBuilder builder = new H2UpsertQueryBuilder(table);
+    void appendKeyClause() {
+        H2UpsertQueryBuilder builder = new H2UpsertQueryBuilder(table, dialect);
         StringBuilder sb = new StringBuilder();
         builder.appendKeyClause(sb);
 
@@ -69,8 +67,8 @@ public class H2UpsertQueryBuilderTest {
     }
 
     @Test
-    public void appendValuesClause() {
-        H2UpsertQueryBuilder builder = new H2UpsertQueryBuilder(table);
+    void appendValuesClause() {
+        H2UpsertQueryBuilder builder = new H2UpsertQueryBuilder(table, dialect);
         StringBuilder sb = new StringBuilder();
         builder.appendValuesClause(sb);
 
@@ -79,8 +77,8 @@ public class H2UpsertQueryBuilderTest {
     }
 
     @Test
-    public void testQuery() {
-        H2UpsertQueryBuilder builder = new H2UpsertQueryBuilder(table);
+    void testQuery() {
+        H2UpsertQueryBuilder builder = new H2UpsertQueryBuilder(table, dialect);
 
         String query = builder.query();
         assertThat(query).isEqualTo("MERGE INTO \"table1\" (\"field1\",\"field2\") KEY (\"pk1\",\"pk2\") VALUES (?,?)");

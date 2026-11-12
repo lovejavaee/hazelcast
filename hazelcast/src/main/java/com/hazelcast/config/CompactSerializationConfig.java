@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import com.hazelcast.nio.serialization.compact.CompactSerializer;
 import com.hazelcast.nio.serialization.compact.CompactWriter;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -69,6 +70,8 @@ public class CompactSerializationConfig {
     final List<String> serializerClassNames;
     final List<String> compactSerializableClassNames;
 
+    private JavaSerializationFilterConfig zeroConfigFilter;
+
     public CompactSerializationConfig() {
         this.typeNameToRegistration = new ConcurrentHashMap<>();
         this.classToRegistration = new ConcurrentHashMap<>();
@@ -81,6 +84,33 @@ public class CompactSerializationConfig {
         this.classToRegistration = new ConcurrentHashMap<>(config.classToRegistration);
         this.serializerClassNames = new CopyOnWriteArrayList<>(config.serializerClassNames);
         this.compactSerializableClassNames = new CopyOnWriteArrayList<>(config.compactSerializableClassNames);
+        this.zeroConfigFilter =
+                config.zeroConfigFilter == null ? null : new JavaSerializationFilterConfig(config.zeroConfigFilter);
+    }
+
+    /**
+     * @return The current filter determining class eligibility for
+     * reflective compact serialization. A return value of null indicates
+     * all classes are eligible.
+     * @since 5.7
+     */
+    @Nullable
+    public JavaSerializationFilterConfig getZeroConfigFilter() {
+        return zeroConfigFilter;
+    }
+
+    /**
+     * Set the filter determining class eligibility for reflective
+     * compact serialization. Setting the filter to null means all classes
+     * are eligible.
+     *
+     * @param zeroConfigClassFilter The filter to set
+     * @return configured {@link CompactSerializationConfig} for chaining
+     * @since 5.7
+     */
+    public CompactSerializationConfig setZeroConfigFilter(@Nullable JavaSerializationFilterConfig zeroConfigClassFilter) {
+        this.zeroConfigFilter = zeroConfigClassFilter;
+        return this;
     }
 
     /**
@@ -214,12 +244,13 @@ public class CompactSerializationConfig {
         return Objects.equals(typeNameToRegistration, that.typeNameToRegistration)
                 && Objects.equals(classToRegistration, that.classToRegistration)
                 && Objects.equals(serializerClassNames, that.serializerClassNames)
-                && Objects.equals(compactSerializableClassNames, that.compactSerializableClassNames);
+                && Objects.equals(compactSerializableClassNames, that.compactSerializableClassNames)
+                && Objects.equals(zeroConfigFilter, that.zeroConfigFilter);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(typeNameToRegistration, classToRegistration,
-                serializerClassNames, compactSerializableClassNames);
+                serializerClassNames, compactSerializableClassNames, zeroConfigFilter);
     }
 }

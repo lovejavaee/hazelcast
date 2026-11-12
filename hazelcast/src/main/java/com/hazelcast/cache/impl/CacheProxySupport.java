@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import com.hazelcast.config.CacheConfig;
 import com.hazelcast.config.CachePartitionLostListenerConfig;
 import com.hazelcast.config.ListenerConfig;
 import com.hazelcast.core.ManagedContext;
+import com.hazelcast.internal.namespace.NamespaceUtil;
 import com.hazelcast.internal.nio.ClassLoaderUtil;
 import com.hazelcast.internal.serialization.SerializationService;
 import com.hazelcast.internal.util.ExceptionUtil;
@@ -106,8 +107,8 @@ abstract class CacheProxySupport<K, V>
     private final CopyOnWriteArrayList<Future> loadAllTasks = new CopyOnWriteArrayList<>();
 
     private final AtomicReference<HazelcastServerCacheManager> cacheManagerRef = new AtomicReference<>();
-    private final AtomicBoolean isClosed = new AtomicBoolean(false);
-    private final AtomicBoolean isDestroyed = new AtomicBoolean(false);
+    private final AtomicBoolean isClosed = new AtomicBoolean();
+    private final AtomicBoolean isDestroyed = new AtomicBoolean();
 
     private final CacheProxySyncListenerCompleter listenerCompleter = new CacheProxySyncListenerCompleter(this);
 
@@ -374,10 +375,10 @@ abstract class CacheProxySupport<K, V>
             OperationFactory operationFactory = operationProvider.createClearOperationFactory();
             Map<Integer, Object> results = operationService.invokeOnAllPartitions(getServiceName(), operationFactory);
             for (Object result : results.values()) {
-                if (result != null && result instanceof CacheClearResponse) {
-                    Object response = ((CacheClearResponse) result).getResponse();
-                    if (response instanceof Throwable) {
-                        throw (Throwable) response;
+                if (result != null && result instanceof CacheClearResponse clearResponse) {
+                    Object response = clearResponse.getResponse();
+                    if (response instanceof Throwable throwable) {
+                        throw throwable;
                     }
                 }
             }
@@ -403,13 +404,13 @@ abstract class CacheProxySupport<K, V>
             Map<Integer, Object> results = operationService.invokeOnAllPartitions(getServiceName(), operationFactory);
             int completionCount = 0;
             for (Object result : results.values()) {
-                if (result != null && result instanceof CacheClearResponse) {
-                    Object response = ((CacheClearResponse) result).getResponse();
+                if (result != null && result instanceof CacheClearResponse clearResponse) {
+                    Object response = clearResponse.getResponse();
                     if (response instanceof Boolean) {
                         completionCount++;
                     }
-                    if (response instanceof Throwable) {
-                        throw (Throwable) response;
+                    if (response instanceof Throwable throwable) {
+                        throw throwable;
                     }
                 }
             }
@@ -487,7 +488,7 @@ abstract class CacheProxySupport<K, V>
     }
 
     protected void putToAllPartitionsAndWaitForCompletion(List<Map.Entry<Data, Data>>[] entriesPerPartition,
-                                                        ExpiryPolicy expiryPolicy) throws Exception {
+                                                        ExpiryPolicy expiryPolicy) {
         List<Future> futures = new ArrayList<>(entriesPerPartition.length);
         for (int partitionId = 0; partitionId < entriesPerPartition.length; partitionId++) {
             List<Map.Entry<Data, Data>> entries = entriesPerPartition[partitionId];
@@ -514,7 +515,7 @@ abstract class CacheProxySupport<K, V>
             /*
              * There maybe multiple exceptions but we throw only the first one.
              * There are some ideas to throw all exceptions to caller but all of them have drawbacks:
-             *      - `Thread::addSuppressed` can be used to add other exceptions to the first one
+             *      - `Thread::addSuppressed` can be used to add other exceptions to the first one,
              *        but it is available since JDK 7.
              *      - `Thread::initCause` can be used but this is wrong as semantic
              *        since the other exceptions are not cause of the first one.
@@ -541,7 +542,7 @@ abstract class CacheProxySupport<K, V>
 
         List<Throwable> throwables = FutureUtil.waitUntilAllResponded(futures);
 
-        if (throwables.size() > 0) {
+        if (!throwables.isEmpty()) {
             throw rethrow(throwables.get(0));
         }
     }
@@ -576,8 +577,9 @@ abstract class CacheProxySupport<K, V>
             listener = (T) listenerConfig.getImplementation();
         } else if (listenerConfig.getClassName() != null) {
             try {
-                listener = ClassLoaderUtil.newInstance(getNodeEngine().getConfigClassLoader(),
-                        listenerConfig.getClassName());
+                ClassLoader loader = NamespaceUtil.getClassLoaderForNamespace(getNodeEngine(),
+                        cacheConfig.getUserCodeNamespace());
+                listener = ClassLoaderUtil.newInstance(loader, listenerConfig.getClassName());
             } catch (Exception e) {
                 throw ExceptionUtil.rethrow(e);
             }
@@ -625,8 +627,8 @@ abstract class CacheProxySupport<K, V>
         Integer completionId = null;
         if (completionOperation) {
             completionId = listenerCompleter.registerCompletionLatch(1);
-            if (op instanceof MutableOperation) {
-                ((MutableOperation) op).setCompletionId(completionId);
+            if (op instanceof MutableOperation operation) {
+                operation.setCompletionId(completionId);
             }
         }
         try {

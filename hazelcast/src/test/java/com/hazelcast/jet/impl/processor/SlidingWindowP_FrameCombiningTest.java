@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,18 +21,16 @@ import com.hazelcast.jet.core.test.TestSupport;
 import com.hazelcast.jet.datamodel.KeyedWindowResult;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
-import java.util.HashSet;
+import java.util.Collection;
+import java.util.List;
 import java.util.Set;
 
 import static com.hazelcast.jet.core.SlidingWindowPolicy.slidingWinPolicy;
 import static com.hazelcast.jet.core.processor.Processors.combineToSlidingWindowP;
-import static java.util.Arrays.asList;
 
 @Category(ParallelJVMTest.class)
 @RunWith(HazelcastParallelClassRunner.class)
@@ -40,24 +38,21 @@ public class SlidingWindowP_FrameCombiningTest {
 
     private static final Long KEY = 77L;
 
-    @Rule
-    public ExpectedException exception = ExpectedException.none();
-
     @Test
     public void when_multipleFrames_then_combine() {
         TestSupport
                 .verifyProcessor(
                         combineToSlidingWindowP(slidingWinPolicy(8, 4), AggregateOperations.<String>toSet(),
                                 (start, end, key, result, isEarly) -> result(end, result)))
-                .input(asList(
-                        frame(2, set("a")),
-                        frame(4, set("b")),
-                        frame(6, set("c"))
+                .input(List.of(
+                        frame(2, Set.of("a")),
+                        frame(4, Set.of("b")),
+                        frame(6, Set.of("c"))
                 ))
-                .expectOutput(asList(
-                        result(4, set("a", "b")),
-                        result(8, set("a", "b", "c")),
-                        result(12, set("c"))
+                .expectOutput(List.of(
+                        result(4, List.of("a", "b")),
+                        result(8, List.of("a", "b", "c")),
+                        result(12, List.of("c"))
                 ));
     }
 
@@ -65,12 +60,7 @@ public class SlidingWindowP_FrameCombiningTest {
         return new KeyedWindowResult<>(0, ts, KEY, value);
     }
 
-    @SafeVarargs
-    private static <E> Set<E> set(E... elements) {
-        return new HashSet<>(asList(elements));
-    }
-
-    private static String result(long winEnd, Set<String> result) {
+    private static String result(long winEnd, Collection<String> result) {
         return String.format("(%03d, %s: %s)", winEnd, KEY, result);
     }
 }

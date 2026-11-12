@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ public class RecentlyActiveSplitBrainProtectionFunction extends AbstractPingAwar
 
     private final int minimumClusterSize;
     private final int heartbeatToleranceMillis;
-    private final ConcurrentMap<Member, Long> latestHeartbeatPerMember = new ConcurrentHashMap<Member, Long>();
+    private final ConcurrentMap<Member, Long> latestHeartbeatPerMember = new ConcurrentHashMap<>();
 
     public RecentlyActiveSplitBrainProtectionFunction(int minimumClusterSize, int heartbeatToleranceMillis) {
         this.minimumClusterSize = minimumClusterSize;
@@ -97,11 +97,9 @@ public class RecentlyActiveSplitBrainProtectionFunction extends AbstractPingAwar
         if (this == o) {
             return true;
         }
-        if (!(o instanceof RecentlyActiveSplitBrainProtectionFunction)) {
+        if (!(o instanceof RecentlyActiveSplitBrainProtectionFunction that)) {
             return false;
         }
-
-        RecentlyActiveSplitBrainProtectionFunction that = (RecentlyActiveSplitBrainProtectionFunction) o;
 
         if (minimumClusterSize != that.minimumClusterSize) {
             return false;

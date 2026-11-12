@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,7 +31,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
-import static com.hazelcast.test.Accessors.getNodeEngineImpl;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -87,7 +86,7 @@ public abstract class AbstractSessionlessSemaphoreBasicTest extends HazelcastRaf
     @Test
     public void testAcquire_whenNoPermits() {
         semaphore.init(0);
-        Future future = spawn(() -> {
+        Future<?> future = spawn(() -> {
             try {
                 semaphore.acquire();
             } catch (InterruptedException e) {
@@ -104,7 +103,7 @@ public abstract class AbstractSessionlessSemaphoreBasicTest extends HazelcastRaf
     @Test
     public void testAcquire_whenNoPermits_andSemaphoreDestroyed() throws Exception {
         semaphore.init(0);
-        Future future = spawn(() -> {
+        Future<?> future = spawn(() -> {
             try {
                 semaphore.acquire();
             } catch (InterruptedException e) {
@@ -275,7 +274,7 @@ public abstract class AbstractSessionlessSemaphoreBasicTest extends HazelcastRaf
         semaphore.init(permits);
         semaphore.acquire(permits);
 
-        Future future = spawn(() -> {
+        Future<?> future = spawn(() -> {
             try {
                 semaphore.acquire();
             } catch (InterruptedException e) {

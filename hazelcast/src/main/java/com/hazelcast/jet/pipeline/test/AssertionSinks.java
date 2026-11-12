@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import java.util.stream.Collectors;
 
 import static com.hazelcast.jet.core.test.JetAssert.assertEquals;
 import static com.hazelcast.jet.core.test.JetAssert.assertTrue;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.rethrow;
+import static com.hazelcast.jet.impl.util.JetExceptionUtil.rethrow;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
 /**
@@ -53,7 +53,7 @@ public final class AssertionSinks {
      * {@link AssertionError} with the given message.
      * <p>
      * Since Jet jobs are distributed, input from multiple upstream processors
-     * is merged in a non-deterministic way. Therefore this assertion is usable
+     * is merged in a non-deterministic way. Therefore, this assertion is usable
      * only for testing of non-distributed sources.
      */
     @Nonnull
@@ -68,7 +68,7 @@ public final class AssertionSinks {
      * {@link AssertionError}.
      * <p>
      * Since Jet jobs are distributed, input from multiple upstream processors
-     * is merged in a non-deterministic way. Therefore this assertion is usable
+     * is merged in a non-deterministic way. Therefore, this assertion is usable
      * only for testing of non-distributed sources.
      */
     @Nonnull
@@ -106,7 +106,7 @@ public final class AssertionSinks {
     }
 
     /**
-     * Asserts that the previous stage emitted all of the given items in any order.
+     * Asserts that the previous stage emitted all the given items in any order.
      * If the assertion fails, the job will fail with a {@link AssertionError} with
      * the given message.
      */
@@ -153,7 +153,7 @@ public final class AssertionSinks {
      * complete the job before the other ones succeeded.
      * <p>
      * The assertion can be validated as follows:
-     * <pre>{@code
+     * <pre>
      * try {
      *     jetInstance.newJob(p).join();
      *     Assert.fail("Job should have completed with an AssertionCompletedException, " +
@@ -188,8 +188,8 @@ public final class AssertionSinks {
         private final long start = System.nanoTime();
         private final List<T> collected = new ArrayList<>();
 
-        private ConsumerEx<? super List<T>> assertFn;
-        private long timeoutNanos;
+        private final ConsumerEx<? super List<T>> assertFn;
+        private final long timeoutNanos;
         private AssertionError lastError;
 
         CollectingSinkWithTimer(ConsumerEx<? super List<T>> assertFn, int timeoutSeconds) {

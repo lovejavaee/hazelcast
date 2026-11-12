@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,16 +15,11 @@
  */
 package com.hazelcast.jet.kinesis;
 
-import com.amazonaws.services.kinesis.AmazonKinesisAsync;
-import com.amazonaws.services.kinesis.model.MergeShardsRequest;
-import com.amazonaws.services.kinesis.model.Shard;
-import com.amazonaws.services.kinesis.model.SplitShardRequest;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.jet.core.JetTestSupport;
 import com.hazelcast.jet.datamodel.Tuple2;
 import com.hazelcast.jet.kinesis.impl.AwsConfig;
 import com.hazelcast.jet.kinesis.impl.source.HashRange;
-import com.hazelcast.jet.pipeline.BatchSource;
 import com.hazelcast.jet.pipeline.Pipeline;
 import com.hazelcast.jet.pipeline.Sink;
 import com.hazelcast.jet.pipeline.Sinks;
@@ -33,48 +28,51 @@ import com.hazelcast.jet.pipeline.test.TestSources;
 import com.hazelcast.jet.retry.RetryStrategies;
 import com.hazelcast.map.IMap;
 import com.hazelcast.test.HazelcastSerialClassRunner;
-import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
+import software.amazon.awssdk.services.kinesis.KinesisAsyncClient;
+import software.amazon.awssdk.services.kinesis.model.MergeShardsRequest;
+import software.amazon.awssdk.services.kinesis.model.Shard;
+import software.amazon.awssdk.services.kinesis.model.SplitShardRequest;
 
 import javax.annotation.Nonnull;
 import java.math.BigInteger;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeSet;
-import java.util.stream.Collectors;
+import java.util.Map.Entry;
 import java.util.stream.IntStream;
 
-import static com.hazelcast.internal.util.MapUtil.entry;
+import static com.hazelcast.jet.Util.entry;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
+import static java.util.stream.Collectors.groupingBy;
+import static java.util.stream.Collectors.mapping;
 import static java.util.stream.Collectors.toList;
 import static org.junit.Assert.assertEquals;
 
 @RunWith(HazelcastSerialClassRunner.class)
-@Category({QuickTest.class, ParallelJVMTest.class})
+@Category(QuickTest.class)
 public abstract class AbstractKinesisTest extends JetTestSupport {
-
     protected static final int KEYS = 250;
     protected static final int MEMBER_COUNT = 2;
-    protected static final int MESSAGES = 25_000;
+    protected static final int MESSAGES = 2_500;
     protected static final String STREAM = "TestStream";
     protected static final String RESULTS = "Results";
 
     protected IMap<String, List<String>> results;
 
     private final AwsConfig awsConfig;
-    private final AmazonKinesisAsync kinesis;
+    private final KinesisAsyncClient kinesis;
     private final KinesisTestHelper helper;
 
-    private HazelcastInstance[] cluster;
+    protected HazelcastInstance[] cluster;
 
-    AbstractKinesisTest(AwsConfig awsConfig, AmazonKinesisAsync kinesis, KinesisTestHelper helper) {
+    public AbstractKinesisTest(AwsConfig awsConfig, KinesisAsyncClient kinesis, KinesisTestHelper helper) {
         this.awsConfig = awsConfig;
         this.kinesis = kinesis;
         this.helper = helper;
@@ -106,13 +104,13 @@ public abstract class AbstractKinesisTest extends JetTestSupport {
         return cluster[0];
     }
 
-    protected Pipeline getPipeline(StreamSource<Map.Entry<String, byte[]>> source) {
+    protected Pipeline getPipeline(StreamSource<Entry<String, byte[]>> source) {
         Pipeline pipeline = Pipeline.create();
         pipeline.readFrom(source)
                 .withNativeTimestamps(0)
-                .rebalance(Map.Entry::getKey)
-                .map(e -> entry(e.getKey(), Collections.singletonList(new String(e.getValue()))))
-                .writeTo(Sinks.mapWithMerging(results, Map.Entry::getKey, Map.Entry::getValue, (l1, l2) -> {
+                .rebalance(Entry::getKey)
+                .map(e -> entry(e.getKey(), List.of(new String(e.getValue()))))
+                .writeTo(Sinks.mapWithMerging(results, Entry::getKey, Entry::getValue, (l1, l2) -> {
                     ArrayList<String> list = new ArrayList<>();
                     list.addAll(l1);
                     list.addAll(l2);
@@ -130,47 +128,45 @@ public abstract class AbstractKinesisTest extends JetTestSupport {
     }
 
     protected Map<String, List<String>> sendMessages(int count) {
-        return sendMessages(count, kinesisSink().build());
+        List<Entry<String, String>> messages = messages(0, count);
+        sendMessages(messages, kinesisSink().build());
+        return toMap(messages);
     }
 
-    protected Map<String, List<String>> sendMessages(int count, Sink<Map.Entry<String, byte[]>> sink) {
-        List<Map.Entry<String, String>> msgEntryList = messages(0, count);
+    protected void sendMessages(Collection<Entry<String, String>> messages) {
+        sendMessages(messages, kinesisSink().build());
+    }
 
-        BatchSource<Map.Entry<String, byte[]>> source = TestSources.items(msgEntryList.stream()
-                .map(e1 -> entry(e1.getKey(), e1.getValue().getBytes()))
-                .collect(toList()));
-
+    protected void sendMessages(Collection<Entry<String, String>> messages, Sink<Entry<String, byte[]>> sink) {
         Pipeline pipeline = Pipeline.create();
-        pipeline.readFrom(source)
+        pipeline.readFrom(TestSources.items(messages.stream()
+                        .map(e1 -> entry(e1.getKey(), e1.getValue().getBytes()))
+                        .toList()))
                 .writeTo(sink);
 
         hz().getJet().newJob(pipeline);
-
-        return toMap(msgEntryList);
     }
 
     @Nonnull
-    protected List<Map.Entry<String, String>> messages(int fromInclusive, int toExclusive) {
+    protected List<Entry<String, String>> messages(int fromInclusive, int toExclusive) {
         return IntStream.range(fromInclusive, toExclusive)
                 .boxed()
                 .map(i -> entry(Integer.toString(i % KEYS), i))
                 .map(e -> entry(e.getKey(), String.format("%s: msg %09d", e.getKey(), e.getValue())))
-                .collect(toList());
+                .toList();
     }
 
     protected void assertMessages(Map<String, List<String>> expected, boolean checkOrder, boolean deduplicate) {
         assertTrueEventually(() -> {
-            assertEquals("Key sets differ!",
-                    expected.keySet().stream().map(Integer::parseInt).collect(Collectors.toCollection(TreeSet::new)),
-                    results.keySet().stream().map(Integer::parseInt).collect(Collectors.toCollection(TreeSet::new)));
+            assertEquals("Key sets differ!", expected.keySet(), results.keySet());
 
-            for (Map.Entry<String, List<String>> entry : expected.entrySet()) {
+            for (Entry<String, List<String>> entry : expected.entrySet()) {
                 String key = entry.getKey();
                 List<String> expectedMessages = entry.getValue();
 
                 List<String> actualMessages = results.get(key);
                 if (deduplicate) {
-                    actualMessages = actualMessages.stream().distinct().collect(toList());
+                    actualMessages = actualMessages.stream().distinct().toList();
                 }
                 if (!checkOrder) {
                     actualMessages = new ArrayList<>(actualMessages);
@@ -182,14 +178,14 @@ public abstract class AbstractKinesisTest extends JetTestSupport {
         });
     }
 
-    protected KinesisSources.Builder<Map.Entry<String, byte[]>> kinesisSource() {
+    protected KinesisSources.Builder<Entry<String, byte[]>> kinesisSource() {
         return KinesisSources.kinesis(STREAM)
                 .withEndpoint(awsConfig.getEndpoint())
                 .withRegion(awsConfig.getRegion())
                 .withCredentials(awsConfig.getAccessKey(), awsConfig.getSecretKey());
     }
 
-    protected KinesisSinks.Builder<Map.Entry<String, byte[]>> kinesisSink() {
+    protected KinesisSinks.Builder<Entry<String, byte[]>> kinesisSink() {
         return KinesisSinks.kinesis(STREAM)
                 .withEndpoint(awsConfig.getEndpoint())
                 .withRegion(awsConfig.getRegion())
@@ -202,32 +198,28 @@ public abstract class AbstractKinesisTest extends JetTestSupport {
     }
 
     protected void mergeShards(Shard shard1, Shard shard2) {
-        MergeShardsRequest request = new MergeShardsRequest();
-        request.setStreamName(STREAM);
-        request.setShardToMerge(shard1.getShardId());
-        request.setAdjacentShardToMerge(shard2.getShardId());
+        MergeShardsRequest request = MergeShardsRequest.builder().streamName(STREAM).shardToMerge(shard1.shardId())
+                .adjacentShardToMerge(shard2.shardId()).build();
 
-        System.out.println("Merging " + shard1.getShardId() + " with " + shard2.getShardId());
-        kinesis.mergeShards(request);
+        logger.info("Merging " + shard1.shardId() + " with " + shard2.shardId());
+        kinesis.mergeShards(request).join();
     }
 
     protected void splitShard(Shard shard) {
-        HashRange range = HashRange.range(shard.getHashKeyRange());
+        HashRange range = HashRange.range(shard.hashKeyRange());
         BigInteger middle = range.getMinInclusive().add(range.getMaxExclusive()).divide(BigInteger.valueOf(2));
 
-        SplitShardRequest request = new SplitShardRequest();
-        request.setStreamName(STREAM);
-        request.setShardToSplit(shard.getShardId());
-        request.setNewStartingHashKey(middle.toString());
+        SplitShardRequest request = SplitShardRequest.builder().streamName(STREAM).shardToSplit(shard.shardId())
+                .newStartingHashKey(middle.toString()).build();
 
-        System.out.println("Splitting " + shard.getShardId());
-        kinesis.splitShard(request);
+        logger.info("Splitting " + shard.shardId());
+        kinesis.splitShard(request).join();
     }
 
     protected static Tuple2<Shard, Shard> findAdjacentPair(Shard shard, List<Shard> allShards) {
-        HashRange shardRange = HashRange.range(shard.getHashKeyRange());
+        HashRange shardRange = HashRange.range(shard.hashKeyRange());
         for (Shard examinedShard : allShards) {
-            HashRange examinedRange = HashRange.range(examinedShard.getHashKeyRange());
+            HashRange examinedRange = HashRange.range(examinedShard.hashKeyRange());
             if (shardRange.isAdjacent(examinedRange)) {
                 if (shardRange.getMinInclusive().compareTo(examinedRange.getMinInclusive()) <= 0) {
                     return Tuple2.tuple2(shard, examinedShard);
@@ -263,23 +255,12 @@ public abstract class AbstractKinesisTest extends JetTestSupport {
         return sb.toString();
     }
 
-    private static Map<String, List<String>> toMap(List<Map.Entry<String, String>> entryList) {
-        return entryList.stream()
-                .collect(Collectors.toMap(
-                        Map.Entry::getKey,
-                        e -> Collections.singletonList(e.getValue()),
-                        (l1, l2) -> {
-                            ArrayList<String> retList = new ArrayList<>();
-                            retList.addAll(l1);
-                            retList.addAll(l2);
-                            return retList;
-                        }
-                ));
+    private static Map<String, List<String>> toMap(List<Entry<String, String>> entries) {
+        return entries.stream().collect(groupingBy(Entry::getKey, mapping(Entry::getValue, toList())));
     }
 
     public static boolean shardActive(@Nonnull Shard shard) {
-        String endingSequenceNumber = shard.getSequenceNumberRange().getEndingSequenceNumber();
-        return endingSequenceNumber == null;
+        return shard.sequenceNumberRange().endingSequenceNumber() == null;
         //need to rely on this hack, because shard filters don't seem to work, on the mock at least ...
     }
 }

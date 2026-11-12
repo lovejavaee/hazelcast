@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.util.concurrent.ConcurrentHashMap;
 
-@SuppressWarnings({"unused", "unchecked", "checkstyle:MultipleVariableDeclarations"})
+@SuppressWarnings({"unused", "unchecked", "LeftCurly", "checkstyle:MultipleVariableDeclarations"})
 public abstract class ExpressionBiValue extends ExpressionValue {
     public static Class<? extends ExpressionBiValue> createBiClass(ExpressionType<?> type1, ExpressionType<?> type2) {
         return createBiClass(type1.typeName(), type2.typeName());

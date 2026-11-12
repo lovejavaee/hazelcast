@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,11 +26,14 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class SqlConfigTest extends HazelcastTestSupport {
+
     @Test
     public void testEmpty() {
         SqlConfig config = new SqlConfig();
@@ -41,9 +44,11 @@ public class SqlConfigTest extends HazelcastTestSupport {
     @Test
     public void testNonEmpty() {
         SqlConfig config = new SqlConfig()
-                .setStatementTimeoutMillis(30L);
+                .setStatementTimeoutMillis(30L)
+                .setCatalogPersistenceEnabled(true);
 
         assertEquals(30L, config.getStatementTimeoutMillis());
+        assertTrue(config.isCatalogPersistenceEnabled());
     }
 
     @Test
@@ -63,5 +68,15 @@ public class SqlConfigTest extends HazelcastTestSupport {
                 .usingGetClass()
                 .suppress(Warning.NONFINAL_FIELDS)
                 .verify();
+    }
+
+    @Test
+    public void testSQLPersistenceEnabledWithoutEELicense() {
+        final Config config = new Config();
+        config.getSqlConfig().setCatalogPersistenceEnabled(true);
+
+        assertThatThrownBy(() -> createHazelcastInstance(config))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("SQL Catalog Persistence requires Hazelcast Enterprise Edition");
     }
 }

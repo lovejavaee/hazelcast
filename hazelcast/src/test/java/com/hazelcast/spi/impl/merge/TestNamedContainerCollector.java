@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,14 +29,19 @@ class TestNamedContainerCollector extends AbstractNamedContainerCollector<Object
 
     TestNamedContainerCollector(NodeEngine nodeEngine, boolean hasContainer, boolean isMergeable) {
         super(nodeEngine, hasContainer
-                ? new ConcurrentHashMap<String, Object>(singletonMap("myContainer", new Object()))
-                : new ConcurrentHashMap<String, Object>());
+                ? new ConcurrentHashMap<>(singletonMap("myContainer", new Object()))
+                : new ConcurrentHashMap<>());
         this.isMergeable = isMergeable;
     }
 
     @Override
     protected MergePolicyConfig getMergePolicyConfig(Object container) {
         return new MergePolicyConfig();
+    }
+
+    @Override
+    protected String getUserNamespaceContainer(Object container) {
+        return null;
     }
 
     @Override

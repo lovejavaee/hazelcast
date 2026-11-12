@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.internal.MongoClientImpl;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -29,6 +30,8 @@ import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Locale;
 
 import static com.hazelcast.jet.mongodb.dataconnection.MongoDataConnection.mongoDataConnectionConf;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -83,6 +86,20 @@ public class MongoDataConnectionTest extends AbstractMongoTest {
     }
 
     @Test
+    public void should_return_resource_types() {
+        // given
+        dataConnection = new MongoDataConnection(mongoDataConnectionConf("mongo", connectionString));
+
+        // when
+        Collection<String> resourcedTypes = dataConnection.resourceTypes();
+
+        //then
+        assertThat(resourcedTypes)
+                .map(r -> r.toLowerCase(Locale.ROOT))
+                .containsExactlyInAnyOrder("collection", "changestream");
+    }
+
+    @Test
     public void should_return_collections_when_listResources() {
         dataConnection = new MongoDataConnection(mongoDataConnectionConf("mongo", connectionString));
 
@@ -95,9 +112,9 @@ public class MongoDataConnectionTest extends AbstractMongoTest {
         db2.createCollection("col3");
 
         assertThat(dataConnection.listResources()).contains(
-                new DataConnectionResource("collection", "test.col1"),
-                new DataConnectionResource("collection", "test.col2"),
-                new DataConnectionResource("collection", "test2.col3")
+                new DataConnectionResource("Collection", "test", "col1"),
+                new DataConnectionResource("Collection", "test", "col2"),
+                new DataConnectionResource("Collection", "test2", "col3")
         );
     }
 
@@ -126,6 +143,21 @@ public class MongoDataConnectionTest extends AbstractMongoTest {
 
         assertClosed(client1);
         assertClosed(client2);
+    }
+
+    @Test
+    public void should_configure_pool_size() {
+        dataConnection = new MongoDataConnection(mongoDataConnectionConf("mongo", connectionString)
+                .setShared(false)
+                .setProperty(MongoDataConnection.CONNECTION_POOL_MIN, "1337")
+                .setProperty(MongoDataConnection.CONNECTION_POOL_MAX, "2023"));
+
+        try (MongoClient client = dataConnection.getClient()) {
+            var asCloseable = (CloseableMongoClient) client;
+            var impl = (MongoClientImpl) asCloseable.delegate;
+            assertThat(impl.getSettings().getConnectionPoolSettings().getMinSize()).isEqualTo(1337);
+            assertThat(impl.getSettings().getConnectionPoolSettings().getMaxSize()).isEqualTo(2023);
+        }
     }
 
     private void assertNotClosed(MongoClient client) {

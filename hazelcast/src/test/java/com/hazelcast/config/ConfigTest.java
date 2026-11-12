@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.hazelcast.config;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.instance.EndpointQualifier;
 import com.hazelcast.memory.Capacity;
+import com.hazelcast.spi.properties.ClusterProperty;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
@@ -38,6 +39,7 @@ import java.io.Writer;
 import java.util.Collections;
 import java.util.Properties;
 
+import static com.hazelcast.config.LocalDeviceConfig.DEFAULT_DEVICE_NAME;
 import static com.hazelcast.instance.ProtocolType.WAN;
 import static java.io.File.createTempFile;
 import static org.junit.Assert.assertEquals;
@@ -114,6 +116,17 @@ public class ConfigTest extends HazelcastTestSupport {
         Config cfg = Config.load();
 
         assertEquals("123", cfg.getProperty(randomPropertyName));
+    }
+
+    @Test
+    public void testPropertyReading() {
+        final String value = "SOME_TEST_VALUE";
+        System.setProperty(ClusterProperty.LOGGING_TYPE.getName(), value);
+
+        Config cfg = Config.load();
+
+        assertEquals(value, cfg.getProperty(ClusterProperty.LOGGING_TYPE.getName()));
+        assertEquals(value, cfg.getProperty(ClusterProperty.LOGGING_TYPE));
     }
 
     @Test
@@ -289,7 +302,7 @@ public class ConfigTest extends HazelcastTestSupport {
 
     @Test(expected = IllegalArgumentException.class)
     public void testSetConfigPropertyNameNull() {
-        config.setProperty(null, "test");
+        config.setProperty((String) null, "test");
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -341,7 +354,22 @@ public class ConfigTest extends HazelcastTestSupport {
         assertThrows(ClassCastException.class, () -> config.getDeviceConfig(LocalDeviceConfig.class, deviceName));
     }
 
-    private static String getSimpleXmlConfigStr(String ...tagAndVal) {
+    @Test
+    public void testDefaultDeviceRemovedWhenDeviceConfigured() {
+        String deviceName = randomName();
+        DeviceConfig deviceConfig = new LocalDeviceConfig().setName(deviceName);
+        assertNotNull(DEFAULT_DEVICE_NAME);
+
+        config.addDeviceConfig(deviceConfig);
+
+        assertNull(config.getDeviceConfig(randomName()));
+        assertEquals(deviceConfig, config.getDeviceConfig(deviceName));
+        assertEquals(deviceConfig, config.getDeviceConfig(LocalDeviceConfig.class, deviceName));
+
+        assertNull(config.getDeviceConfig(DEFAULT_DEVICE_NAME));
+    }
+
+    private static String getSimpleXmlConfigStr(String... tagAndVal) {
         if (tagAndVal.length % 2 != 0) {
             throw new IllegalArgumentException("The number of tags and values parameters is odd."
                     + " Please provide these tags and values as pairs.");
@@ -356,7 +384,7 @@ public class ConfigTest extends HazelcastTestSupport {
         return sb.toString();
     }
 
-    private static String getSimpleYamlConfigStr(String ...tagAndVal) {
+    private static String getSimpleYamlConfigStr(String... tagAndVal) {
         if (tagAndVal.length % 2 != 0) {
             throw new IllegalArgumentException("The number of tags and values parameters is odd."
                     + " Please provide these tags and values as pairs.");

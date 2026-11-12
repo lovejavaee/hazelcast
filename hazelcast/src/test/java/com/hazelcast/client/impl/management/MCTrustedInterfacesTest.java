@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,30 +16,10 @@
 
 package com.hazelcast.client.impl.management;
 
-import static java.util.UUID.randomUUID;
-import static java.util.concurrent.TimeUnit.SECONDS;
-import static org.hamcrest.CoreMatchers.instanceOf;
-import static org.hamcrest.CoreMatchers.is;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
-
-import java.security.AccessControlException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
-import java.util.concurrent.ExecutionException;
-
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
-
 import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.client.impl.ClientDelegatingFuture;
+import com.hazelcast.client.impl.ClientEndpointImpl;
+import com.hazelcast.client.impl.ClientEngine;
 import com.hazelcast.client.impl.clientside.HazelcastClientInstanceImpl;
 import com.hazelcast.client.impl.clientside.HazelcastClientProxy;
 import com.hazelcast.client.impl.protocol.ClientMessage;
@@ -50,7 +30,6 @@ import com.hazelcast.client.impl.protocol.codec.MCChangeClusterVersionCodec;
 import com.hazelcast.client.impl.protocol.codec.MCChangeWanReplicationStateCodec;
 import com.hazelcast.client.impl.protocol.codec.MCCheckWanConsistencyCodec;
 import com.hazelcast.client.impl.protocol.codec.MCClearWanQueuesCodec;
-import com.hazelcast.client.impl.protocol.codec.MCGetCPMembersCodec;
 import com.hazelcast.client.impl.protocol.codec.MCGetClusterMetadataCodec;
 import com.hazelcast.client.impl.protocol.codec.MCGetMapConfigCodec;
 import com.hazelcast.client.impl.protocol.codec.MCGetMemberConfigCodec;
@@ -61,10 +40,7 @@ import com.hazelcast.client.impl.protocol.codec.MCInterruptHotRestartBackupCodec
 import com.hazelcast.client.impl.protocol.codec.MCMatchMCConfigCodec;
 import com.hazelcast.client.impl.protocol.codec.MCPollMCEventsCodec;
 import com.hazelcast.client.impl.protocol.codec.MCPromoteLiteMemberCodec;
-import com.hazelcast.client.impl.protocol.codec.MCPromoteToCPMemberCodec;
 import com.hazelcast.client.impl.protocol.codec.MCReadMetricsCodec;
-import com.hazelcast.client.impl.protocol.codec.MCRemoveCPMemberCodec;
-import com.hazelcast.client.impl.protocol.codec.MCResetCPSubsystemCodec;
 import com.hazelcast.client.impl.protocol.codec.MCRunConsoleCommandCodec;
 import com.hazelcast.client.impl.protocol.codec.MCRunGcCodec;
 import com.hazelcast.client.impl.protocol.codec.MCRunScriptCodec;
@@ -80,10 +56,36 @@ import com.hazelcast.client.impl.spi.impl.ClientInvocationFuture;
 import com.hazelcast.client.test.TestHazelcastFactory;
 import com.hazelcast.config.Config;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.internal.nio.ConnectionType;
+import com.hazelcast.internal.server.ServerConnection;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.experimental.categories.Category;
+import org.junit.runner.RunWith;
+
+import java.net.InetSocketAddress;
+import java.security.AccessControlException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.concurrent.ExecutionException;
+
+import static com.hazelcast.test.Accessors.getNode;
+import static com.hazelcast.test.Accessors.getNodeEngineImpl;
+import static java.util.UUID.randomUUID;
+import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({ QuickTest.class, ParallelJVMTest.class })
@@ -134,7 +136,7 @@ public class MCTrustedInterfacesTest extends HazelcastTestSupport {
 
         ClientMessage clientMessage = MCAddWanBatchPublisherConfigCodec.encodeRequest(randomString(), randomString(),
                 randomString(), randomString(), random.nextInt(), random.nextInt(), random.nextInt(), random.nextInt(),
-                random.nextInt(), random.nextInt());
+                random.nextInt(), random.nextInt(), (byte) random.nextInt(2));
 
         assertFailureOnUntrustedInterface(clientMessage);
     }
@@ -178,11 +180,6 @@ public class MCTrustedInterfacesTest extends HazelcastTestSupport {
     @Test
     public void testGetClusterMetadataMessageTask() throws Exception {
         assertFailureOnUntrustedInterface(MCGetClusterMetadataCodec.encodeRequest());
-    }
-
-    @Test
-    public void testGetCPMembersMessageTask() throws Exception {
-        assertFailureOnUntrustedInterface(MCGetCPMembersCodec.encodeRequest());
     }
 
     @Test
@@ -246,21 +243,6 @@ public class MCTrustedInterfacesTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testPromoteToCPMemberMessageTask() throws Exception {
-        assertFailureOnUntrustedInterface(MCPromoteToCPMemberCodec.encodeRequest());
-    }
-
-    @Test
-    public void testRemoveCPMemberMessageTask() throws Exception {
-        assertFailureOnUntrustedInterface(MCRemoveCPMemberCodec.encodeRequest(randomUUID()));
-    }
-
-    @Test
-    public void testResetCPSubsystemMessageTask() throws Exception {
-        assertFailureOnUntrustedInterface(MCResetCPSubsystemCodec.encodeRequest());
-    }
-
-    @Test
     public void testRunConsoleCommandMessageTask() throws Exception {
         assertFailureOnUntrustedInterface(MCRunConsoleCommandCodec.encodeRequest(randomString(), "help"));
     }
@@ -289,7 +271,7 @@ public class MCTrustedInterfacesTest extends HazelcastTestSupport {
 
     @Test
     public void testUpdateMapConfigMessageTask() throws Exception {
-        assertFailureOnUntrustedInterface(MCUpdateMapConfigCodec.encodeRequest(randomString(), 100, 200, 0, false, 100, 0));
+        assertFailureOnUntrustedInterface(MCUpdateMapConfigCodec.encodeRequest(randomString(), 100, 200, 0, false, 100, 0, null));
     }
 
     @Test
@@ -303,6 +285,32 @@ public class MCTrustedInterfacesTest extends HazelcastTestSupport {
         assertFailureOnUntrustedInterface(MCReadMetricsCodec.encodeRequest(randomUUID(), 0L));
     }
 
+    @Test
+    public void testBind_whenMCCLCAddressIsNotTrusted_returnFalse() {
+        ClientEngine clientEngine = getNode(member).getClientEngine();
+        ServerConnection mockConnection = mock(ServerConnection.class);
+        when(mockConnection.getRemoteSocketAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 1234));
+        when(mockConnection.getConnectionType()).thenReturn(ConnectionType.MC_CL_CLIENT);
+
+        ClientEndpointImpl mcClc = new ClientEndpointImpl(clientEngine, getNodeEngineImpl(member), mockConnection);
+        mcClc.authenticated(randomUUID(), null, null, 0L, null, null, null, false);
+
+        assertFalse(clientEngine.bind(mcClc));
+    }
+
+    @Test
+    public void testBind_whenMCCLCAddressIsTrusted_returnTrue() {
+        ClientEngine clientEngine = getNode(member).getClientEngine();
+        ServerConnection mockConnection = mock(ServerConnection.class);
+        when(mockConnection.getRemoteSocketAddress()).thenReturn(new InetSocketAddress("222.222.222.222", 1234));
+        when(mockConnection.getConnectionType()).thenReturn(ConnectionType.MC_CL_CLIENT);
+
+        ClientEndpointImpl mcClc = new ClientEndpointImpl(clientEngine, getNodeEngineImpl(member), mockConnection);
+        mcClc.authenticated(randomUUID(), null, null, 0L, null, null, null, false);
+
+        assertTrue(clientEngine.bind(mcClc));
+    }
+
     private void assertFailureOnUntrustedInterface(ClientMessage clientMessage) throws Exception {
         ClientInvocation invocation = new ClientInvocation(((HazelcastClientProxy) client).client, clientMessage, null);
         ClientInvocationFuture future = invocation.invoke();
@@ -310,7 +318,7 @@ public class MCTrustedInterfacesTest extends HazelcastTestSupport {
             future.get(ASSERT_TRUE_EVENTUALLY_TIMEOUT, SECONDS);
             fail("AccessControlException was expected.");
         } catch (ExecutionException e) {
-            assertThat(e.getCause(), is(instanceOf(AccessControlException.class)));
+            assertThat(e.getCause()).isInstanceOf(AccessControlException.class);
         }
     }
 }

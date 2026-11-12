@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,13 @@
 
 package com.hazelcast.client.cp.internal.datastructures.semaphore;
 
-import com.hazelcast.client.cp.internal.session.ClientProxySessionManager;
 import com.hazelcast.client.impl.clientside.HazelcastClientProxy;
 import com.hazelcast.client.test.TestHazelcastFactory;
 import com.hazelcast.core.HazelcastException;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.cp.internal.HazelcastRaftTestSupport;
 import com.hazelcast.cp.internal.RaftGroupId;
+import com.hazelcast.cp.internal.session.ProxySessionManager;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
 import com.hazelcast.test.annotation.ParallelJVMTest;
@@ -36,7 +36,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
-import static com.hazelcast.cp.internal.session.AbstractProxySessionManager.NO_SESSION_ID;
+import static com.hazelcast.cp.internal.session.ProxySessionManager.NO_SESSION_ID;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
@@ -52,7 +52,7 @@ import static org.junit.Assert.fail;
 public class SessionAwareSemaphoreReleaseAcquiredSessionsOnFailureTest extends HazelcastRaftTestSupport {
 
     private SessionAwareSemaphoreProxy semaphore;
-    private ClientProxySessionManager sessionManager;
+    private ProxySessionManager sessionManager;
     private RaftGroupId groupId;
 
     @Before
@@ -74,7 +74,7 @@ public class SessionAwareSemaphoreReleaseAcquiredSessionsOnFailureTest extends H
     public void testAcquire_shouldReleaseSessionsOnRuntimeError() throws InterruptedException {
         initSemaphoreAndAcquirePermits(10, 5);
         assertEquals(5, getSessionAcquireCount());
-        Future future = spawn(() -> {
+        Future<?> future = spawn(() -> {
             Thread.currentThread().interrupt();
             // Make the semaphore block, so that Thread.interrupt() can be detected
             semaphore.acquire(6);
@@ -94,7 +94,7 @@ public class SessionAwareSemaphoreReleaseAcquiredSessionsOnFailureTest extends H
     public void testTryAcquire_shouldReleaseSessionsOnRuntimeError() throws InterruptedException {
         initSemaphoreAndAcquirePermits(2, 1);
         assertEquals(1, getSessionAcquireCount());
-        Future future = spawn(() -> {
+        Future<?> future = spawn(() -> {
             Thread.currentThread().interrupt();
             // Make the semaphore block, so that Thread.interrupt() can be detected
             semaphore.tryAcquire(2, 10, TimeUnit.MINUTES);
@@ -114,7 +114,7 @@ public class SessionAwareSemaphoreReleaseAcquiredSessionsOnFailureTest extends H
     public void testDrainPermits_shouldReleaseSessionsOnRuntimeError() throws InterruptedException {
         initSemaphoreAndAcquirePermits(42, 2);
         assertEquals(2, getSessionAcquireCount());
-        Future future = spawn(() -> {
+        Future<?> future = spawn(() -> {
             Thread.currentThread().interrupt();
             semaphore.drainPermits();
         });

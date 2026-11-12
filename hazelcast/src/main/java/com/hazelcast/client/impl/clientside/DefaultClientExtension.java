@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,20 +19,32 @@ package com.hazelcast.client.impl.clientside;
 import com.hazelcast.client.HazelcastClientNotActiveException;
 import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.client.config.ClientNetworkConfig;
+import com.hazelcast.client.config.RoutingMode;
 import com.hazelcast.client.config.SocketOptions;
 import com.hazelcast.client.impl.ClientExtension;
 import com.hazelcast.client.impl.connection.tcp.ClientPlainChannelInitializer;
 import com.hazelcast.client.impl.proxy.ClientMapProxy;
+import com.hazelcast.client.impl.spi.ClientClusterService;
 import com.hazelcast.client.impl.spi.ClientProxyFactory;
+import com.hazelcast.client.impl.spi.impl.ClientClusterServiceImpl;
+import com.hazelcast.client.impl.spi.impl.listener.ClientCPGroupViewService;
+import com.hazelcast.client.impl.spi.impl.listener.NoOpClientCPGroupViewService;
 import com.hazelcast.client.map.impl.nearcache.NearCachedClientMapProxy;
+import com.hazelcast.client.properties.ClientProperty;
 import com.hazelcast.config.InstanceTrackingConfig;
 import com.hazelcast.config.InstanceTrackingConfig.InstanceMode;
 import com.hazelcast.config.InstanceTrackingConfig.InstanceProductName;
+import com.hazelcast.config.InvalidConfigurationException;
 import com.hazelcast.config.NearCacheConfig;
 import com.hazelcast.config.SSLConfig;
 import com.hazelcast.config.SerializationConfig;
 import com.hazelcast.config.SocketInterceptorConfig;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.cp.CPSubsystem;
+import com.hazelcast.client.cp.internal.CPSubsystemImpl;
+import com.hazelcast.client.cp.internal.datastructures.proxy.ClientRaftProxyFactory;
+import com.hazelcast.client.cp.internal.session.ClientProxySessionManager;
+import com.hazelcast.cp.internal.session.ProxySessionManager;
 import com.hazelcast.instance.BuildInfo;
 import com.hazelcast.instance.BuildInfoProvider;
 import com.hazelcast.internal.memory.DefaultMemoryStats;
@@ -56,7 +68,6 @@ import com.hazelcast.nio.SocketInterceptor;
 import com.hazelcast.partition.PartitioningStrategy;
 import com.hazelcast.partition.strategy.DefaultPartitioningStrategy;
 import com.hazelcast.spi.impl.executionservice.TaskScheduler;
-import com.hazelcast.spi.properties.ClusterProperty;
 import com.hazelcast.spi.properties.HazelcastProperties;
 
 import java.util.Map;
@@ -72,10 +83,10 @@ import static com.hazelcast.internal.util.ExceptionUtil.rethrow;
 import static com.hazelcast.internal.util.InstanceTrackingUtil.writeInstanceTrackingFile;
 import static com.hazelcast.spi.properties.ClusterProperty.SOCKET_CLIENT_BUFFER_DIRECT;
 
-@SuppressWarnings("WeakerAccess")
+@SuppressWarnings({"WeakerAccess", "checkstyle:ClassFanOutComplexity", "ClassDataAbstractionCoupling"})
 public class DefaultClientExtension implements ClientExtension {
 
-    protected static final ILogger LOGGER = Logger.getLogger(ClientExtension.class);
+    protected static final ILogger LOGGER = Logger.getLogger(DefaultClientExtension.class);
 
     protected volatile HazelcastClientInstanceImpl client;
     protected JetClientInstanceImpl jetClient;
@@ -143,6 +154,7 @@ public class DefaultClientExtension implements ClientExtension {
                     .setHazelcastInstance(hazelcastInstance)
                     .setNotActiveExceptionSupplier(HazelcastClientNotActiveException::new)
                     .setSchemaService(client.getSchemaService())
+                    .setProperties(client.getProperties())
                     .build();
         } catch (Exception e) {
             throw rethrow(e);
@@ -150,8 +162,12 @@ public class DefaultClientExtension implements ClientExtension {
     }
 
     protected PartitioningStrategy getPartitioningStrategy(ClassLoader configClassLoader) throws Exception {
-        String partitioningStrategyClassName = ClusterProperty.PARTITIONING_STRATEGY_CLASS.getSystemProperty();
-        if (partitioningStrategyClassName != null && partitioningStrategyClassName.length() > 0) {
+        // This method historically only fetched our strategy from the client's local System Properties - this
+        //  behaviour is not correct (it should read the ClientConfig properties). By using ClientConfig#getProperty
+        //  we will be checking the ClientConfig first, and otherwise falling back to a System Property.
+        String partitioningStrategyClassName = client.getClientConfig().getProperty(
+                ClientProperty.PARTITIONING_STRATEGY_CLASS.getName());
+        if (partitioningStrategyClassName != null && !partitioningStrategyClassName.isEmpty()) {
             return ClassLoaderUtil.newInstance(configClassLoader, partitioningStrategyClassName);
         } else {
             return new DefaultPartitioningStrategy();
@@ -232,5 +248,31 @@ public class DefaultClientExtension implements ClientExtension {
     @Override
     public JetService getJet() {
         return jetClient;
+    }
+
+    @Override
+    public CPSubsystem createCPSubsystem(HazelcastClientInstanceImpl hazelcastClientInstance) {
+        return new CPSubsystemImpl(new ClientRaftProxyFactory(hazelcastClientInstance));
+    }
+
+    @Override
+    public ProxySessionManager createProxySessionManager(HazelcastClientInstanceImpl hazelcastClientInstance) {
+        return new ClientProxySessionManager(hazelcastClientInstance);
+    }
+
+    @Override
+    public ClientClusterService createClientClusterService(HazelcastClientInstanceImpl clientInstance) {
+        if (clientInstance.getClientConfig().getNetworkConfig()
+                .getClusterRoutingConfig().getRoutingMode() == RoutingMode.MULTI_MEMBER) {
+            throw new InvalidConfigurationException(String.format("%s routing is an enterprise feature since 5.5. "
+                    + "You must use Hazelcast enterprise to enable this feature.", RoutingMode.MULTI_MEMBER));
+        }
+        return new ClientClusterServiceImpl(clientInstance);
+    }
+
+    @Override
+    public ClientCPGroupViewService createClientCPGroupViewService(HazelcastClientInstanceImpl hazelcastClientInstance,
+                                                                   boolean directToLeaderRoutingEnabled) {
+        return new NoOpClientCPGroupViewService();
     }
 }

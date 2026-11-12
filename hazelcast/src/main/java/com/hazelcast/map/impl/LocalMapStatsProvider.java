@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ import com.hazelcast.map.impl.nearcache.MapNearCacheManager;
 import com.hazelcast.map.impl.proxy.MapProxyImpl;
 import com.hazelcast.map.impl.recordstore.RecordStore;
 import com.hazelcast.nearcache.NearCacheStats;
-import com.hazelcast.query.impl.Indexes;
+import com.hazelcast.query.impl.IndexRegistry;
 import com.hazelcast.query.impl.InternalIndex;
 import com.hazelcast.spi.impl.NodeEngine;
 
@@ -101,6 +101,10 @@ public class LocalMapStatsProvider {
 
     protected MapServiceContext getMapServiceContext() {
         return mapServiceContext;
+    }
+
+    public boolean hasLocalMapStatsImpl(String name) {
+        return statsMap.containsKey(name);
     }
 
     public LocalMapStatsImpl getLocalMapStatsImpl(String name) {
@@ -176,7 +180,10 @@ public class LocalMapStatsProvider {
             String mapName = mapProxy.getName();
 
             if (mapConfig.isStatisticsEnabled() && !statsPerMap.containsKey(mapName)) {
-                statsPerMap.put(mapName, EMPTY_LOCAL_MAP_STATS);
+                // Lite members can invoke MapOperations, and their statistics are of importance for monitoring
+                // when Lite members are in use - so we should include these stats as well if they exist
+                LocalMapStatsImpl localMapStats = statsMap.get(mapName);
+                statsPerMap.put(mapName, localMapStats != null ? localMapStats : EMPTY_LOCAL_MAP_STATS);
             }
         }
     }
@@ -189,11 +196,7 @@ public class LocalMapStatsProvider {
                                                                             RecordStore recordStore) {
         String mapName = recordStore.getName();
 
-        Object stats = onDemandStats.get(mapName);
-        if (stats == null) {
-            stats = new LocalMapOnDemandCalculatedStats();
-            onDemandStats.put(mapName, stats);
-        }
+        Object stats = onDemandStats.computeIfAbsent(mapName, x -> new LocalMapOnDemandCalculatedStats());
         return ((LocalMapOnDemandCalculatedStats) stats);
     }
 
@@ -243,6 +246,8 @@ public class LocalMapStatsProvider {
         onDemandStats.incrementOwnedEntryCount(recordStore.size());
         onDemandStats.setLastAccessTime(stats.getLastAccessTime());
         onDemandStats.setLastUpdateTime(stats.getLastUpdateTime());
+        onDemandStats.incrementOversizedEntriesSeen(stats.getOversizedEntriesSeen());
+        onDemandStats.setLastOversizedEntry(stats.getLastOversizedEntrySize(), stats.getLastOversizedEntryTime());
         onDemandStats.setBackupCount(recordStore.getMapContainer().getMapConfig().getTotalBackupCount());
         // we need to update the locked entry count here
         // without looking entry count in map keys that
@@ -259,10 +264,7 @@ public class LocalMapStatsProvider {
             int partitionId = recordStore.getPartitionId();
             Address replicaAddress = getReplicaAddress(partitionId, replicaNumber, totalBackupCount);
             if (!isReplicaAvailable(replicaAddress, totalBackupCount)) {
-                // todo consider if this should be logged as a warning
-                //  it is normal to have some replicas unassigned under various circumstances
-                //  depending on cluster state and membership changes
-                printWarning(partitionId, replicaNumber);
+                logReplicaHasNoOwner(partitionId, replicaNumber);
                 continue;
             }
             if (isReplicaOnThisNode(replicaAddress)) {
@@ -287,8 +289,10 @@ public class LocalMapStatsProvider {
         return localAddress.equals(replicaAddress);
     }
 
-    private void printWarning(int partitionId, int replica) {
-        logger.warning("partitionId: " + partitionId + ", replica: " + replica + " has no owner!");
+    private void logReplicaHasNoOwner(int partitionId, int replica) {
+        if (logger.isFinestEnabled()) {
+            logger.finest("partitionId: %s, replica: %s has no owner!", partitionId, replica);
+        }
     }
 
     /**
@@ -343,33 +347,42 @@ public class LocalMapStatsProvider {
     }
 
     private void addIndexStats(String mapName, LocalMapStatsImpl localMapStats) {
-        MapContainer mapContainer = mapServiceContext.getMapContainer(mapName);
-        Indexes globalIndexes = mapContainer.getIndexes();
-
+        MapContainer mapContainer = mapServiceContext.getExistingMapContainer(mapName);
+        if (mapContainer == null) {
+            return;
+        }
+        IndexRegistry globalIndexRegistry = mapContainer.getGlobalIndexRegistry();
         Map<String, OnDemandIndexStats> freshStats = null;
-        if (globalIndexes != null) {
-            assert globalIndexes.isGlobal();
-            localMapStats.setQueryCount(globalIndexes.getIndexesStats().getQueryCount());
-            localMapStats.setIndexedQueryCount(globalIndexes.getIndexesStats().getIndexedQueryCount());
-            freshStats = aggregateFreshIndexStats(globalIndexes.getIndexes(), null);
+        if (globalIndexRegistry != null) {
+            assert globalIndexRegistry.isGlobal();
+            IndexesStats indexesStats = globalIndexRegistry.getIndexesStats();
+            localMapStats.setQueryCount(indexesStats.getQueryCount());
+            localMapStats.setIndexedQueryCount(indexesStats.getIndexedQueryCount());
+            localMapStats.setIndexesSkippedQueryCount(indexesStats.getIndexesSkippedQueryCount());
+            localMapStats.setNoMatchingIndexQueryCount(indexesStats.getNoMatchingIndexQueryCount());
+            freshStats = aggregateFreshIndexStats(globalIndexRegistry.getIndexes(), null);
             finalizeFreshIndexStats(freshStats);
         } else {
             long queryCount = 0;
             long indexedQueryCount = 0;
-            PartitionContainer[] partitionContainers = mapServiceContext.getPartitionContainers();
-            for (int i = 0; i < partitionContainers.length; i++) {
-                PartitionContainer partitionContainer = partitionContainers[i];
-                IPartition partition = partitionService.getPartition(partitionContainer.getPartitionId());
+            long indexesSkippedQueryCount = 0;
+            long noMatchingIndexQueryCount = 0;
+
+            int partitionCount = partitionService.getPartitionCount();
+            for (int partitionId = 0; partitionId < partitionCount; partitionId++) {
+                IPartition partition = partitionService.getPartition(partitionId);
                 if (!partition.isLocal()) {
                     continue;
                 }
 
-                Indexes partitionIndexes = partitionContainer.getIndexes().get(mapName);
-                if (partitionIndexes == null) {
+                IndexRegistry partitionedIndexRegistry
+                        = mapContainer.getOrNullPartitionedIndexRegistry(partitionId);
+                if (partitionedIndexRegistry == null) {
                     continue;
                 }
-                assert !partitionIndexes.isGlobal();
-                IndexesStats indexesStats = partitionIndexes.getIndexesStats();
+
+                assert !partitionedIndexRegistry.isGlobal();
+                IndexesStats indexesStats = partitionedIndexRegistry.getIndexesStats();
 
                 // Partitions may have different query stats due to migrations
                 // (partition stats is not preserved while migrating) and/or
@@ -377,12 +390,17 @@ public class LocalMapStatsProvider {
                 // maximum among partitions.
                 queryCount = Math.max(queryCount, indexesStats.getQueryCount());
                 indexedQueryCount = Math.max(indexedQueryCount, indexesStats.getIndexedQueryCount());
+                indexesSkippedQueryCount = Math.max(indexesSkippedQueryCount, indexesStats.getIndexesSkippedQueryCount());
+                noMatchingIndexQueryCount = Math.max(noMatchingIndexQueryCount,
+                        indexesStats.getNoMatchingIndexQueryCount());
 
-                freshStats = aggregateFreshIndexStats(partitionIndexes.getIndexes(), freshStats);
+                freshStats = aggregateFreshIndexStats(partitionedIndexRegistry.getIndexes(), freshStats);
             }
 
             localMapStats.setQueryCount(queryCount);
             localMapStats.setIndexedQueryCount(indexedQueryCount);
+            localMapStats.setIndexesSkippedQueryCount(indexesSkippedQueryCount);
+            localMapStats.setNoMatchingIndexQueryCount(noMatchingIndexQueryCount);
 
             finalizeFreshIndexStats(freshStats);
         }
@@ -398,12 +416,11 @@ public class LocalMapStatsProvider {
 
         for (InternalIndex index : freshIndexes) {
             String indexName = index.getName();
-            OnDemandIndexStats freshIndexStats = freshStats.get(indexName);
-            if (freshIndexStats == null) {
-                freshIndexStats = new OnDemandIndexStats();
-                freshIndexStats.setCreationTime(Long.MAX_VALUE);
-                freshStats.put(indexName, freshIndexStats);
-            }
+            OnDemandIndexStats freshIndexStats = freshStats.computeIfAbsent(indexName, x -> {
+                OnDemandIndexStats onDemandIndexStats = new OnDemandIndexStats();
+                onDemandIndexStats.setCreationTime(Long.MAX_VALUE);
+                return onDemandIndexStats;
+            });
 
             PerIndexStats indexStats = index.getPerIndexStats();
             freshIndexStats.setCreationTime(Math.min(freshIndexStats.getCreationTime(), indexStats.getCreationTime()));
@@ -423,6 +440,10 @@ public class LocalMapStatsProvider {
             freshIndexStats.setTotalUpdateLatency(freshIndexStats.getTotalUpdateLatency() + indexStats.getTotalUpdateLatency());
             freshIndexStats.setRemoveCount(freshIndexStats.getRemoveCount() + indexStats.getRemoveCount());
             freshIndexStats.setTotalRemoveLatency(freshIndexStats.getTotalRemoveLatency() + indexStats.getTotalRemoveLatency());
+            freshIndexStats.setPartitionsIndexed(indexStats.getPartitionsIndexed());
+            freshIndexStats.setPartitionUpdatesStarted(indexStats.getPartitionUpdatesStarted());
+            freshIndexStats.setPartitionUpdatesFinished(indexStats.getPartitionUpdatesFinished());
+            freshIndexStats.setIndexNotReadyQueryCount(indexStats.getIndexNotReadyQueryCount());
         }
 
         return freshStats;
@@ -469,6 +490,9 @@ public class LocalMapStatsProvider {
         private long dirtyEntryCount;
         private long lastAccessTime;
         private long lastUpdateTime;
+        private long oversizedEntriesSeen;
+        private long lastOversizedEntrySize;
+        private long lastOversizedEntryTime;
 
         public void setBackupCount(int backupCount) {
             this.backupCount = backupCount;
@@ -518,6 +542,19 @@ public class LocalMapStatsProvider {
             this.merkleTreesCost += merkleTreeCost;
         }
 
+        public void incrementOversizedEntriesSeen(long oversizedEntriesSeen) {
+            this.oversizedEntriesSeen += oversizedEntriesSeen;
+        }
+
+        public void setLastOversizedEntry(long entrySize, long time) {
+            // the most recent write wins; partitions written in the same millisecond report the larger entry
+            if (time > lastOversizedEntryTime
+                    || (time == lastOversizedEntryTime && entrySize > lastOversizedEntrySize)) {
+                this.lastOversizedEntrySize = entrySize;
+                this.lastOversizedEntryTime = time;
+            }
+        }
+
         public LocalMapStatsImpl updateAndGet(LocalMapStatsImpl stats) {
             stats.setBackupCount(backupCount);
             stats.setHits(hits);
@@ -533,6 +570,8 @@ public class LocalMapStatsProvider {
             stats.setDirtyEntryCount(dirtyEntryCount);
             stats.setLastAccessTime(lastAccessTime);
             stats.setLastUpdateTime(lastUpdateTime);
+            stats.setOversizedEntriesSeen(oversizedEntriesSeen);
+            stats.setLastOversizedEntry(lastOversizedEntrySize, lastOversizedEntryTime);
             return stats;
         }
 

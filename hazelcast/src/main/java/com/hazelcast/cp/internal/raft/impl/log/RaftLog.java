@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -73,13 +73,13 @@ public final class RaftLog {
 
     private RaftLog(int capacity, RaftStateStore store) {
         checkNotNull(store);
-        this.logs = new ArrayRingbuffer<LogEntry>(capacity);
+        this.logs = new ArrayRingbuffer<>(capacity);
         this.store = store;
     }
 
     private RaftLog(int capacity, SnapshotEntry snapshot, LogEntry[] entries, RaftStateStore store) {
         checkNotNull(store);
-        this.logs = new ArrayRingbuffer<LogEntry>(capacity);
+        this.logs = new ArrayRingbuffer<>(capacity);
         long snapshotIndex;
         if (isNonInitial(snapshot)) {
             this.snapshot = snapshot;
@@ -200,7 +200,7 @@ public final class RaftLog {
             truncated.add(logs.read(ix));
         }
         logs.setTailSequence(startSequence - 1);
-        if (truncated.size() > 0) {
+        if (!truncated.isEmpty()) {
             dirty = true;
             try {
                 store.deleteEntriesFrom(entryIndex);
@@ -253,6 +253,7 @@ public final class RaftLog {
                 throw new IllegalArgumentException("Cannot append " + entry
                         + " since its index is bigger than (lastLogIndex + 1): " + (lastIndex + 1));
             }
+            // FIXME: add to log after store?
             logs.add(entry);
             try {
                 store.persistEntry(entry);
@@ -315,18 +316,18 @@ public final class RaftLog {
      *                                  or equal to current snapshot index
      */
     public int setSnapshot(SnapshotEntry snapshot) {
-        return setSnapshot(snapshot, snapshot.index());
+        return setSnapshot(snapshot, snapshot.index(), false);
     }
 
-    public int setSnapshot(SnapshotEntry snapshot, long truncateUpToIndex) {
+    public int setSnapshot(SnapshotEntry snapshot, long truncateUpToIndex, boolean alreadyFlushed) {
         if (snapshot.index() <= snapshotIndex()) {
             throw new IllegalArgumentException("Illegal index: " + snapshot.index() + ", current snapshot index: "
                     + snapshotIndex());
         }
 
         if (truncateUpToIndex > snapshot.index()) {
-            throw new IllegalArgumentException("Truncation index: " + truncateUpToIndex + "cannot be bigger than snapshot indeX: "
-                    + snapshot.index());
+            throw new IllegalArgumentException("Truncation index: " + truncateUpToIndex
+                    + "cannot be bigger than snapshot index: " + snapshot.index());
         }
 
         long newHeadSeq = toSequence(truncateUpToIndex) + 1;
@@ -343,12 +344,9 @@ public final class RaftLog {
 
         this.snapshot = snapshot;
 
-        dirty = true;
-
-        try {
-            store.persistSnapshot(snapshot);
-        } catch (IOException e) {
-            throw new HazelcastException(e);
+        // If it hasn't been flushed yet, mark it as dirty to enable flushing.
+        if (!alreadyFlushed) {
+            dirty = true;
         }
 
         return (int) (prevSize - logs.size());

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.client.impl;
 
 import com.hazelcast.client.Client;
+import com.hazelcast.client.config.RoutingMode;
 import com.hazelcast.client.impl.statistics.ClientStatistics;
 import com.hazelcast.core.HazelcastInstanceNotActiveException;
 import com.hazelcast.internal.metrics.MetricConsumer;
@@ -27,12 +28,14 @@ import com.hazelcast.internal.metrics.impl.MetricsCompressor;
 import com.hazelcast.internal.server.ServerConnection;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.security.Credentials;
-import com.hazelcast.spi.impl.NodeEngineImpl;
+import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.eventservice.EventService;
 import com.hazelcast.transaction.TransactionContext;
 import com.hazelcast.transaction.TransactionException;
 import com.hazelcast.transaction.impl.xa.XATransactionContextImpl;
 
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import javax.security.auth.Subject;
 import javax.security.auth.login.LoginContext;
 import javax.security.auth.login.LoginException;
@@ -57,36 +60,45 @@ public final class ClientEndpointImpl implements ClientEndpoint {
 
     private final ClientEngine clientEngine;
     private final ILogger logger;
-    private final NodeEngineImpl nodeEngine;
+    private final NodeEngine nodeEngine;
     private final ServerConnection connection;
     private final ConcurrentMap<UUID, TransactionContext> transactionContextMap = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, Callable> removeListenerActions = new ConcurrentHashMap<>();
     private final SocketAddress socketAddress;
     private final long creationTime;
-
     private LoginContext loginContext;
     private UUID clientUuid;
     private Credentials credentials;
     private volatile boolean authenticated;
     private String clientVersion;
+    private Boolean enterprise;
     private final AtomicReference<ClientStatistics> statsRef = new AtomicReference<>();
     private String clientName;
     private Set<String> labels;
     private volatile boolean destroyed;
+    private volatile TpcToken tpcToken;
+    private RoutingMode routingMode;
+    private boolean cpDirectToLeaderRouting;
 
-    public ClientEndpointImpl(ClientEngine clientEngine, NodeEngineImpl nodeEngine, ServerConnection connection) {
+    public ClientEndpointImpl(ClientEngine clientEngine, NodeEngine nodeEngine, ServerConnection connection) {
         this.clientEngine = clientEngine;
         this.logger = clientEngine.getLogger(getClass());
         this.nodeEngine = nodeEngine;
         this.connection = connection;
         this.socketAddress = connection.getRemoteSocketAddress();
         this.clientVersion = "Unknown";
+        this.enterprise = false;
         this.creationTime = System.currentTimeMillis();
     }
 
     @Override
     public ServerConnection getConnection() {
         return connection;
+    }
+
+    @Override
+    public long getConnectionStartTime() {
+        return connection.getStartTime();
     }
 
     @Override
@@ -111,13 +123,16 @@ public final class ClientEndpointImpl implements ClientEndpoint {
 
     @Override
     public void authenticated(UUID clientUuid, Credentials credentials, String clientVersion,
-                              long authCorrelationId, String clientName, Set<String> labels) {
+                              long authCorrelationId, String clientName, Set<String> labels, RoutingMode routingMode,
+                              boolean cpDirectToLeaderRouting) {
         this.clientUuid = clientUuid;
         this.credentials = credentials;
         this.authenticated = true;
         this.setClientVersion(clientVersion);
+        this.routingMode = routingMode;
         this.clientName = clientName;
         this.labels = labels;
+        this.cpDirectToLeaderRouting = cpDirectToLeaderRouting;
         clientEngine.onEndpointAuthenticated(this);
     }
 
@@ -137,7 +152,24 @@ public final class ClientEndpointImpl implements ClientEndpoint {
     }
 
     @Override
+    public boolean isEnterprise() {
+        return enterprise;
+    }
+
+    @Override
+    public void setEnterprise(Boolean enterprise) {
+        this.enterprise = enterprise;
+    }
+
+    @Override
     public void setClientStatistics(ClientStatistics stats) {
+        boolean setBefore = getClientStatistics() != null;
+        if (!setBefore) {
+            String clientAttributes = stats.clientAttributes();
+            if (clientAttributes.contains("enterprise=true")) {
+                setEnterprise(true);
+            }
+        }
         statsRef.set(stats);
     }
 
@@ -170,6 +202,12 @@ public final class ClientEndpointImpl implements ClientEndpoint {
     @Override
     public Set<String> getLabels() {
         return labels;
+    }
+
+
+    @Override
+    public RoutingMode getRoutingMode() {
+        return routingMode;
     }
 
     @Override
@@ -332,5 +370,21 @@ public final class ClientEndpointImpl implements ClientEndpoint {
     @Override
     public long getCreationTime() {
         return creationTime;
+    }
+
+    @Override
+    public void setTpcToken(@Nonnull TpcToken tpcToken) {
+        this.tpcToken = tpcToken;
+    }
+
+    @Nullable
+    @Override
+    public TpcToken getTpcToken() {
+        return tpcToken;
+    }
+
+    @Override
+    public boolean isCpDirectToLeaderEnabled() {
+        return cpDirectToLeaderRouting;
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,10 @@ package com.hazelcast.jet.pipeline;
 
 import com.hazelcast.function.BiFunctionEx;
 import com.hazelcast.function.BiPredicateEx;
+import com.hazelcast.function.FunctionEx;
 import com.hazelcast.function.SupplierEx;
 import com.hazelcast.jet.Traverser;
+import com.hazelcast.jet.Traversers;
 import com.hazelcast.jet.aggregate.AggregateOperation1;
 import com.hazelcast.jet.aggregate.AggregateOperation2;
 import com.hazelcast.jet.aggregate.AggregateOperation3;
@@ -36,6 +38,7 @@ import com.hazelcast.map.IMap;
 import javax.annotation.Nonnull;
 import java.util.List;
 import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
 import static com.hazelcast.jet.aggregate.AggregateOperations.aggregateOperation2;
@@ -76,16 +79,82 @@ public interface BatchStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
             @Nonnull TriFunction<? super S, ? super K, ? super T, ? extends R> mapFn
     );
 
+    /**
+     * The same as {@link BatchStageWithKey#mapStateful(SupplierEx, TriFunction)},
+     * with an additional parameter {@code deleteStatePredicate} that allows the state to be deleted.
+     * @param createFn function that returns the state object
+     * @param mapFn    function that receives the state object and the input item and
+     *                 outputs the result item. It may modify the state object. It must be
+     *                 stateless and {@linkplain Processor#isCooperative() cooperative}.
+     * @param deleteStatePredicate predicate that determines whether the state should be deleted
+     *                            immediately after processing the event. If this predicate returns
+     *                            {@code true}, the state is removed right away.
+     * @param <S>      type of the state object
+     * @param <R>      type of the result
+     *
+     * @since 5.7
+     */
+    @Nonnull
+    <S, R> BatchStage<R> mapStateful(
+            @Nonnull SupplierEx<? extends S> createFn,
+            @Nonnull TriFunction<? super S, ? super K, ? super T, ? extends R> mapFn,
+            @Nonnull TriPredicate<? super S, ? super K, ? super T> deleteStatePredicate
+    );
+
     @Nonnull @Override
     <S> BatchStage<T> filterStateful(
             @Nonnull SupplierEx<? extends S> createFn,
             @Nonnull BiPredicateEx<? super S, ? super T> filterFn
     );
 
+    /**
+     * The same as {@link BatchStageWithKey#filterStateful(SupplierEx, BiPredicateEx)},
+     * with an additional parameter {@code deleteStatePredicate} that allows the state to be deleted.
+     * @param createFn function that returns the state object
+     * @param filterFn predicate that receives the state object and the input item and
+     *                 outputs a boolean value. It may modify the state object.
+     *                 stateless and {@linkplain Processor#isCooperative() cooperative}.
+     * @param deleteStatePredicate predicate that determines whether the state should be deleted
+     *                            immediately after processing the event. If this predicate returns
+     *                            {@code true}, the state is removed right away.
+     * @param <S>      type of the state object
+     *
+     * @since 5.7
+     */
+    @Nonnull
+    <S> BatchStage<T> filterStateful(
+            @Nonnull SupplierEx<? extends S> createFn,
+            @Nonnull BiPredicateEx<? super S, ? super T> filterFn,
+            @Nonnull TriPredicate<? super S, ? super K, ? super T> deleteStatePredicate
+    );
+
     @Nonnull @Override
     <S, R> BatchStage<R> flatMapStateful(
             @Nonnull SupplierEx<? extends S> createFn,
             @Nonnull TriFunction<? super S, ? super K, ? super T, ? extends Traverser<R>> flatMapFn
+    );
+
+    /**
+     * The same as {@link BatchStageWithKey#flatMapStateful(SupplierEx, TriFunction)}},
+     * with an additional parameter {@code deleteStatePredicate} that allows the state to be deleted.
+     * @param createFn  function that returns the state object
+     * @param flatMapFn function that receives the state object and the input item and
+     *                  outputs the result items. It may modify the state
+     *                  object. It must not return null traverser, but can
+     *                  return an {@linkplain Traversers#empty() empty traverser}.
+     * @param deleteStatePredicate predicate that determines whether the state should be deleted
+     *                            immediately after processing the event. If this predicate returns
+     *                            {@code true}, the state is removed right away.
+     * @param <S>      type of the state object
+     * @param <R>       type of the result
+     *
+     * @since 5.7
+     */
+    @Nonnull
+    <S, R> BatchStage<R> flatMapStateful(
+            @Nonnull SupplierEx<? extends S> createFn,
+            @Nonnull TriFunction<? super S, ? super K, ? super T, ? extends Traverser<R>> flatMapFn,
+            @Nonnull TriPredicate<? super S, ? super K, ? super T> deleteStatePredicate
     );
 
     @Nonnull @Override
@@ -95,6 +164,11 @@ public interface BatchStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
         return (BatchStage<Entry<K, R>>) GeneralStageWithKey.super.<A, R>rollingAggregate(aggrOp);
     }
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.7")
     @Nonnull @Override
     default <V, R> BatchStage<R> mapUsingIMap(
             @Nonnull String mapName,
@@ -103,6 +177,11 @@ public interface BatchStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
         return (BatchStage<R>) GeneralStageWithKey.super.<V, R>mapUsingIMap(mapName, mapFn);
     }
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.7")
     @Nonnull @Override
     default <V, R> BatchStage<R> mapUsingIMap(
             @Nonnull IMap<K, V> iMap,
@@ -111,12 +190,22 @@ public interface BatchStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
         return (BatchStage<R>) GeneralStageWithKey.super.<V, R>mapUsingIMap(iMap, mapFn);
     }
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.4")
     @Nonnull @Override
     <S, R> BatchStage<R> mapUsingService(
             @Nonnull ServiceFactory<?, S> serviceFactory,
             @Nonnull TriFunction<? super S, ? super K, ? super T, ? extends R> mapFn
     );
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.4")
     @Nonnull @Override
     default <S, R> BatchStage<R> mapUsingServiceAsync(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -125,6 +214,11 @@ public interface BatchStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
         return (BatchStage<R>) GeneralStageWithKey.super.mapUsingServiceAsync(serviceFactory, mapAsyncFn);
     }
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.4")
     @Nonnull @Override
     <S, R> BatchStage<R> mapUsingServiceAsync(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -133,6 +227,11 @@ public interface BatchStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
             @Nonnull TriFunction<? super S, ? super K, ? super T, CompletableFuture<R>> mapAsyncFn
     );
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.4")
     @Nonnull @Override
     <S, R> BatchStage<R> mapUsingServiceAsyncBatched(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -140,6 +239,11 @@ public interface BatchStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
             @Nonnull BiFunctionEx<? super S, ? super List<T>, ? extends CompletableFuture<List<R>>> mapAsyncFn
     );
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.4")
     @Nonnull @Override
     <S, R> BatchStage<R> mapUsingServiceAsyncBatched(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -148,12 +252,22 @@ public interface BatchStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
                     ? extends CompletableFuture<List<R>>> mapAsyncFn
     );
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.4")
     @Nonnull @Override
     <S> BatchStage<T> filterUsingService(
             @Nonnull ServiceFactory<?, S> serviceFactory,
             @Nonnull TriPredicate<? super S, ? super K, ? super T> filterFn
     );
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.4")
     @Nonnull @Override
     <S, R> BatchStage<R> flatMapUsingService(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -498,4 +612,68 @@ public interface BatchStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
 
     @Nonnull @Override
     <R> BatchStage<R> customTransform(@Nonnull String stageName, @Nonnull ProcessorMetaSupplier procSupplier);
+
+    /**
+     * Extension of {@link BatchStageWithKey} providing additional capabilities
+     * or convenience methods on top of the default stage API using fluent
+     * interface.
+     *
+     * @param <T> the type of the stream items
+     * @param <K> the type of the key (if applicable)
+     * @param <S> the type implementing additional methods for {@link BatchStageWithKey}
+     *
+     * @apiNote This interface in essence is a visitor pattern for different stage types.
+     * @implNote Extension API type {@code S} should be an interface. It is not mandatory for
+     * {@code S} to extend {@link BatchStageWithKey}. Single extension class can be
+     * applicable to multiple stage types by implementing multiple interfaces.
+     *
+     * @since 5.7
+     */
+    interface StageExtension<T, K, S> {
+        /**
+         * Provides additional API to given stage in a fluent way.
+         *
+         * @param batchStageWithKey stage to be extended
+         * @return extended stage
+         *
+         * @implNote The simplest implementation is just to wrap given stage
+         * and use its methods to implement extension's methods.
+         */
+        @Nonnull
+        S extend(@Nonnull BatchStageWithKey<T, K> batchStageWithKey);
+    }
+
+    /**
+     * Applies extension to this stage in a fluent way.
+     *
+     * <pre>{@code
+     * srcStage.groupingKey(e -> e % 10)
+     *         .using(IMapExtension.iMapExtension())
+     *         // additional methods available here
+     *         .mapUsingPutIfAbsent("my-map", e -> e + 5, Tuple3::tuple3)
+     *         .writeTo(Sinks.logger());
+     * }</pre>
+     * <p>
+     * Usually if the extension creates a pipeline stage, the new stage should be returned
+     * at the end so the pipeline can be continued. {@link Stage#setName(String)} and
+     * {@link Stage#setLocalParallelism(int)} can be used to adjust such stage
+     * in the usual way, for example:
+     * <pre>{@code
+     * srcStage.groupingKey(e -> e % 10)
+     *         .using(IMapExtension.iMapExtension())
+     *         .mapUsingPutIfAbsent("my-map", e -> e + 5, Tuple3::tuple3)
+     *         .setName("check-if-known").setLocalParallelism(2);
+     * }</pre>
+     *
+     * @param extension extension to be applied to this stage
+     * @param <S> the type implementing additional methods for {@link BatchStageWithKey}
+     * @return extended stage
+     *
+     * @since 5.7
+     */
+    @Nonnull
+    default <S> S using(@Nonnull StageExtension<T, K, S> extension) {
+        Objects.requireNonNull(extension, "extension cannot be null");
+        return extension.extend(this);
+    }
 }

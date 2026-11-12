@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,14 @@ import com.hazelcast.client.impl.client.DistributedObjectInfo;
 import com.hazelcast.client.impl.protocol.codec.builtin.CustomTypeFactory;
 import com.hazelcast.client.impl.protocol.codec.holder.AnchorDataListHolder;
 import com.hazelcast.client.impl.protocol.codec.holder.CacheConfigHolder;
+import com.hazelcast.client.impl.protocol.codec.holder.DiscoveryConfigHolder;
+import com.hazelcast.client.impl.protocol.codec.holder.DiscoveryStrategyConfigHolder;
 import com.hazelcast.client.impl.protocol.codec.holder.PagingPredicateHolder;
+import com.hazelcast.client.impl.protocol.codec.holder.VectorPairHolder;
+import com.hazelcast.client.impl.protocol.codec.holder.WanBatchPublisherConfigHolder;
+import com.hazelcast.client.impl.protocol.codec.holder.WanConsumerConfigHolder;
+import com.hazelcast.client.impl.protocol.codec.holder.WanCustomPublisherConfigHolder;
+import com.hazelcast.client.impl.protocol.codec.holder.WanSyncConfigHolder;
 import com.hazelcast.client.impl.protocol.exception.ErrorHolder;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.EvictionConfigHolder;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.ListenerConfigHolder;
@@ -31,9 +38,12 @@ import com.hazelcast.client.impl.protocol.task.dynamicconfig.NearCacheConfigHold
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.PredicateConfigHolder;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.QueryCacheConfigHolder;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.QueueStoreConfigHolder;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.ResourceDefinitionHolder;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.RingbufferStoreConfigHolder;
 import com.hazelcast.cluster.Address;
 import com.hazelcast.config.AttributeConfig;
+import com.hazelcast.config.AwsConfig;
+import com.hazelcast.config.AzureConfig;
 import com.hazelcast.config.BTreeIndexConfig;
 import com.hazelcast.config.BitmapIndexOptions;
 import com.hazelcast.config.CacheSimpleConfig.ExpiryPolicyFactoryConfig.DurationConfig;
@@ -41,9 +51,12 @@ import com.hazelcast.config.CacheSimpleConfig.ExpiryPolicyFactoryConfig.TimedExp
 import com.hazelcast.config.CacheSimpleEntryListenerConfig;
 import com.hazelcast.config.DataPersistenceConfig;
 import com.hazelcast.config.DiskTierConfig;
+import com.hazelcast.config.EurekaConfig;
 import com.hazelcast.config.EventJournalConfig;
+import com.hazelcast.config.GcpConfig;
 import com.hazelcast.config.HotRestartConfig;
 import com.hazelcast.config.IndexConfig;
+import com.hazelcast.config.KubernetesConfig;
 import com.hazelcast.config.MemoryTierConfig;
 import com.hazelcast.config.MergePolicyConfig;
 import com.hazelcast.config.MerkleTreeConfig;
@@ -51,10 +64,14 @@ import com.hazelcast.config.NearCachePreloaderConfig;
 import com.hazelcast.config.PartitioningAttributeConfig;
 import com.hazelcast.config.TieredStoreConfig;
 import com.hazelcast.config.WanReplicationRef;
+import com.hazelcast.config.vector.Metric;
+import com.hazelcast.config.vector.VectorIndexConfig;
 import com.hazelcast.core.HazelcastJsonValue;
+import com.hazelcast.cp.CPGroupId;
 import com.hazelcast.cp.CPMember;
 import com.hazelcast.cp.internal.CPMemberInfo;
 import com.hazelcast.cp.internal.RaftGroupId;
+import com.hazelcast.cp.internal.RaftGroupInfo;
 import com.hazelcast.instance.EndpointQualifier;
 import com.hazelcast.instance.ProtocolType;
 import com.hazelcast.internal.cluster.MemberInfo;
@@ -73,6 +90,7 @@ import com.hazelcast.map.impl.querycache.event.QueryCacheEventData;
 import com.hazelcast.memory.Capacity;
 import com.hazelcast.memory.MemoryUnit;
 import com.hazelcast.partition.MigrationState;
+import com.hazelcast.replicatedmap.impl.record.ReplicatedMapEntryViewHolder;
 import com.hazelcast.scheduledexecutor.ScheduledTaskHandler;
 import com.hazelcast.scheduledexecutor.impl.ScheduledTaskHandlerImpl;
 import com.hazelcast.sql.SqlColumnMetadata;
@@ -81,7 +99,14 @@ import com.hazelcast.sql.impl.QueryId;
 import com.hazelcast.sql.impl.client.SqlError;
 import com.hazelcast.sql.impl.client.SqlPage;
 import com.hazelcast.transaction.impl.xa.SerializableXID;
+import com.hazelcast.vector.SearchOptions;
+import com.hazelcast.vector.SearchOptionsBuilder;
+import com.hazelcast.vector.SearchResult;
+import com.hazelcast.vector.VectorValues;
+import com.hazelcast.vector.impl.DataSearchResult;
+import com.hazelcast.vector.impl.DataVectorDocument;
 import com.hazelcast.version.MemberVersion;
+import com.hazelcast.version.Version;
 
 import javax.transaction.xa.Xid;
 import java.lang.reflect.Array;
@@ -121,8 +146,8 @@ public class ReferenceObjects {
 
                 Object aElement = Array.get(a, i);
                 Object bElement = Array.get(b, i);
-                if (aElement instanceof StackTraceElement && bElement instanceof StackTraceElement) {
-                    if (!isEqualStackTrace((StackTraceElement) aElement, (StackTraceElement) bElement)) {
+                if (aElement instanceof StackTraceElement element && bElement instanceof StackTraceElement element1) {
+                    if (!isEqualStackTrace(element, element1)) {
                         return false;
                     }
                 }
@@ -132,9 +157,9 @@ public class ReferenceObjects {
             }
             return true;
         }
-        if (a instanceof List && b instanceof List) {
-            ListIterator e1 = ((List) a).listIterator();
-            ListIterator e2 = ((List) b).listIterator();
+        if (a instanceof List list1 && b instanceof List list2) {
+            ListIterator e1 = list1.listIterator();
+            ListIterator e2 = list2.listIterator();
             while (e1.hasNext() && e2.hasNext()) {
                 Object o1 = e1.next();
                 Object o2 = e2.next();
@@ -144,26 +169,31 @@ public class ReferenceObjects {
             }
             return !(e1.hasNext() || e2.hasNext());
         }
-        if (a instanceof Entry && b instanceof Entry) {
-            final Entry entryA = (Entry) a;
-            final Entry entryB = (Entry) b;
+        if (a instanceof Entry entryA && b instanceof Entry entryB) {
             return isEqual(entryA.getKey(), entryB.getKey()) && isEqual(entryA.getValue(), entryB.getValue());
         }
         // following classes are list elements and have to be explicitly cast
-        if (a instanceof ListenerConfigHolder && b instanceof ListenerConfigHolder) {
-            return isEqual((ListenerConfigHolder) a, (ListenerConfigHolder) b);
+        if (a instanceof ListenerConfigHolder holderA && b instanceof ListenerConfigHolder holderB) {
+            return isEqual(holderA, holderB);
         }
-        if (a instanceof IndexConfig && b instanceof IndexConfig) {
-            return isEqual((IndexConfig) a, (IndexConfig) b);
+        if (a instanceof IndexConfig configA && b instanceof IndexConfig configB) {
+            return isEqual(configA, configB);
         }
-        if (a instanceof AttributeConfig && b instanceof AttributeConfig) {
-            return isEqual((AttributeConfig) a, (AttributeConfig) b);
+        if (a instanceof AttributeConfig configA && b instanceof AttributeConfig configB) {
+            return isEqual(configA, configB);
         }
-        if (a instanceof QueryCacheConfigHolder && b instanceof QueryCacheConfigHolder) {
-            return isEqual((QueryCacheConfigHolder) a, (QueryCacheConfigHolder) b);
+        if (a instanceof QueryCacheConfigHolder holderA && b instanceof QueryCacheConfigHolder holderB) {
+            return isEqual(holderA, holderB);
         }
-        if (a instanceof CacheSimpleEntryListenerConfig && b instanceof CacheSimpleEntryListenerConfig) {
-            return isEqual((CacheSimpleEntryListenerConfig) a, (CacheSimpleEntryListenerConfig) b);
+        if (a instanceof CacheSimpleEntryListenerConfig configA && b instanceof CacheSimpleEntryListenerConfig configB) {
+            return isEqual(configA, configB);
+        }
+        if (a instanceof DefaultQueryCacheEventData dataA && b instanceof DefaultQueryCacheEventData dataB) {
+            return isEqual(dataA, dataB);
+        }
+        if (a instanceof VectorValues && b instanceof List list && !list.isEmpty() && list.get(0) instanceof VectorPairHolder) {
+            // VectorValues are asymmetrically encoded and decoded
+            return a.equals(CustomTypeFactory.toVectorValues(list));
         }
         return a.equals(b);
     }
@@ -662,6 +692,33 @@ public class ReferenceObjects {
         return Objects.equals(a.getDiskTierConfig(), b.getDiskTierConfig());
     }
 
+    public static boolean isEqual(DefaultQueryCacheEventData a, DefaultQueryCacheEventData that) {
+        if (a == that) {
+            return true;
+        }
+        if (that == null) {
+            return false;
+        }
+
+        if (a.getSequence() != that.getSequence()) {
+            return false;
+        }
+        if (a.getEventType() != that.getEventType()) {
+            return false;
+        }
+        if (a.getPartitionId() != that.getPartitionId()) {
+            return false;
+        }
+        if (!Objects.equals(a.getDataKey(), that.getDataKey())) {
+            return false;
+        }
+        if (!Objects.equals(a.getDataNewValue(), that.getDataNewValue())) {
+            return false;
+        }
+
+        return Objects.equals(a.getDataOldValue(), that.getDataOldValue());
+    }
+
     private static boolean isEqualStackTrace(StackTraceElement stackTraceElement1, StackTraceElement stackTraceElement2) {
         //Not using stackTraceElement.equals
         //because in IBM JDK stacktraceElements with null method name are not equal
@@ -684,10 +741,12 @@ public class ReferenceObjects {
     public static int anInt = 25;
     public static int anEnum = 1;
     public static long aLong = -50992225L;
+    public static float aFloat = 3.14f;
     public static long aPositiveLong = 50992225L;
     public static UUID aUUID = new UUID(123456789, 987654321);
     public static byte[] aByteArray = new byte[]{aByte};
     public static long[] aLongArray = new long[]{aLong};
+    public static float[] aFloatArray = new float[]{aFloat};
     public static String aString = "localhost";
     public static Data aData = new HeapData("111313123131313131".getBytes());
     public static List<Map.Entry<Integer, UUID>> aListOfIntegerToUUID
@@ -703,9 +762,11 @@ public class ReferenceObjects {
     public static List<Integer> aListOfIntegers = Collections.singletonList(anInt);
     public static List<Long> aListOfLongs = Collections.singletonList(aLong);
     public static List<UUID> aListOfUUIDs = Collections.singletonList(aUUID);
+    public static Collection<Collection<UUID>> aListOfListOfUUIDs = Collections.singletonList(aListOfUUIDs);
     public static Address anAddress;
     public static CPMember aCpMember;
     public static List<CPMember> aListOfCpMembers;
+    public static List<CPGroupId> aListOfCpGroupIds;
     public static MigrationState aMigrationState = new MigrationStateImpl(aLong, anInt, anInt, aLong);
     public static FieldDescriptor aFieldDescriptor = CustomTypeFactory.createFieldDescriptor(aString, anInt);
     public static List<FieldDescriptor> aListOfFieldDescriptors = Collections.singletonList(aFieldDescriptor);
@@ -718,7 +779,7 @@ public class ReferenceObjects {
         } catch (UnknownHostException e) {
             e.printStackTrace();
         }
-        aCpMember = new CPMemberInfo(aUUID, anAddress);
+        aCpMember = new CPMemberInfo(aUUID, anAddress, aBoolean);
         aListOfCpMembers = Collections.singletonList(aCpMember);
     }
 
@@ -742,11 +803,19 @@ public class ReferenceObjects {
         aQueryCacheEventData.setSequence(aLong);
         aQueryCacheEventData.setEventType(anInt);
         aQueryCacheEventData.setPartitionId(anInt);
+        aQueryCacheEventData.setMapName(aString);
     }
 
     public static RaftGroupId aRaftGroupId = new RaftGroupId(aString, aLong, aLong);
+    public static RaftGroupInfo aRaftGroupInfo = new RaftGroupInfo(aRaftGroupId, aCpMember, aListOfCpMembers);
+    public static List<RaftGroupId> aListOfRaftGroupIds = Collections.singletonList(aRaftGroupId);
+    public static List<RaftGroupInfo> aListOfRaftGroupInfo = Collections.singletonList(aRaftGroupInfo);
+    public static Map<RaftGroupId, Collection<UUID>> aMapOfRaftGroupIdToListUuid = Collections.singletonMap(aRaftGroupId, aListOfUUIDs);
     public static ScheduledTaskHandler aScheduledTaskHandler = new ScheduledTaskHandlerImpl(aUUID, anInt, aString, aString);
     public static SimpleEntryView<Data, Data> aSimpleEntryView = new SimpleEntryView<>(aData, aData);
+    public static ReplicatedMapEntryViewHolder aReplicatedMapEntryViewHolder = new ReplicatedMapEntryViewHolder(
+            aData, aData, aLong, aLong, aLong, aLong, aLong
+    );
 
     static {
         aSimpleEntryView.setCost(aLong);
@@ -910,7 +979,7 @@ public class ReferenceObjects {
             aString, anEvictionConfigHolder, aWanReplicationRef, aString, aString, aData, aData, aData, aBoolean,
             aBoolean, aBoolean, aBoolean, aBoolean, aHotRestartConfig, anEventJournalConfig, aString, aListOfData,
             aMergePolicyConfig, aBoolean, aListOfListenerConfigHolders, aBoolean, aMerkleTreeConfig, true,
-            aDataPersistenceConfig);
+            aDataPersistenceConfig, aBoolean, aString);
     private static MemberVersion aMemberVersion = new MemberVersion(aByte, aByte, aByte);
     public static Collection<MemberInfo> aListOfMemberInfos = Collections.singletonList(new MemberInfo(anAddress, aUUID, aMapOfStringToString, aBoolean, aMemberVersion,
             ImmutableMap.of(EndpointQualifier.resolve(ProtocolType.WAN, "localhost"), anAddress)));
@@ -925,10 +994,82 @@ public class ReferenceObjects {
     public static SqlSummary aSqlSummary = CustomTypeFactory.createSqlSummary(aString, aBoolean);
     public static JobAndSqlSummary aJobAndSqlSummary = CustomTypeFactory.createJobAndSqlSummary(aBoolean, aLong, aLong, aString, 2, aLong, aLong, aString, aSqlSummary, true, aString, true, false);
     public static List<JobAndSqlSummary> aListJobAndSqlSummary = Collections.singletonList(aJobAndSqlSummary);
-    public static SqlError anSqlError = new SqlError(anInt, aString, aUUID, aBoolean, aString);
+    public static SqlError anSqlError = new SqlError(anInt, aString, aUUID, aBoolean, aString, aBoolean, aString);
     public static SqlPage aSqlPage = SqlPage.fromColumns(Collections.singletonList(SqlColumnType.INTEGER), Collections.singletonList(Arrays.asList(1, 2, 3, 4)), true);
     public static HazelcastJsonValue aHazelcastJsonValue = new HazelcastJsonValue("{'value': ''}");
     public static List<PartitioningAttributeConfig> aListOfPartitioningAttributeConfigs = Collections.singletonList(
             new PartitioningAttributeConfig(aString)
     );
+
+    public static List<SimpleEntryView<Data, Data>> aListOfSimpleEntryViews = Collections.singletonList(
+            aSimpleEntryView
+    );
+
+    public static List<ReplicatedMapEntryViewHolder> aListOfReplicatedMapEntryViewHolders = Collections.singletonList(
+            aReplicatedMapEntryViewHolder
+    );
+
+    public static WanConsumerConfigHolder aWanConsumerConfigHolder =
+            new WanConsumerConfigHolder(aBoolean, aString,aData, Map.of(aString, aData));
+    public static List<WanCustomPublisherConfigHolder> aListOfWanCustomPublisherConfigsHolders =
+            Collections.singletonList(new WanCustomPublisherConfigHolder(aString, aString, aData, Map.of(aString, aData)));
+    public static List<WanBatchPublisherConfigHolder> aListOfWanBatchPublisherConfigHolders =
+            Collections.singletonList(
+                    new WanBatchPublisherConfigHolder(
+                            aString,
+                            aString,
+                            aData,
+                            Map.of(aString, aData),
+                            aString,
+                            aBoolean,
+                            aByte,
+                            anInt,
+                            anInt,
+                            anInt,
+                            anInt,
+                            anInt,
+                            anInt,
+                            anInt,
+                            anInt,
+                            anInt,
+                            aBoolean,
+                            aLong,
+                            aLong,
+                            aString,
+                            new AwsConfig(aString, aBoolean, aBoolean, Map.of(aString, aString)),
+                            new GcpConfig(aString, aBoolean, aBoolean, Map.of(aString, aString)),
+                            new AzureConfig(aString, aBoolean, aBoolean, Map.of(aString, aString)),
+                            new KubernetesConfig(aString, aBoolean, aBoolean, Map.of(aString, aString)),
+                            new EurekaConfig(aString, aBoolean, aBoolean, Map.of(aString, aString)),
+                            new DiscoveryConfigHolder(
+                                    Collections.singletonList(new DiscoveryStrategyConfigHolder(aString, Map.of(aString, aData))),
+                                    aData,
+                                    aData,
+                                    aString
+                            ),
+                            new WanSyncConfigHolder(aByte),
+                            aString
+                    )
+            );
+
+    public static List<ResourceDefinitionHolder> aListOfResourceDefinitionHolders =
+            Collections.singletonList(new ResourceDefinitionHolder(aString, anInt, aByteArray, aString));
+
+    public static VectorIndexConfig aVectorIndexConfig = new VectorIndexConfig(aString, Metric.EUCLIDEAN, 1000, 200, 300, false);
+    public static List<VectorIndexConfig> aList_VectorIndexConfig = List.of(aVectorIndexConfig);
+
+    public static final VectorValues aVectorValues = VectorValues.of(aString, aFloatArray);
+    public static DataVectorDocument aVectorDocument = new DataVectorDocument(aData, aVectorValues);
+    public static List<Map.Entry<Data, DataVectorDocument>> aEntryList_Data_VectorDocument =
+            List.of(Map.entry(aData, aVectorDocument));
+    public static VectorValues aList_VectorPair = aVectorValues;
+    public static SearchOptions aVectorSearchOptions = new SearchOptionsBuilder()
+            .setIncludeValue(false)
+            .setIncludeVectors(false)
+            .limit(100)
+            .hint(aString, aString)
+            .build();
+    public static List<SearchResult<Data, Data>> aList_VectorSearchResult = List.of(new DataSearchResult(aData, aData, aFloat, aVectorValues));
+
+    public static Version aVersion = CustomTypeFactory.createVersion(aByte, aByte);
 }

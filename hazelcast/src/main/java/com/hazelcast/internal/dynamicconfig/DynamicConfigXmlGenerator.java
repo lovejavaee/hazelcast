@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import com.hazelcast.config.CollectionConfig;
 import com.hazelcast.config.Config;
 import com.hazelcast.config.ConfigAccessor;
 import com.hazelcast.config.ConfigXmlGenerator;
+import com.hazelcast.config.DataConnectionConfig;
 import com.hazelcast.config.DataPersistenceConfig;
 import com.hazelcast.config.DiscoveryConfig;
 import com.hazelcast.config.DiscoveryStrategyConfig;
@@ -35,7 +36,6 @@ import com.hazelcast.config.EntryListenerConfig;
 import com.hazelcast.config.EventJournalConfig;
 import com.hazelcast.config.EvictionConfig;
 import com.hazelcast.config.ExecutorConfig;
-import com.hazelcast.config.DataConnectionConfig;
 import com.hazelcast.config.FlakeIdGeneratorConfig;
 import com.hazelcast.config.ItemListenerConfig;
 import com.hazelcast.config.ListenerConfig;
@@ -59,6 +59,7 @@ import com.hazelcast.config.ReplicatedMapConfig;
 import com.hazelcast.config.RingbufferConfig;
 import com.hazelcast.config.RingbufferStoreConfig;
 import com.hazelcast.config.ScheduledExecutorConfig;
+import com.hazelcast.config.SplitBrainPolicyAwareConfig;
 import com.hazelcast.config.TieredStoreConfig;
 import com.hazelcast.config.TopicConfig;
 import com.hazelcast.config.WanBatchPublisherConfig;
@@ -67,6 +68,8 @@ import com.hazelcast.config.WanCustomPublisherConfig;
 import com.hazelcast.config.WanReplicationConfig;
 import com.hazelcast.config.WanReplicationRef;
 import com.hazelcast.config.WanSyncConfig;
+import com.hazelcast.config.vector.VectorCollectionConfig;
+import com.hazelcast.config.vector.VectorIndexConfig;
 import com.hazelcast.internal.config.AliasedDiscoveryConfigUtils;
 import com.hazelcast.internal.util.CollectionUtil;
 import com.hazelcast.memory.Capacity;
@@ -95,12 +98,13 @@ public final class DynamicConfigXmlGenerator {
         Collection<MapConfig> mapConfigs = config.getMapConfigs().values();
         for (MapConfig m : mapConfigs) {
             String cacheDeserializedVal = m.getCacheDeserializedValues() != null
-                    ? m.getCacheDeserializedValues().name().replaceAll("_", "-") : null;
+                    ? m.getCacheDeserializedValues().name().replace('_', '-') : null;
             MergePolicyConfig mergePolicyConfig = m.getMergePolicyConfig();
             gen.open("map", "name", m.getName())
                     .node("in-memory-format", m.getInMemoryFormat())
                     .node("statistics-enabled", m.isStatisticsEnabled())
                     .node("per-entry-stats-enabled", m.isPerEntryStatsEnabled())
+                    .node("oversized-entry-threshold-bytes", m.getOversizedEntryThresholdBytes())
                     .node("cache-deserialized-values", cacheDeserializedVal)
                     .node("backup-count", m.getBackupCount())
                     .node("async-backup-count", m.getAsyncBackupCount())
@@ -129,6 +133,9 @@ public final class DynamicConfigXmlGenerator {
             mapQueryCachesConfigXmlGenerator(gen, m);
             tieredStoreConfigXmlGenerator(gen, m.getTieredStoreConfig());
             mapPartitionAttributesConfigXmlGenerator(gen, m);
+            if (m.getUserCodeNamespace() != null) {
+                gen.node("user-code-namespace", m.getUserCodeNamespace());
+            }
             gen.close();
         }
     }
@@ -182,6 +189,9 @@ public final class DynamicConfigXmlGenerator {
             if (c.getMerkleTreeConfig().getEnabled() != null) {
                 appendMerkleTreeConfig(gen, c.getMerkleTreeConfig());
             }
+            if (c.getUserCodeNamespace() != null) {
+                gen.node("user-code-namespace", c.getUserCodeNamespace());
+            }
 
             gen.node("disable-per-entry-invalidation-events", c.isDisablePerEntryInvalidationEvents())
                     .close();
@@ -209,6 +219,9 @@ public final class DynamicConfigXmlGenerator {
                         .appendProperties(storeConfig.getProperties())
                         .close();
             }
+            if (q.getUserCodeNamespace() != null) {
+                gen.node("user-code-namespace", q.getUserCodeNamespace());
+            }
             MergePolicyConfig mergePolicyConfig = q.getMergePolicyConfig();
             gen.node("split-brain-protection-ref", q.getSplitBrainProtectionName())
                     .node("merge-policy", mergePolicyConfig.getPolicy(), "batch-size", mergePolicyConfig.getBatchSize())
@@ -234,6 +247,9 @@ public final class DynamicConfigXmlGenerator {
                     .node("split-brain-protection-ref", mm.getSplitBrainProtectionName())
                     .node("value-collection-type", mm.getValueCollectionType());
 
+            if (mm.getUserCodeNamespace() != null) {
+                gen.node("user-code-namespace", mm.getUserCodeNamespace());
+            }
             entryListenerConfigXmlGenerator(gen, mm.getEntryListenerConfigs());
             MergePolicyConfig mergePolicyConfig = mm.getMergePolicyConfig();
             gen.node("merge-policy", mergePolicyConfig.getPolicy(), "batch-size", mergePolicyConfig.getBatchSize())
@@ -250,6 +266,10 @@ public final class DynamicConfigXmlGenerator {
                     .node("statistics-enabled", r.isStatisticsEnabled())
                     .node("split-brain-protection-ref", r.getSplitBrainProtectionName())
                     .node("merge-policy", mergePolicyConfig.getPolicy(), "batch-size", mergePolicyConfig.getBatchSize());
+
+            if (r.getUserCodeNamespace() != null) {
+                gen.node("user-code-namespace", r.getUserCodeNamespace());
+            }
 
             if (!r.getListenerConfigs().isEmpty()) {
                 gen.open("entry-listeners");
@@ -286,6 +306,9 @@ public final class DynamicConfigXmlGenerator {
                 gen.close();
             }
             MergePolicyConfig mergePolicyConfig = rbConfig.getMergePolicyConfig();
+            if (rbConfig.getUserCodeNamespace() != null) {
+                gen.node("user-code-namespace", rbConfig.getUserCodeNamespace());
+            }
             gen.node("merge-policy", mergePolicyConfig.getPolicy(), "batch-size", mergePolicyConfig.getBatchSize())
                     .close();
         }
@@ -305,6 +328,9 @@ public final class DynamicConfigXmlGenerator {
                 gen.close();
             }
             gen.node("multi-threading-enabled", t.isMultiThreadingEnabled());
+            if (t.getUserCodeNamespace() != null) {
+                gen.node("user-code-namespace", t.getUserCodeNamespace());
+            }
             gen.close();
         }
     }
@@ -315,6 +341,9 @@ public final class DynamicConfigXmlGenerator {
                     .node("statistics-enabled", t.isStatisticsEnabled())
                     .node("read-batch-size", t.getReadBatchSize())
                     .node("topic-overload-policy", t.getTopicOverloadPolicy());
+            if (t.getUserCodeNamespace() != null) {
+                gen.node("user-code-namespace", t.getUserCodeNamespace());
+            }
 
             if (!t.getMessageListenerConfigs().isEmpty()) {
                 gen.open("message-listeners");
@@ -333,8 +362,11 @@ public final class DynamicConfigXmlGenerator {
                     .node("statistics-enabled", ex.isStatisticsEnabled())
                     .node("pool-size", ex.getPoolSize())
                     .node("queue-capacity", ex.getQueueCapacity())
-                    .node("split-brain-protection-ref", ex.getSplitBrainProtectionName())
-                    .close();
+                    .node("split-brain-protection-ref", ex.getSplitBrainProtectionName());
+            if (ex.getUserCodeNamespace() != null) {
+                gen.node("user-code-namespace", ex.getUserCodeNamespace());
+            }
+            gen.close();
         }
     }
 
@@ -345,8 +377,11 @@ public final class DynamicConfigXmlGenerator {
                     .node("durability", ex.getDurability())
                     .node("capacity", ex.getCapacity())
                     .node("split-brain-protection-ref", ex.getSplitBrainProtectionName())
-                    .node("statistics-enabled", ex.isStatisticsEnabled())
-                    .close();
+                    .node("statistics-enabled", ex.isStatisticsEnabled());
+            if (ex.getUserCodeNamespace() != null) {
+                gen.node("user-code-namespace", ex.getUserCodeNamespace());
+            }
+            gen.close();
         }
     }
 
@@ -361,8 +396,11 @@ public final class DynamicConfigXmlGenerator {
                     .node("capacity-policy", ex.getCapacityPolicy().name())
                     .node("split-brain-protection-ref", ex.getSplitBrainProtectionName())
                     .node("merge-policy", mergePolicyConfig.getPolicy(), "batch-size", mergePolicyConfig.getBatchSize())
-                    .node("statistics-enabled", ex.isStatisticsEnabled())
-                    .close();
+                    .node("statistics-enabled", ex.isStatisticsEnabled());
+            if (ex.getUserCodeNamespace() != null) {
+                gen.node("user-code-namespace", ex.getUserCodeNamespace());
+            }
+             gen.close();
         }
     }
 
@@ -445,6 +483,9 @@ public final class DynamicConfigXmlGenerator {
                         .node("backup-count", config.getBackupCount())
                         .node("async-backup-count", config.getAsyncBackupCount())
                         .node("split-brain-protection-ref", config.getSplitBrainProtectionName());
+                if (config.getUserCodeNamespace() != null) {
+                    gen.node("user-code-namespace", config.getUserCodeNamespace());
+                }
                 appendItemListenerConfigs(gen, config.getItemListenerConfigs());
                 MergePolicyConfig mergePolicyConfig = config.getMergePolicyConfig();
                 gen.node("merge-policy", mergePolicyConfig.getPolicy(), "batch-size", mergePolicyConfig.getBatchSize())
@@ -803,7 +844,7 @@ public final class DynamicConfigXmlGenerator {
                 gen.node("use-public-ip", "true");
             }
             for (String key : c.getProperties().keySet()) {
-                gen.node(key, c.getProperties().get(key));
+                gen.node(key,  c.getProperties().get(key));
             }
             gen.close();
         }
@@ -851,5 +892,43 @@ public final class DynamicConfigXmlGenerator {
             }
             gen.close();
         }
+    }
+
+    public static void vectorCollectionXmlGenerator(ConfigXmlGenerator.XmlGenerator gen, Config config) {
+        Collection<VectorCollectionConfig> vectorCollectionConfigs = config.getVectorCollectionConfigs().values();
+        for (VectorCollectionConfig collectionConfig : vectorCollectionConfigs) {
+            gen.open("vector-collection", "name", collectionConfig.getName())
+                    .node("backup-count", collectionConfig.getBackupCount())
+                    .node("async-backup-count", collectionConfig.getAsyncBackupCount());
+            if (collectionConfig.getUserCodeNamespace() != null) {
+                gen.node("user-code-namespace", collectionConfig.getUserCodeNamespace());
+            }
+            appendSplitBrainPolicyAwareNodes(gen, collectionConfig);
+            gen.open("indexes");
+            for (VectorIndexConfig index : collectionConfig.getVectorIndexConfigs()) {
+                gen.open("index", "name", index.getName())
+                        .node("dimension", index.getDimension())
+                        .node("metric", index.getMetric())
+                        .node("max-degree", index.getMaxDegree())
+                        .node("ef-construction", index.getEfConstruction())
+                        .node("use-deduplication", index.isUseDeduplication());
+                gen.close();
+            }
+            gen.close();
+            gen.close();
+        }
+    }
+
+    /**
+     * Appends split brain protection and merge policy configuration nodes
+     *
+     * @param gen
+     * @param config
+     */
+    private static void appendSplitBrainPolicyAwareNodes(ConfigXmlGenerator.XmlGenerator gen,
+                                                         SplitBrainPolicyAwareConfig config) {
+        gen.node("merge-policy", config.getMergePolicyConfig().getPolicy(),
+                        "batch-size", config.getMergePolicyConfig().getBatchSize())
+                .node("split-brain-protection-ref", config.getSplitBrainProtectionName());
     }
 }

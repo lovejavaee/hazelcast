@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,6 @@
 
 package com.hazelcast.jet.mongodb.impl;
 
-import com.hazelcast.function.BiFunctionEx;
-import com.hazelcast.function.FunctionEx;
 import com.hazelcast.jet.JetException;
 import com.hazelcast.jet.Traverser;
 import com.hazelcast.jet.core.AbstractProcessor;
@@ -25,6 +23,7 @@ import com.hazelcast.jet.core.BroadcastKey;
 import com.hazelcast.jet.core.EventTimeMapper;
 import com.hazelcast.jet.impl.util.Util;
 import com.hazelcast.jet.mongodb.impl.CursorTraverser.EmptyItem;
+import com.hazelcast.jet.mongodb.impl.ReadMongoParams.Aggregates;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.mongodb.MongoException;
@@ -49,6 +48,8 @@ import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map.Entry;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 
 import static com.hazelcast.internal.nio.IOUtil.closeResource;
 import static com.hazelcast.internal.util.Preconditions.checkNotNull;
@@ -84,7 +85,7 @@ import static com.mongodb.client.model.changestream.FullDocument.UPDATE_LOOKUP;
 public class ReadMongoP<I> extends AbstractProcessor {
 
     private static final int BATCH_SIZE = 1000;
-    private final boolean throwOnNonExisting;
+    private final boolean checkExistenceOnEachConnect;
     private ILogger logger;
 
     private int totalParallelism;
@@ -114,19 +115,19 @@ public class ReadMongoP<I> extends AbstractProcessor {
 
     public ReadMongoP(ReadMongoParams<I> params) {
         if (params.isStream()) {
-            EventTimeMapper<I> eventTimeMapper = new EventTimeMapper<>(params.eventTimePolicy);
+            EventTimeMapper<I> eventTimeMapper = new EventTimeMapper<>(params.getEventTimePolicy());
             eventTimeMapper.addPartitions(1);
-            this.reader = new StreamMongoReader(params.databaseName, params.collectionName, params.mapStreamFn,
+            this.reader = new StreamMongoReader(params.databaseName, params.collectionName, params.getMapStreamFn(),
                     params.getStartAtTimestamp(), params.getAggregates(), eventTimeMapper);
         } else {
-            this.reader = new BatchMongoReader(params.databaseName, params.collectionName, params.mapItemFn,
+            this.reader = new BatchMongoReader(params.databaseName, params.collectionName, params.getMapItemFn(),
                     params.getAggregates());
         }
         this.connection = new MongoConnection(
                 params.clientSupplier, params.dataConnectionRef, client -> reader.connect(client, snapshotsEnabled)
         );
         this.nonDistributed = params.isNonDistributed();
-        this.throwOnNonExisting = params.isThrowOnNonExisting();
+        this.checkExistenceOnEachConnect = params.isCheckExistenceOnEachConnect();
     }
 
     @Override
@@ -258,18 +259,18 @@ public class ReadMongoP<I> extends AbstractProcessor {
             try {
                 logger.fine("(Re)connecting to MongoDB");
                 if (databaseName != null) {
-                    if (throwOnNonExisting) {
+                    this.database = newClient.getDatabase(databaseName);
+
+                    if (checkExistenceOnEachConnect) {
                         checkDatabaseExists(newClient, databaseName);
                     }
-                    this.database = newClient.getDatabase(databaseName);
                 }
                 if (collectionName != null) {
                     checkState(databaseName != null, "you have to provide database name if collection name" +
                             " is specified");
-                    //noinspection ConstantValue false warn by intellij
                     checkState(database != null, "database " + databaseName + " does not exists");
 
-                    if (throwOnNonExisting) {
+                    if (checkExistenceOnEachConnect) {
                         checkCollectionExists(database, collectionName);
                     }
                     this.collection = database.getCollection(collectionName);
@@ -301,16 +302,16 @@ public class ReadMongoP<I> extends AbstractProcessor {
     }
 
     private final class BatchMongoReader extends MongoChunkedReader {
-        private final FunctionEx<Document, I> mapItemFn;
-        private final List<Document> aggregates;
+        private final Function<Document, I> mapItemFn;
+        private final Aggregates aggregates;
         private Traverser<Document> delegate;
         private Object lastKey;
 
         private BatchMongoReader(
                 String databaseName,
                 String collectionName,
-                FunctionEx<Document, I> mapItemFn,
-                List<Document> aggregates) {
+                Function<Document, I> mapItemFn,
+                Aggregates aggregates) {
             super(databaseName, collectionName);
             this.mapItemFn = mapItemFn;
             this.aggregates = aggregates;
@@ -318,7 +319,7 @@ public class ReadMongoP<I> extends AbstractProcessor {
 
         @Override
         void onConnect(MongoClient mongoClient, boolean supportsSnapshots) {
-            List<Bson> aggregateList = new ArrayList<>(aggregates);
+            List<Bson> aggregateList = new ArrayList<>(aggregates.nonNulls());
             if (supportsSnapshots && !hasSorts(aggregateList)) {
                 aggregateList.add(sort(ascending("_id")).toBsonDocument());
             }
@@ -326,7 +327,8 @@ public class ReadMongoP<I> extends AbstractProcessor {
                 aggregateList.add(match(gt("_id", lastKey)).toBsonDocument());
             }
             if (canParallelize) {
-                aggregateList.addAll(0, partitionAggregate(totalParallelism, processorIndex, false));
+                aggregateList.addAll(aggregates.indexAfterFilter(),
+                        partitionAggregate(totalParallelism, processorIndex, false));
             }
             if (collection != null) {
                 this.delegate = delegateForCollection(collection, aggregateList);
@@ -349,7 +351,7 @@ public class ReadMongoP<I> extends AbstractProcessor {
 
         private Traverser<Document> delegateForCollection(MongoCollection<Document> collection,
                                                           List<Bson> aggregateList) {
-            return traverseIterable(collection.aggregate(aggregateList));
+            return traverseIterable(collection.aggregate(aggregateList).batchSize(BATCH_SIZE));
         }
 
         private Traverser<Document> delegateForDb(MongoDatabase database, List<Bson> aggregateList) {
@@ -403,9 +405,9 @@ public class ReadMongoP<I> extends AbstractProcessor {
     }
 
     private final class StreamMongoReader extends MongoChunkedReader {
-        private final BiFunctionEx<ChangeStreamDocument<Document>, Long, I> mapFn;
+        private final BiFunction<ChangeStreamDocument<Document>, Long, I> mapFn;
         private final BsonTimestamp startTimestamp;
-        private final List<Document> aggregates;
+        private final Aggregates aggregates;
         private final EventTimeMapper<I> eventTimeMapper;
         private MongoCursor<ChangeStreamDocument<Document>> cursor;
         private BsonDocument resumeToken;
@@ -413,9 +415,9 @@ public class ReadMongoP<I> extends AbstractProcessor {
         private StreamMongoReader(
                 String databaseName,
                 String collectionName,
-                BiFunctionEx<ChangeStreamDocument<Document>, Long, I> mapFn,
+                BiFunction<ChangeStreamDocument<Document>, Long, I> mapFn,
                 BsonTimestamp startTimestamp,
-                List<Document> aggregates,
+                Aggregates aggregates,
                 EventTimeMapper<I> eventTimeMapper
         ) {
             super(databaseName, collectionName);
@@ -427,9 +429,10 @@ public class ReadMongoP<I> extends AbstractProcessor {
 
         @Override
         public void onConnect(MongoClient mongoClient, boolean snapshotsEnabled) {
-            List<Bson> aggregateList = new ArrayList<>(aggregates);
+            List<Bson> aggregateList = new ArrayList<>(aggregates.nonNulls());
             if (canParallelize) {
-                aggregateList.addAll(0, partitionAggregate(totalParallelism, processorIndex, true));
+                aggregateList.addAll(aggregates.indexAfterFilter(),
+                        partitionAggregate(totalParallelism, processorIndex, true));
             }
             ChangeStreamIterable<Document> changeStream;
             if (collection != null) {
@@ -496,8 +499,8 @@ public class ReadMongoP<I> extends AbstractProcessor {
         @Override
         public void restore(Object value) {
             if (value != null) {
-                if (value instanceof BsonDocument) {
-                    this.resumeToken = (BsonDocument) value;
+                if (value instanceof BsonDocument document) {
+                    this.resumeToken = document;
                 }
             }
         }

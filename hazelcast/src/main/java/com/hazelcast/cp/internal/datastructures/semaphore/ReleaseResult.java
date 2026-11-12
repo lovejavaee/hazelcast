@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ final class ReleaseResult {
     }
 
     static ReleaseResult failed(Collection<AcquireInvocationKey> cancelledWaitKeys) {
-        return new ReleaseResult(false, Collections.<AcquireInvocationKey>emptyList(), cancelledWaitKeys);
+        return new ReleaseResult(false, Collections.emptyList(), cancelledWaitKeys);
     }
 
     public boolean success() {

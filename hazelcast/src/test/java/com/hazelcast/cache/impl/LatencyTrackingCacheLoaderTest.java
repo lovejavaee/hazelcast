@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.hazelcast.cache.impl;
 
+import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.spi.impl.tenantcontrol.TenantContextual;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.internal.diagnostics.StoreLatencyPlugin;
@@ -55,11 +56,12 @@ public class LatencyTrackingCacheLoaderTest extends HazelcastTestSupport {
     @SuppressWarnings("unchecked")
     public void setup() {
         HazelcastInstance hz = createHazelcastInstance();
-        plugin = new StoreLatencyPlugin(getNodeEngineImpl(hz));
+        NodeEngineImpl nodeEngine = getNodeEngineImpl(hz);
+        plugin = new StoreLatencyPlugin(nodeEngine.getLogger(StoreLatencyPlugin.class), nodeEngine.getProperties());
         delegate = mock(CacheLoader.class);
         TenantContextual<CacheLoader<String, String>> contextual = TenantContextual.create(() -> delegate,
                 () -> true, TenantControl.NOOP_TENANT_CONTROL);
-        cacheLoader = new LatencyTrackingCacheLoader<String, String>(contextual, plugin, NAME);
+        cacheLoader = new LatencyTrackingCacheLoader<>(contextual, plugin, NAME);
     }
 
     @Test
@@ -78,7 +80,7 @@ public class LatencyTrackingCacheLoaderTest extends HazelcastTestSupport {
     @Test
     public void loadAll() {
         Collection<String> keys = asList("key1", "key2");
-        Map<String, String> values = new HashMap<String, String>();
+        Map<String, String> values = new HashMap<>();
         values.put("key1", "value1");
         values.put("key2", "value2");
 

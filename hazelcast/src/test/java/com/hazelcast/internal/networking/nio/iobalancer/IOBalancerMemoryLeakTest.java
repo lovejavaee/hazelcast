@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ public class IOBalancerMemoryLeakTest extends HazelcastTestSupport {
 
     @Before
     @After
-    public void killAllHazelcastInstances() throws IOException {
+    public void killAllHazelcastInstances() {
         HazelcastInstanceFactory.terminateAll();
     }
 
@@ -63,6 +63,8 @@ public class IOBalancerMemoryLeakTest extends HazelcastTestSupport {
         for (int i = 0; i < 100; i++) {
             communicator.getClusterInfo();
         }
+        System.gc();
+
         final IOBalancer ioBalancer = getIoBalancer(instance);
         assertTrueEventually(() -> {
             int inPipelineSize = ioBalancer.getInLoadTracker().getPipelines().size();
@@ -84,12 +86,10 @@ public class IOBalancerMemoryLeakTest extends HazelcastTestSupport {
 
         Runnable runnable = () -> {
             for (int i = 0; i < connectionCountPerThread; i++) {
-                Socket socket;
-                try {
-                    socket = new Socket(address.getHost(), address.getPort());
+
+                try (Socket socket = new Socket(address.getHost(), address.getPort())) {
                     socket.getOutputStream().write(Protocols.CLUSTER.getBytes());
                     sleepMillis(1000);
-                    socket.close();
                 } catch (IOException e) {
                     e.printStackTrace();
                 }

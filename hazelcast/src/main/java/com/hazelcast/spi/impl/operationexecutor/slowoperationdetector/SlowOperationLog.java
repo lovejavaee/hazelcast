@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,17 +42,17 @@ final class SlowOperationLog {
 
     private static final int SHORT_STACKTRACE_LENGTH = 200;
 
-    final AtomicInteger totalInvocations = new AtomicInteger(0);
+    final AtomicInteger totalInvocations = new AtomicInteger();
 
     final String operation;
     final String stackTrace;
     final String shortStackTrace;
 
-    private final ConcurrentHashMap<Integer, Invocation> invocations = new ConcurrentHashMap<Integer, Invocation>();
+    private final ConcurrentHashMap<Integer, Invocation> invocations = new ConcurrentHashMap<>();
 
     SlowOperationLog(String stackTrace, Object task) {
-        if (task instanceof Operation) {
-            this.operation = OperationDescriptors.toOperationDesc((Operation) task);
+        if (task instanceof Operation op) {
+            this.operation = OperationDescriptors.toOperationDesc(op);
         } else {
             this.operation = task.getClass().getName();
         }

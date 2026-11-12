@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import com.hazelcast.jet.sql.impl.connector.SqlConnector;
 import com.hazelcast.jet.sql.impl.connector.SqlProcessors;
 import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.sql.impl.QueryException;
+import com.hazelcast.sql.impl.expression.Expression;
 import com.hazelcast.sql.impl.expression.ExpressionEvalContext;
 import com.hazelcast.sql.impl.row.JetSqlRow;
 import com.hazelcast.sql.impl.schema.MappingField;
@@ -31,10 +32,15 @@ import com.hazelcast.sql.impl.schema.Table;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.security.Permission;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static com.hazelcast.jet.core.Edge.between;
+import static com.hazelcast.security.permission.ActionConstants.ACTION_READ;
+import static com.hazelcast.security.permission.ConnectorPermission.file;
+import static java.util.Collections.singletonList;
 
 public class FileSqlConnector implements SqlConnector {
 
@@ -60,20 +66,19 @@ public class FileSqlConnector implements SqlConnector {
         return TYPE_NAME;
     }
 
+    @Nonnull
     @Override
-    public boolean isStream() {
-        return false;
+    public String defaultObjectType() {
+        return "File";
     }
 
     @Nonnull
     @Override
     public List<MappingField> resolveAndValidateFields(
             @Nonnull NodeEngine nodeEngine,
-            @Nonnull Map<String, String> options,
-            @Nonnull List<MappingField> userFields,
-            @Nonnull String[] externalName,
-            @Nullable String dataConnectionName) {
-        return resolveAndValidateFields(options, userFields);
+            @Nonnull SqlExternalResource externalResource,
+            @Nonnull List<MappingField> userFields) {
+        return resolveAndValidateFields(externalResource.options(), userFields);
     }
 
     @Nonnull
@@ -86,15 +91,19 @@ public class FileSqlConnector implements SqlConnector {
 
     @Nonnull
     @Override
+    public List<Permission> permissionsForResolve(SqlExternalResource resource, NodeEngine nodeEngine) {
+        return singletonList(file(resource.options().get(OPTION_PATH), ACTION_READ));
+    }
+
+    @Nonnull
+    @Override
     public Table createTable(
             @Nonnull NodeEngine nodeEngine,
             @Nonnull String schemaName,
             @Nonnull String mappingName,
-            @Nonnull String[] externalName,
-            @Nullable String dataConnectionName,
-            @Nonnull Map<String, String> options,
+            @Nonnull SqlExternalResource externalResource,
             @Nonnull List<MappingField> resolvedFields) {
-        Metadata metadata = METADATA_RESOLVERS.resolveMetadata(resolvedFields, options);
+        Metadata metadata = METADATA_RESOLVERS.resolveMetadata(resolvedFields, externalResource.options());
 
         return new FileTable.SpecificFileTable(
                 INSTANCE,
@@ -102,7 +111,8 @@ public class FileSqlConnector implements SqlConnector {
                 mappingName,
                 metadata.fields(),
                 metadata.processorMetaSupplier(),
-                metadata.queryTargetSupplier()
+                metadata.queryTargetSupplier(),
+                externalResource.objectType()
         );
     }
 
@@ -132,13 +142,14 @@ public class FileSqlConnector implements SqlConnector {
             @Nonnull DagBuildContext context,
             @Nullable HazelcastRexNode predicate,
             @Nonnull List<HazelcastRexNode> projection,
+            @Nullable List<Map<String, Expression<?>>> partitionPruningCandidates,
             @Nullable FunctionEx<ExpressionEvalContext, EventTimePolicy<JetSqlRow>> eventTimePolicyProvider
     ) {
         if (eventTimePolicyProvider != null) {
             throw QueryException.error("Ordering functions are not supported on top of " + TYPE_NAME + " mappings");
         }
 
-        FileTable table = (FileTable) context.getTable();
+        FileTable table = context.getTable();
 
         Vertex vStart = context.getDag().newUniqueVertex(table.toString(), table.processorMetaSupplier());
 
@@ -155,5 +166,19 @@ public class FileSqlConnector implements SqlConnector {
 
         context.getDag().edge(between(vStart, vEnd).isolated());
         return vEnd;
+    }
+
+    @Override
+    public boolean supportsExpression(@Nonnull HazelcastRexNode expression) {
+        return true;
+    }
+
+    @Override
+    public Set<String> nonSensitiveConnectorOptions() {
+        Set<String> set = SqlConnector.super.nonSensitiveConnectorOptions();
+        // Note: OPTION_PATH and OPTION_GLOB are considered sensitive and won't be returned.
+        set.add(OPTION_SHARED_FILE_SYSTEM);
+        set.add(OPTION_IGNORE_FILE_NOT_FOUND);
+        return set;
     }
 }

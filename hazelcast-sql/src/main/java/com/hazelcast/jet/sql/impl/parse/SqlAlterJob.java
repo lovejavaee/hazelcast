@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,7 +36,6 @@ import javax.annotation.Nullable;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.function.Supplier;
 
 import static com.hazelcast.jet.sql.impl.parse.ParserResource.RESOURCE;
 import static com.hazelcast.jet.sql.impl.parse.UnparseUtil.unparseOptions;
@@ -122,18 +121,9 @@ public class SqlAlterJob extends SqlAlter {
                 throw validator.newValidationError(option, RESOURCE.duplicateOption(key));
             }
 
-            Supplier<Long> valueAsLong = () -> {
-                try {
-                    return Long.parseLong(value);
-                } catch (NumberFormatException e) {
-                    throw validator.newValidationError(option.value(),
-                            RESOURCE.jobOptionIncorrectNumber(key, value));
-                }
-            };
-
             switch (key) {
                 case "snapshotIntervalMillis":
-                    deltaConfig.setSnapshotIntervalMillis(valueAsLong.get());
+                    deltaConfig.setSnapshotIntervalMillis(ParseUtils.parseLong(validator, option));
                     break;
                 case "autoScaling":
                     deltaConfig.setAutoScaling(Boolean.parseBoolean(value));
@@ -148,11 +138,15 @@ public class SqlAlterJob extends SqlAlter {
                     deltaConfig.setStoreMetricsAfterJobCompletion(Boolean.parseBoolean(value));
                     break;
                 case "maxProcessorAccumulatedRecords":
-                    deltaConfig.setMaxProcessorAccumulatedRecords(valueAsLong.get());
+                    deltaConfig.setMaxProcessorAccumulatedRecords(ParseUtils.parseLong(validator, option));
                     break;
                 case "suspendOnFailure":
                     deltaConfig.setSuspendOnFailure(Boolean.parseBoolean(value));
                     break;
+                case "userCodeNamespace":
+                case "processingGuarantee":
+                case "initialSnapshotName":
+                    throw validator.newValidationError(option.key(), RESOURCE.notSupported(key, "ALTER JOB"));
                 default:
                     throw validator.newValidationError(option.key(), RESOURCE.unknownJobOption(key));
             }

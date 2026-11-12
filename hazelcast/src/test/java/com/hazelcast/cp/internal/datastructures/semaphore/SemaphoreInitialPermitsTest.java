@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -74,6 +74,7 @@ public class SemaphoreInitialPermitsTest extends HazelcastRaftTestSupport {
     private ISemaphore semaphore;
 
     @Before
+    @Override
     public void init() {
         factory = createHazelcastInstanceFactory(3);
         HazelcastInstance[] instances = newInstances(3, 3, 0);

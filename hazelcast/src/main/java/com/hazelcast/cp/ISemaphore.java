@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -112,7 +112,7 @@ import java.util.concurrent.TimeUnit;
  * the exactly-once execution semantics for the session-aware version.
  * For instance, even if a {@link #release()} call is internally retried
  * because of a crashed Hazelcast member, the permit is released only once.
- * However, this guarantee is not given for the sessionless, a.k.a,
+ * However, this guarantee is not given for the sessionless, a.k.a.,
  * JDK-compatible CP {@link ISemaphore}. For this version, you can tune
  * execution semantics via
  * {@link CPSubsystemConfig#setFailOnIndeterminateOperationState(boolean)}.
@@ -124,6 +124,7 @@ public interface ISemaphore extends DistributedObject {
      *
      * @return name of this instance
      */
+    @Override
     String getName();
 
     /**

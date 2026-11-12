@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -93,7 +93,9 @@ public class QueryTask implements Runnable {
             return;
         }
 
-        // TODO: We can reject the query, if leader is not able to reach majority of the followers
+        // TODO: We can reject the query, if leader is not able to reach majority of the followers.
+        // That would also cover a leader which has applied its own removal from the group and is
+        // still serving this policy, unlike LINEARIZABLE queries. See RaftNodeImpl#canQueryLinearizable.
 
         handleAnyLocalRead();
     }
@@ -131,7 +133,7 @@ public class QueryTask implements Runnable {
         QueryState queryState = state.leaderState().queryState();
 
         if (logger.isFineEnabled()) {
-            logger.fine("Adding query at commit index: " + commitIndex + ", query round: " + queryState.queryRound());
+            logger.fine("Adding query at commit index: %s, query round: %s", commitIndex, queryState.queryRound());
         }
 
         if (queryState.addQuery(commitIndex, operation, resultFuture) == 1) {

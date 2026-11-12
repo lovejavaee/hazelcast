@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,12 @@
 
 package com.hazelcast.query.impl.getters;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.JsonParser;
+import tools.jackson.core.JsonParser;
 import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.internal.serialization.impl.DataInputNavigableJsonAdapter;
 import com.hazelcast.internal.serialization.impl.NavigableJsonInputAdapter;
 import com.hazelcast.internal.serialization.Data;
+import tools.jackson.core.json.JsonFactory;
 
 import java.io.IOException;
 
@@ -31,15 +31,16 @@ public final class JsonDataGetter extends AbstractJsonGetter {
 
     private static final int UTF_CHARACTER_COUNT_FIELD_SIZE = 4;
 
-    private JsonFactory factory = new JsonFactory();
+    private final JsonFactory factory = new JsonFactory();
 
-    private InternalSerializationService ss;
+    private final InternalSerializationService ss;
 
     JsonDataGetter(InternalSerializationService ss) {
         super(null);
         this.ss = ss;
     }
 
+    @Override
     protected JsonParser createParser(Object obj) throws IOException {
         Data data = (Data) obj;
         return factory.createParser(data.toByteArray(),

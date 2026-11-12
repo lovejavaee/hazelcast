@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.client.impl.ClientEndpoint;
 import com.hazelcast.client.impl.clientside.ClientTestUtil;
 import com.hazelcast.client.impl.clientside.HazelcastClientInstanceImpl;
+import com.hazelcast.client.config.RoutingMode;
 import com.hazelcast.client.impl.spi.impl.listener.ClientConnectionRegistration;
 import com.hazelcast.client.impl.spi.impl.listener.ClientListenerServiceImpl;
 import com.hazelcast.client.test.ClientTestSupport;
@@ -67,13 +68,13 @@ import static org.mockito.Mockito.mock;
 public class ListenerLeakTest extends ClientTestSupport {
 
 
-    @Parameterized.Parameters(name = "smartRouting:{0}")
+    @Parameterized.Parameters(name = "allMembersRouting:{0}")
     public static Collection<Object[]> parameters() {
         return asList(new Object[][]{{false}, {true}});
     }
 
     @Parameterized.Parameter
-    public boolean smartRouting;
+    public boolean allMembersRouting;
 
     protected final TestHazelcastFactory hazelcastFactory = new TestHazelcastFactory();
 
@@ -94,7 +95,7 @@ public class ListenerLeakTest extends ClientTestSupport {
 
     private Collection<Node> createNodes() {
         int NODE_COUNT = 3;
-        Collection<Node> nodes = new ArrayList<Node>(3);
+        Collection<Node> nodes = new ArrayList<>(3);
         for (int i = 0; i < NODE_COUNT; i++) {
             HazelcastInstance hazelcast = hazelcastFactory.newHazelcastInstance();
             nodes.add(getNode(hazelcast));
@@ -119,7 +120,8 @@ public class ListenerLeakTest extends ClientTestSupport {
 
     private HazelcastInstance newHazelcastClient() {
         ClientConfig clientConfig = new ClientConfig();
-        clientConfig.getNetworkConfig().setSmartRouting(smartRouting);
+        clientConfig.getNetworkConfig().getClusterRoutingConfig().setRoutingMode(allMembersRouting
+                ? RoutingMode.ALL_MEMBERS : RoutingMode.SINGLE_MEMBER);
         return hazelcastFactory.newHazelcastClient(clientConfig);
     }
 
@@ -244,7 +246,8 @@ public class ListenerLeakTest extends ClientTestSupport {
         //This test does not add any user listener because
         //we are testing if any event handler of internal listeners are leaking
         ClientConfig clientConfig = new ClientConfig();
-        clientConfig.getNetworkConfig().setSmartRouting(smartRouting);
+        clientConfig.getNetworkConfig().getClusterRoutingConfig().setRoutingMode(allMembersRouting
+                ? RoutingMode.ALL_MEMBERS : RoutingMode.SINGLE_MEMBER);
         clientConfig.getConnectionStrategyConfig().getConnectionRetryConfig().setClusterConnectTimeoutMillis(Long.MAX_VALUE);
         HazelcastInstance hazelcast = hazelcastFactory.newHazelcastInstance();
         HazelcastInstance client = hazelcastFactory.newHazelcastClient(clientConfig);
@@ -263,7 +266,7 @@ public class ListenerLeakTest extends ClientTestSupport {
 
         assertTrueEventually(() -> {
             for (Node node : nodes) {
-                assertEquals(0, node.getClientEngine().getClusterListenerService().getClusterListeningEndpoints().size());
+                assertEquals(0, node.getClientEngine().getClusterViewListenerService().getClusterListeningEndpoints().size());
             }
         });
     }

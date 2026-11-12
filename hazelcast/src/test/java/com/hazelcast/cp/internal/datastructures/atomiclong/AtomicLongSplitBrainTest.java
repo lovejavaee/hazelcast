@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,8 +21,8 @@ import com.hazelcast.cp.IAtomicLong;
 import com.hazelcast.core.IndeterminateOperationStateException;
 import com.hazelcast.core.OperationTimeoutException;
 import com.hazelcast.cp.internal.RaftSplitBrainTestSupport;
-import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.HazelcastParallelClassRunner;
+import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
@@ -32,9 +32,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static com.hazelcast.cp.internal.HazelcastRaftTestSupport.waitUntilCPDiscoveryCompleted;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
-import static org.hamcrest.Matchers.lessThanOrEqualTo;
-import static org.junit.Assert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
@@ -44,7 +42,7 @@ public class AtomicLongSplitBrainTest extends RaftSplitBrainTestSupport {
     private final AtomicBoolean done = new AtomicBoolean();
     private final AtomicLong increments = new AtomicLong();
     private final AtomicLong indeterminate = new AtomicLong();
-    private Future[] futures;
+    private Future<?>[] futures;
 
     @Override
     protected void onBeforeSplitBrainCreated(HazelcastInstance[] instances) {
@@ -66,13 +64,13 @@ public class AtomicLongSplitBrainTest extends RaftSplitBrainTestSupport {
     protected void onAfterSplitBrainHealed(HazelcastInstance[] instances) throws Exception {
         sleepSeconds(3);
         done.set(true);
-        for (Future future : futures) {
+        for (Future<?> future : futures) {
             assertCompletesEventually(future);
             future.get();
         }
         IAtomicLong atomic = instances[0].getCPSubsystem().getAtomicLong(name);
-        assertThat(atomic.get(), greaterThanOrEqualTo(increments.get()));
-        assertThat(atomic.get(), lessThanOrEqualTo(increments.get() + indeterminate.get()));
+        assertThat(atomic.get()).isGreaterThanOrEqualTo(increments.get());
+        assertThat(atomic.get()).isLessThanOrEqualTo(increments.get() + indeterminate.get());
     }
 
     private class Adder implements Runnable {

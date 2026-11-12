@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.hazelcast.dataconnection.impl;
 
+import com.hazelcast.client.test.TestHazelcastFactory;
 import com.hazelcast.config.Config;
 import com.hazelcast.config.DataConnectionConfig;
 import com.hazelcast.core.HazelcastException;
@@ -25,7 +26,6 @@ import com.hazelcast.dataconnection.impl.DataConnectionTestUtil.DummyDataConnect
 import com.hazelcast.jet.impl.util.Util;
 import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
-import com.hazelcast.test.TestHazelcastInstanceFactory;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.After;
@@ -34,6 +34,9 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
+import java.util.Map;
+
+import static com.hazelcast.dataconnection.impl.DataConnectionTestUtil.DUMMY_TYPE;
 import static com.hazelcast.dataconnection.impl.HikariTestUtil.assertEventuallyNoHikariThreads;
 import static com.hazelcast.jet.core.TestUtil.createMap;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -46,10 +49,10 @@ public class DataConnectionServiceImplTest extends HazelcastTestSupport {
     private static final String TEST_CONFIG = "test-config";
     private static final String TEST_DYNAMIC_CONFIG = "test-dynamic-config";
     private static final String TEST_VIA_SERVICE_CONFIG = "test-via-service-config";
-    public static final String DUMMY_DATA_CONNECTION_TYPE = "DUMMY";
+    public static final String DUMMY_DATA_CONNECTION_TYPE = DUMMY_TYPE;
 
     private final Config config = smallInstanceConfig();
-    private final TestHazelcastInstanceFactory hazelcastInstanceFactory = createHazelcastInstanceFactory(1);
+    private final TestHazelcastFactory hazelcastInstanceFactory = new TestHazelcastFactory();
     private HazelcastInstance instance;
     private InternalDataConnectionService dataConnectionService;
 
@@ -122,8 +125,8 @@ public class DataConnectionServiceImplTest extends HazelcastTestSupport {
         );
 
         assertTrueEventually(() -> assertThat(dataConnectionViaService.isClosed())
-                    .describedAs("DataConnection should have been closed when replaced by DataConnection from dynamic config")
-                    .isTrue());
+                .describedAs("DataConnection should have been closed when replaced by DataConnection from dynamic config")
+                .isTrue());
 
         DataConnection dataConnection = dataConnectionService.getAndRetainDataConnection(TEST_VIA_SERVICE_CONFIG, DummyDataConnection.class);
 
@@ -250,13 +253,14 @@ public class DataConnectionServiceImplTest extends HazelcastTestSupport {
                         .setProperty("customProperty", "value")
         );
 
+        Map<String, String> map = createMap("customProperty", "value");
         assertThatThrownBy(() -> dataConnectionService.createOrReplaceSqlDataConnection(
                 TEST_DYNAMIC_CONFIG, // same name as in config added above
                 DUMMY_DATA_CONNECTION_TYPE,
                 false,
-                createMap("customProperty", "value")
+                map
         )).isInstanceOf(HazelcastException.class)
-          .hasMessage("Cannot replace a data connection created from configuration");
+                .hasMessage("Cannot replace a data connection created from configuration");
     }
 
     @Test
@@ -403,7 +407,7 @@ public class DataConnectionServiceImplTest extends HazelcastTestSupport {
     @Test
     public void should_return_data_connection_type() {
         String type = dataConnectionService.typeForDataConnection(TEST_CONFIG);
-        assertThat(type).isEqualTo("DUMMY");
+        assertThat(type).isEqualTo(DUMMY_TYPE);
     }
 
     @Test
@@ -411,6 +415,14 @@ public class DataConnectionServiceImplTest extends HazelcastTestSupport {
         assertThatThrownBy(() -> dataConnectionService.typeForDataConnection("non-existing-data-connection"))
                 .isInstanceOf(HazelcastException.class)
                 .hasMessage("Data connection 'non-existing-data-connection' not found");
+    }
+
+    @Test
+    public void should_fail_from_client() {
+        HazelcastInstance client = hazelcastInstanceFactory.newHazelcastClient();
+        assertThatThrownBy(() -> client.getDataConnectionService())
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("DataConnectionService is not available on the client");
     }
 
     private InternalDataConnectionService getDataConnectionService() {

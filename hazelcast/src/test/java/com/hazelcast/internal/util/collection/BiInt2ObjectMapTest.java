@@ -1,6 +1,6 @@
 /*
  * Original work Copyright 2015 Real Logic Ltd.
- * Modified work Copyright (c) 2015-2023, Hazelcast, Inc. All Rights Reserved.
+ * Modified work Copyright (c) 2015-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,42 +20,34 @@ package com.hazelcast.internal.util.collection;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import com.hazelcast.internal.util.collection.BiInt2ObjectMap.EntryConsumer;
-import org.hamcrest.core.CombinableMatcher;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
 import java.util.HashSet;
 import java.util.Set;
-import java.util.function.Consumer;
 
-import static org.hamcrest.CoreMatchers.either;
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.Matchers.greaterThan;
-import static org.hamcrest.core.IsEqual.equalTo;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThat;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class BiInt2ObjectMapTest {
-    private final BiInt2ObjectMap<String> map = new BiInt2ObjectMap<String>();
+    private final BiInt2ObjectMap<String> map = new BiInt2ObjectMap<>();
 
     @Test
     public void shouldInitialiseUnderlyingImplementation() {
         final int initialCapacity = 10;
         final double loadFactor = 0.6;
-        final BiInt2ObjectMap<String> map = new BiInt2ObjectMap<String>(initialCapacity, loadFactor);
+        final BiInt2ObjectMap<String> map = new BiInt2ObjectMap<>(initialCapacity, loadFactor);
 
-        CombinableMatcher.CombinableEitherMatcher<Integer> either = either(is(initialCapacity));
-        assertThat(map.capacity(), either.or(greaterThan(initialCapacity)));
-        assertThat(map.loadFactor(), is(loadFactor));
+        assertThat(map.capacity()).isGreaterThanOrEqualTo(initialCapacity);
+        assertThat(map.loadFactor()).isEqualTo(loadFactor);
     }
 
     @Test
     public void shouldReportEmpty() {
-        assertThat(map.isEmpty(), is(true));
+        assertThat(map.isEmpty()).isTrue();
     }
 
     @Test
@@ -65,7 +57,7 @@ public class BiInt2ObjectMapTest {
         final int keyPartB = 7;
 
         assertNull(map.put(keyPartA, keyPartB, testValue));
-        assertThat(map.size(), is(1));
+        assertThat(map.size()).isEqualTo(1);
     }
 
     @Test
@@ -75,7 +67,7 @@ public class BiInt2ObjectMapTest {
         final int keyPartB = 7;
 
         assertNull(map.put(keyPartA, keyPartB, testValue));
-        assertThat(map.get(keyPartA, keyPartB), is(testValue));
+        assertThat(map.get(keyPartA, keyPartB)).isEqualTo(testValue);
     }
 
     @Test
@@ -93,13 +85,13 @@ public class BiInt2ObjectMapTest {
         final int keyPartB = 7;
 
         map.put(keyPartA, keyPartB, testValue);
-        assertThat(map.remove(keyPartA, keyPartB), is(testValue));
+        assertThat(map.remove(keyPartA, keyPartB)).isEqualTo(testValue);
         assertNull(map.get(keyPartA, keyPartB));
     }
 
     @Test
     public void shouldIterateValues() {
-        final Set<String> expectedSet = new HashSet<String>();
+        final Set<String> expectedSet = new HashSet<>();
         final int count = 7;
 
         for (int i = 0; i < count; i++) {
@@ -108,39 +100,29 @@ public class BiInt2ObjectMapTest {
             map.put(i, i + 97, value);
         }
 
-        final Set<String> actualSet = new HashSet<String>();
+        final Set<String> actualSet = new HashSet<>();
 
-        map.forEach(new Consumer<String>() {
-            @Override
-            public void accept(String s) {
-                actualSet.add(s);
-            }
-        });
+        map.forEach(actualSet::add);
 
-        assertThat(actualSet, equalTo(expectedSet));
+        assertThat(actualSet).isEqualTo(expectedSet);
     }
 
     @Test
     public void shouldIterateEntries() {
-        final Set<EntryCapture<String>> expectedSet = new HashSet<EntryCapture<String>>();
+        final Set<EntryCapture<String>> expectedSet = new HashSet<>();
         final int count = 7;
 
         for (int i = 0; i < count; i++) {
             final String value = String.valueOf(i);
-            expectedSet.add(new EntryCapture<String>(i, i + 97, value));
+            expectedSet.add(new EntryCapture<>(i, i + 97, value));
             map.put(i, i + 97, value);
         }
 
-        final Set<EntryCapture<String>> actualSet = new HashSet<EntryCapture<String>>();
+        final Set<EntryCapture<String>> actualSet = new HashSet<>();
 
-        map.forEach(new EntryConsumer<String>() {
-            @Override
-            public void accept(int keyPartA, int keyPartB, String value) {
-                actualSet.add(new EntryCapture<String>(keyPartA, keyPartB, value));
-            }
-        });
+        map.forEach((keyPartA, keyPartB, value) -> actualSet.add(new EntryCapture<>(keyPartA, keyPartB, value)));
 
-        assertThat(actualSet, equalTo(expectedSet));
+        assertThat(actualSet).isEqualTo(expectedSet);
     }
 
     public static class EntryCapture<V> {
@@ -154,6 +136,7 @@ public class BiInt2ObjectMapTest {
             this.value = value;
         }
 
+        @Override
         public boolean equals(final Object o) {
             if (this == o) {
                 return true;
@@ -163,12 +146,13 @@ public class BiInt2ObjectMapTest {
                 return false;
             }
 
-            final EntryCapture that = (EntryCapture) o;
+            final EntryCapture<?> that = (EntryCapture<?>) o;
 
             return keyPartA == that.keyPartA && keyPartB == that.keyPartB && value.equals(that.value);
 
         }
 
+        @Override
         public int hashCode() {
             int result = keyPartA;
             result = 31 * result + keyPartB;

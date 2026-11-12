@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.hazelcast.client.cp.internal.datastructures.lock;
 
+import com.hazelcast.client.cp.internal.datastructures.CPClientProxy;
 import com.hazelcast.client.impl.clientside.ClientMessageDecoder;
 import com.hazelcast.client.impl.protocol.ClientMessage;
 import com.hazelcast.client.impl.protocol.codec.FencedLockGetLockOwnershipCodec;
@@ -24,8 +25,6 @@ import com.hazelcast.client.impl.protocol.codec.FencedLockTryLockCodec;
 import com.hazelcast.client.impl.protocol.codec.FencedLockUnlockCodec;
 import com.hazelcast.client.impl.protocol.codec.CPGroupDestroyCPObjectCodec;
 import com.hazelcast.client.impl.spi.ClientContext;
-import com.hazelcast.client.impl.spi.ClientProxy;
-import com.hazelcast.client.impl.spi.impl.ClientInvocation;
 import com.hazelcast.client.impl.spi.impl.ClientInvocationFuture;
 import com.hazelcast.client.impl.ClientDelegatingFuture;
 import com.hazelcast.cp.CPGroupId;
@@ -33,7 +32,7 @@ import com.hazelcast.cp.internal.RaftGroupId;
 import com.hazelcast.cp.internal.datastructures.lock.LockOwnershipState;
 import com.hazelcast.cp.internal.datastructures.lock.LockService;
 import com.hazelcast.cp.internal.datastructures.lock.proxy.AbstractFencedLockProxy;
-import com.hazelcast.cp.internal.session.AbstractProxySessionManager;
+import com.hazelcast.cp.internal.session.ProxySessionManager;
 import com.hazelcast.cp.lock.FencedLock;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
 
@@ -44,7 +43,7 @@ import java.util.concurrent.locks.Condition;
 /**
  * Client-side proxy of Raft-based {@link FencedLock} API
  */
-public class FencedLockProxy extends ClientProxy implements FencedLock {
+public class FencedLockProxy extends CPClientProxy implements FencedLock {
 
     private static final ClientMessageDecoder GET_LOCK_OWNERSHIP_STATE_RESPONSE_DECODER = clientMessage -> {
         FencedLockGetLockOwnershipCodec.ResponseParameters params = FencedLockGetLockOwnershipCodec
@@ -55,7 +54,7 @@ public class FencedLockProxy extends ClientProxy implements FencedLock {
     private final FencedLockImpl lock;
 
     public FencedLockProxy(ClientContext context, RaftGroupId groupId, String proxyName, String objectName) {
-        super(LockService.SERVICE_NAME, proxyName, context);
+        super(LockService.SERVICE_NAME, proxyName, context, groupId, objectName);
         this.lock = new FencedLockImpl(getClient().getProxySessionManager(), groupId, proxyName, objectName);
     }
 
@@ -132,7 +131,7 @@ public class FencedLockProxy extends ClientProxy implements FencedLock {
     @Override
     public void onDestroy() {
         ClientMessage msg = CPGroupDestroyCPObjectCodec.encodeRequest(lock.getGroupId(), getServiceName(), lock.getObjectName());
-        new ClientInvocation(getClient(), msg, name).invoke().joinInternal();
+        invokeClientRequest(msg, name).joinInternal();
     }
 
     @Override
@@ -143,14 +142,14 @@ public class FencedLockProxy extends ClientProxy implements FencedLock {
 
 
     private class FencedLockImpl extends AbstractFencedLockProxy {
-        FencedLockImpl(AbstractProxySessionManager sessionManager, RaftGroupId groupId, String proxyName, String objectName) {
+        FencedLockImpl(ProxySessionManager sessionManager, RaftGroupId groupId, String proxyName, String objectName) {
             super(sessionManager, groupId, proxyName, objectName);
         }
 
         @Override
         protected InternalCompletableFuture<Long> doLock(long sessionId, long threadId, UUID invocationUid) {
             ClientMessage request = FencedLockLockCodec.encodeRequest(groupId, objectName, sessionId, threadId, invocationUid);
-            ClientInvocationFuture future = new ClientInvocation(getClient(), request, name).invoke();
+            ClientInvocationFuture future = invokeClientRequest(request, name);
             return new ClientDelegatingFuture<>(future, getSerializationService(), FencedLockLockCodec::decodeResponse);
         }
 
@@ -159,7 +158,7 @@ public class FencedLockProxy extends ClientProxy implements FencedLock {
                                                             long timeoutMillis) {
             ClientMessage request = FencedLockTryLockCodec.encodeRequest(groupId, objectName, sessionId, threadId,
                     invocationUid, timeoutMillis);
-            ClientInvocationFuture future = new ClientInvocation(getClient(), request, name).invoke();
+            ClientInvocationFuture future = invokeClientRequest(request, name);
             return new ClientDelegatingFuture<>(future, getSerializationService(), FencedLockTryLockCodec::decodeResponse);
         }
 
@@ -167,14 +166,14 @@ public class FencedLockProxy extends ClientProxy implements FencedLock {
         protected InternalCompletableFuture<Boolean> doUnlock(long sessionId, long threadId, UUID invocationUid) {
             ClientMessage request = FencedLockUnlockCodec.encodeRequest(groupId, objectName, sessionId, threadId,
                     invocationUid);
-            ClientInvocationFuture future = new ClientInvocation(getClient(), request, name).invoke();
+            ClientInvocationFuture future = invokeClientRequest(request, name);
             return new ClientDelegatingFuture<>(future, getSerializationService(), FencedLockUnlockCodec::decodeResponse);
         }
 
         @Override
         protected InternalCompletableFuture<LockOwnershipState> doGetLockOwnershipState() {
             ClientMessage request = FencedLockGetLockOwnershipCodec.encodeRequest(groupId, objectName);
-            ClientInvocationFuture future = new ClientInvocation(getClient(), request, name).invoke();
+            ClientInvocationFuture future = invokeClientRequest(request, name);
             return new ClientDelegatingFuture<>(future, getSerializationService(), GET_LOCK_OWNERSHIP_STATE_RESPONSE_DECODER);
         }
     }

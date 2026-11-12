@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,12 +34,13 @@ import com.hazelcast.cp.internal.raftop.metadata.GetMembershipChangeScheduleOp;
 import com.hazelcast.cp.internal.raftop.metadata.GetRaftGroupOp;
 import com.hazelcast.cp.internal.session.ProxySessionManagerService;
 import com.hazelcast.cp.lock.FencedLock;
-import com.hazelcast.instance.StaticMemberNodeContext;
+import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.instance.impl.Node;
 import com.hazelcast.instance.impl.NodeState;
-import com.hazelcast.test.HazelcastParallelClassRunner;
+import com.hazelcast.test.TestEnvironment;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.SlowTest;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
@@ -59,17 +60,11 @@ import static com.hazelcast.cp.internal.raft.QueryPolicy.LINEARIZABLE;
 import static com.hazelcast.cp.internal.raft.impl.RaftUtil.getCommitIndex;
 import static com.hazelcast.cp.internal.raft.impl.RaftUtil.getLastLogOrSnapshotEntry;
 import static com.hazelcast.cp.internal.raft.impl.RaftUtil.getSnapshotEntry;
-import static com.hazelcast.cp.internal.session.AbstractProxySessionManager.NO_SESSION_ID;
-import static com.hazelcast.instance.impl.HazelcastInstanceFactory.newHazelcastInstance;
+import static com.hazelcast.cp.internal.session.ProxySessionManager.NO_SESSION_ID;
 import static com.hazelcast.internal.util.FutureUtil.returnWithDeadline;
 import static com.hazelcast.test.Accessors.getAddress;
-import static com.hazelcast.test.Accessors.getNode;
-import static com.hazelcast.test.Accessors.getNodeEngineImpl;
-import static com.hazelcast.test.TestHazelcastInstanceFactory.initOrCreateConfig;
 import static java.util.Arrays.asList;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.greaterThan;
-import static org.hamcrest.Matchers.isIn;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -125,7 +120,7 @@ public class CPMemberAddRemoveTest extends HazelcastRaftTestSupport {
 
         assertClusterSizeEventually(2, instances[1]);
 
-        CPMemberInfo removedEndpoint = new CPMemberInfo(member);
+        CPMemberInfo removedEndpoint = new CPMemberInfo(member.getUuid(), member.getAddress(), false);
         instances[1].getCPSubsystem().getCPSubsystemManagementService().removeCPMember(removedEndpoint.getUuid())
                     .toCompletableFuture().get();
 
@@ -308,8 +303,8 @@ public class CPMemberAddRemoveTest extends HazelcastRaftTestSupport {
         long newGroupIdSeed = getRaftService(newInstances[0]).getMetadataGroupManager().getGroupIdSeed();
         RaftGroupId newGroupId = getRaftInvocationManager(instances[0]).createRaftGroup(CPGroup.DEFAULT_GROUP_NAME).get();
 
-        assertThat(newGroupIdSeed, greaterThan(groupIdSeed));
-        assertThat(newGroupId.getSeed(), greaterThan(groupId.getSeed()));
+        assertThat(newGroupIdSeed).isGreaterThan(groupIdSeed);
+        assertThat(newGroupId.getSeed()).isGreaterThan(groupId.getSeed());
 
         try {
             long1.incrementAndGet();
@@ -327,7 +322,7 @@ public class CPMemberAddRemoveTest extends HazelcastRaftTestSupport {
 
             for (HazelcastInstance instance : newInstances) {
                 Member localMember = instance.getCluster().getLocalMember();
-                assertThat(new CPMemberInfo(localMember), isIn(endpoints));
+                assertThat(new CPMemberInfo(localMember)).isIn(endpoints);
             }
         });
     }
@@ -579,6 +574,8 @@ public class CPMemberAddRemoveTest extends HazelcastRaftTestSupport {
 
         instances[0].getCPSubsystem().getCPSubsystemManagementService().reset().toCompletableFuture().get();
 
+        // TODO - This is relying on a timeout, resetting internal state is not actually invoked.
+        // it is skipped on reset as it is not an actual RaftRemoteService.
         assertTrueEventually(() -> {
             ProxySessionManagerService service = getNodeEngineImpl(instances[3]).getService(ProxySessionManagerService.SERVICE_NAME);
             assertEquals(NO_SESSION_ID, service.getSession((RaftGroupId) lock.getGroupId()));
@@ -628,6 +625,7 @@ public class CPMemberAddRemoveTest extends HazelcastRaftTestSupport {
 
     @Test
     public void testCPMemberIdentityChanges_whenLocalMemberIsRecovered_duringRestart() throws ExecutionException, InterruptedException {
+        Assume.assumeTrue("Test requires mock network for address reuse", TestEnvironment.isMockNetwork());
         HazelcastInstance[] instances = newInstances(3);
         waitAllForLeaderElection(instances, getMetadataGroupId(instances[0]));
 
@@ -638,16 +636,19 @@ public class CPMemberAddRemoveTest extends HazelcastRaftTestSupport {
         assertClusterSizeEventually(2, instances[1]);
 
         instances[1].getCPSubsystem().getCPSubsystemManagementService().removeCPMember(localCpMember.getUuid())
-                    .toCompletableFuture().get();
+                .toCompletableFuture().get();
 
-        instances[0] = newHazelcastInstance(initOrCreateConfig(createConfig(3, 3)), randomString(),
-                new StaticMemberNodeContext(factory, localMember));
+        instances[0] = factory.builder()
+                .withAddress(localMember.getAddress())
+                .withUuid(localMember.getUuid())
+                .withConfig(createConfig(3, 3))
+                .construct();
         assertEquals(localMember, instances[0].getCluster().getLocalMember());
 
         assertTrueAllTheTime(() -> assertNull(instances[0].getCPSubsystem().getLocalCPMember()), 5);
 
         instances[0].getCPSubsystem().getCPSubsystemManagementService().promoteToCPMember()
-                    .toCompletableFuture().get();
+                .toCompletableFuture().get();
         assertNotNull(instances[0].getCPSubsystem().getLocalCPMember());
         assertNotEquals(localCpMember, instances[0].getCPSubsystem().getLocalCPMember());
     }
@@ -900,6 +901,7 @@ public class CPMemberAddRemoveTest extends HazelcastRaftTestSupport {
         assertTrue(newMetadataGroupId.getSeed() > initialMetadataGroupId.getSeed());
         assertEquals(newMetadataGroupId.getSeed(), getRaftService(newInstance1).getMetadataGroupId().getSeed());
         assertEquals(newMetadataGroupId.getSeed(), getRaftService(newInstance2).getMetadataGroupId().getSeed());
+        waitUntilCPDiscoveryCompleted(instances[0], newInstance1, newInstance2);
 
         instances[0].getCPSubsystem().getAtomicLong("long@group1").set(1);
         instances[0].getCPSubsystem().getAtomicLong("long@group2").set(2);
@@ -1082,13 +1084,13 @@ public class CPMemberAddRemoveTest extends HazelcastRaftTestSupport {
         HazelcastInstance[] instances = newInstances(7, 5, 0);
 
         int concurrent = 5;
-        Future[] futures = new Future[concurrent];
+        Future<?>[] futures = new Future[concurrent];
         for (int i = 0; i < concurrent; i++) {
             int ix = i;
             futures[i] = spawn(() -> instances[ix].shutdown());
         }
 
-        for (Future f : futures) {
+        for (var f : futures) {
             assertCompletesEventually(f);
             f.get();
         }

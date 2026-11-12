@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -154,6 +154,36 @@ public class AwsClientConfiguratorTest {
 
         // then
         // throws exception
+    }
+
+    @Test
+    public void resolveEc2EndpointsNonStandardRegions() {
+        assertEquals("ec2.cn-north-1.amazonaws.com.cn",
+            resolveEc2Endpoint(AwsConfig.builder().build(), "cn-north-1"));
+        assertEquals("ec2.cn-northwest-1.amazonaws.com.cn",
+            resolveEc2Endpoint(AwsConfig.builder().build(), "cn-northwest-1"));
+        assertEquals("ec2.us-iso-east-1.c2s.ic.gov",
+            resolveEc2Endpoint(AwsConfig.builder().build(), "us-iso-east-1"));
+        assertEquals("ec2.us-isob-east-1.sc2s.sgov.gov",
+            resolveEc2Endpoint(AwsConfig.builder().build(), "us-isob-east-1"));
+        assertEquals("ec2.eu-isoe-west-1.cloud.adc-e.uk",
+            resolveEc2Endpoint(AwsConfig.builder().build(), "eu-isoe-west-1"));
+        assertEquals("ec2.us-isof-east-1.csp.hci.ic.gov",
+            resolveEc2Endpoint(AwsConfig.builder().build(), "us-isof-east-1"));
+    }
+
+    @Test
+    public void resolveEcsEndpointsNonStandardRegions() {
+        assertEquals("ecs.cn-north-1.amazonaws.com.cn",
+            resolveEcsEndpoint(AwsConfig.builder().build(), "cn-north-1"));
+        assertEquals("ecs.us-iso-east-1.c2s.ic.gov",
+            resolveEcsEndpoint(AwsConfig.builder().build(), "us-iso-east-1"));
+        assertEquals("ecs.us-isob-east-1.sc2s.sgov.gov",
+            resolveEcsEndpoint(AwsConfig.builder().build(), "us-isob-east-1"));
+        assertEquals("ecs.eu-isoe-west-1.cloud.adc-e.uk",
+            resolveEcsEndpoint(AwsConfig.builder().build(), "eu-isoe-west-1"));
+        assertEquals("ecs.us-isof-east-1.csp.hci.ic.gov",
+            resolveEcsEndpoint(AwsConfig.builder().build(), "us-isof-east-1"));
     }
 
 }

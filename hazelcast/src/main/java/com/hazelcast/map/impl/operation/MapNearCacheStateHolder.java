@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.map.impl.operation;
 
 import com.hazelcast.internal.nearcache.impl.invalidation.Invalidator;
 import com.hazelcast.internal.nearcache.impl.invalidation.MetaDataGenerator;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.internal.services.ObjectNamespace;
 import com.hazelcast.internal.services.ServiceNamespace;
 import com.hazelcast.map.impl.MapDataSerializerHook;
@@ -32,11 +33,11 @@ import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
 import static com.hazelcast.map.impl.MapDataSerializerHook.MAP_NEAR_CACHE_STATE_HOLDER;
-import static java.util.Collections.EMPTY_LIST;
 
 /**
  * Holder for Near Cache metadata.
@@ -44,7 +45,7 @@ import static java.util.Collections.EMPTY_LIST;
 public class MapNearCacheStateHolder implements IdentifiedDataSerializable {
 
     protected volatile UUID partitionUuid;
-    protected volatile List<Object> mapNameSequencePairs = EMPTY_LIST;
+    protected volatile List<Object> mapNameSequencePairs = Collections.emptyList();
 
     private MapReplicationOperation mapReplicationOperation;
 
@@ -112,10 +113,7 @@ public class MapNearCacheStateHolder implements IdentifiedDataSerializable {
             out.writeLong(partitionUuid.getLeastSignificantBits());
         }
 
-        out.writeInt(mapNameSequencePairs.size());
-        for (Object item : mapNameSequencePairs) {
-            out.writeObject(item);
-        }
+        SerializationUtil.writeList(mapNameSequencePairs, out);
     }
 
     @Override
@@ -123,11 +121,7 @@ public class MapNearCacheStateHolder implements IdentifiedDataSerializable {
         boolean nullUuid = in.readBoolean();
         partitionUuid = nullUuid ? null : new UUID(in.readLong(), in.readLong());
 
-        int size = in.readInt();
-        mapNameSequencePairs = new ArrayList(size);
-        for (int i = 0; i < size; i++) {
-            mapNameSequencePairs.add(in.readObject());
-        }
+        mapNameSequencePairs = SerializationUtil.readList(in);
     }
 
     @Override

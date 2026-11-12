@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,10 @@
 package com.hazelcast.cp.internal.raft.impl.testing;
 
 import com.hazelcast.cluster.impl.MemberImpl;
+import com.hazelcast.core.HazelcastException;
 import com.hazelcast.cp.CPGroupId;
 import com.hazelcast.cp.CPMember;
+import com.hazelcast.cp.internal.raft.ChunkedSnapshotAwareService;
 import com.hazelcast.cp.internal.raft.SnapshotAwareService;
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
 import com.hazelcast.cp.internal.raft.impl.RaftIntegration;
@@ -28,20 +30,27 @@ import com.hazelcast.cp.internal.raft.impl.dataservice.RestoreSnapshotRaftRunnab
 import com.hazelcast.cp.internal.raft.impl.dto.AppendFailureResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendRequest;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendSuccessResponse;
-import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshot;
+import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshotRequest;
+import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshotResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.PreVoteRequest;
 import com.hazelcast.cp.internal.raft.impl.dto.PreVoteResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.TriggerLeaderElection;
 import com.hazelcast.cp.internal.raft.impl.dto.VoteRequest;
 import com.hazelcast.cp.internal.raft.impl.dto.VoteResponse;
+import com.hazelcast.cp.internal.raft.impl.log.SnapshotChunk;
+import com.hazelcast.cp.internal.raft.impl.log.SnapshotEntry;
 import com.hazelcast.instance.BuildInfoProvider;
 import com.hazelcast.internal.cluster.Versions;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.impl.LoggingServiceImpl;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
+import com.hazelcast.spi.impl.servicemanager.ServiceInfo;
 import com.hazelcast.version.MemberVersion;
 
-import java.util.Collections;
+import javax.annotation.Nonnull;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -52,20 +61,19 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
+import static com.hazelcast.cp.internal.datastructures.snapshot.ChunkUtil.createChunksFromSnapshot;
 import static com.hazelcast.cp.internal.raft.impl.RaftUtil.newAddress;
-import static org.hamcrest.Matchers.anyOf;
-import static org.hamcrest.Matchers.nullValue;
-import static org.hamcrest.Matchers.sameInstance;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertThat;
 
 /**
  * In-memory {@link RaftIntegration} implementation for Raft core testing. Creates a single thread executor
  * to execute/schedule tasks and operations.
  * <p>
- * Additionally provides a mechanism to define custom drop/allow rules for specific message types and endpoints.
+ * Additionally, provides a mechanism to define custom drop/allow rules for specific message types and endpoints.
  */
-public class LocalRaftIntegration implements RaftIntegration {
+public class LocalRaftIntegration
+        implements RaftIntegration {
 
     private final RaftEndpoint localEndpoint;
     private final CPGroupId groupId;
@@ -75,17 +83,19 @@ public class LocalRaftIntegration implements RaftIntegration {
     private final ConcurrentMap<RaftEndpoint, RaftNodeImpl> nodes = new ConcurrentHashMap<>();
     private final LoggingServiceImpl loggingService;
 
-    private final Set<EndpointDropEntry> endpointDropRules = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private final Set<EndpointDropEntry> endpointDropRules = ConcurrentHashMap.newKeySet();
     private final Map<RaftEndpoint, Function<Object, Object>> alterRPCRules = new ConcurrentHashMap<>();
-    private final Set<Class> dropAllRules = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private final Set<Class<?>> dropAllRules = ConcurrentHashMap.newKeySet();
+    private final ServiceInfo serviceInfo;
 
-    LocalRaftIntegration(TestRaftEndpoint localEndpoint, CPGroupId groupId, SnapshotAwareService service,
+    LocalRaftIntegration(TestRaftEndpoint localEndpoint, CPGroupId groupId, ServiceInfo serviceInfo,
                          boolean appendNopEntryOnLeaderElection) {
         this.localEndpoint = localEndpoint;
         this.groupId = groupId;
-        this.service = service;
+        this.service = serviceInfo != null ? serviceInfo.getService() : null;
+        this.serviceInfo = serviceInfo;
         this.appendNopEntryOnLeaderElection = appendNopEntryOnLeaderElection;
-        this.loggingService = new LoggingServiceImpl("dev", "log4j2", BuildInfoProvider.getBuildInfo(), true, null);
+        this.loggingService = new LoggingServiceImpl("dev", "log4j2", BuildInfoProvider.getBuildInfo(), true, false, null);
         loggingService.setThisMember(getThisMember(localEndpoint));
     }
 
@@ -97,7 +107,7 @@ public class LocalRaftIntegration implements RaftIntegration {
     void discoverNode(RaftNodeImpl node) {
         assertNotEquals(localEndpoint, node.getLocalMember());
         RaftNodeImpl old = nodes.putIfAbsent(node.getLocalMember(), node);
-        assertThat(old, anyOf(nullValue(), sameInstance(node)));
+        assertThat(old).isIn(null, node);
     }
 
     boolean removeNode(RaftNodeImpl node) {
@@ -159,7 +169,7 @@ public class LocalRaftIntegration implements RaftIntegration {
 
     @Override
     public boolean isReachable(RaftEndpoint endpoint) {
-        return localEndpoint.equals(endpoint) || nodes.containsKey(endpoint);
+        return endpoint != null && (localEndpoint.equals(endpoint) || nodes.containsKey(endpoint));
     }
 
     @Override
@@ -268,7 +278,7 @@ public class LocalRaftIntegration implements RaftIntegration {
     }
 
     @Override
-    public boolean send(InstallSnapshot request, RaftEndpoint target) {
+    public boolean send(InstallSnapshotRequest request, RaftEndpoint target) {
         assertNotEquals(localEndpoint, target);
         RaftNodeImpl node = nodes.get(target);
         if (node == null) {
@@ -278,7 +288,22 @@ public class LocalRaftIntegration implements RaftIntegration {
             return true;
         }
 
-        node.handleInstallSnapshot(alterMessageIfNeeded(request, target));
+        node.handleInstallSnapshotRequest(alterMessageIfNeeded(request, target));
+        return true;
+    }
+
+    @Override
+    public boolean send(InstallSnapshotResponse response, RaftEndpoint target) {
+        assertNotEquals(localEndpoint, target);
+        RaftNodeImpl node = nodes.get(target);
+        if (node == null) {
+            return false;
+        }
+        if (shouldDrop(response, target)) {
+            return true;
+        }
+
+        node.handleInstallSnapshotResponse(alterMessageIfNeeded(response, target));
         return true;
     }
 
@@ -298,8 +323,8 @@ public class LocalRaftIntegration implements RaftIntegration {
     }
 
     private boolean shouldDrop(Object message, RaftEndpoint target) {
-        return dropAllRules.contains(message.getClass())
-                || endpointDropRules.contains(new EndpointDropEntry(message.getClass(), target));
+        return dropAllRules.contains(message.getClass()) || endpointDropRules.contains(
+                new EndpointDropEntry(message.getClass(), target));
     }
 
     private <T> T alterMessageIfNeeded(T message, RaftEndpoint endpoint) {
@@ -328,19 +353,53 @@ public class LocalRaftIntegration implements RaftIntegration {
         }
     }
 
+    private Object takeServiceSnapshots(long commitIndex) {
+        var snapshotPerServiceInfo = new HashMap<>();
+
+        if (service != null) {
+            Object snapshot = service instanceof ChunkedSnapshotAwareService<?, ?> chunkedService
+                    ? chunkedService.takeSnapshotChunks(groupId, commitIndex)
+                    : service.takeSnapshot(groupId, commitIndex);
+
+            if (snapshot != null) {
+                snapshotPerServiceInfo.put(serviceInfo, snapshot);
+            }
+        }
+
+        return snapshotPerServiceInfo;
+    }
+
+    @Nonnull
     @Override
-    public Object takeSnapshot(long commitIndex) {
-        try {
-            Object snapshot = service.takeSnapshot(groupId, commitIndex);
-            return new RestoreSnapshotRaftRunnable(groupId, commitIndex, snapshot);
-        } catch (Throwable t) {
-            return t;
+    public List<SnapshotChunk> takeGroupSnapshotChunks(int snapshotTerm, long commitIndex,
+                                                       Collection<RaftEndpoint> groupMembers,
+                                                       long groupMembersLogIndex) {
+        Object snapshot = takeServiceSnapshots(commitIndex);
+        ILogger logger = loggingService.getLogger(getClass());
+        return createChunksFromSnapshot(this, snapshotTerm, commitIndex, groupMembers,
+                groupMembersLogIndex, snapshot, logger);
+    }
+
+    @Override
+    public void restoreSnapshot(SnapshotEntry snapshotEntry) {
+        List<SnapshotChunk> chunks = snapshotEntry.snapshotChunks();
+
+        for (SnapshotChunk snapshotChunk : chunks) {
+            List<Object> ops = (List<Object>) snapshotChunk.operation();
+            for (Object snapshotOp : ops) {
+                Object result = runOperation(snapshotOp, snapshotChunk.index());
+                if (result instanceof Throwable throwable) {
+                    throw new HazelcastException(throwable);
+                }
+            }
         }
     }
 
     @Override
-    public void restoreSnapshot(Object operation, long commitIndex) {
-        runOperation(operation, commitIndex);
+    public void resetForChunkedSnapshotRestore() {
+        if (service instanceof ChunkedSnapshotAwareService service) {
+            service.prepareForSnapshotRestore(groupId);
+        }
     }
 
     @Override
@@ -348,11 +407,11 @@ public class LocalRaftIntegration implements RaftIntegration {
         return null;
     }
 
-    void dropMessagesToEndpoint(RaftEndpoint endpoint, Class messageType) {
+    void dropMessagesToEndpoint(RaftEndpoint endpoint, Class<?> messageType) {
         endpointDropRules.add(new EndpointDropEntry(messageType, endpoint));
     }
 
-    void allowMessagesToEndpoint(RaftEndpoint endpoint, Class messageType) {
+    void allowMessagesToEndpoint(RaftEndpoint endpoint, Class<?> messageType) {
         endpointDropRules.remove(new EndpointDropEntry(messageType, endpoint));
     }
 
@@ -360,11 +419,11 @@ public class LocalRaftIntegration implements RaftIntegration {
         endpointDropRules.removeIf(entry -> endpoint.equals(entry.endpoint));
     }
 
-    void dropMessagesToAll(Class messageType) {
+    void dropMessagesToAll(Class<?> messageType) {
         dropAllRules.add(messageType);
     }
 
-    void allowMessagesToAll(Class messageType) {
+    void allowMessagesToAll(Class<?> messageType) {
         dropAllRules.remove(messageType);
     }
 
@@ -395,10 +454,10 @@ public class LocalRaftIntegration implements RaftIntegration {
     }
 
     private static class EndpointDropEntry {
-        final Class messageType;
+        final Class<?> messageType;
         final RaftEndpoint endpoint;
 
-        private EndpointDropEntry(Class messageType, RaftEndpoint endpoint) {
+        private EndpointDropEntry(Class<?> messageType, RaftEndpoint endpoint) {
             this.messageType = messageType;
             this.endpoint = endpoint;
         }
@@ -408,11 +467,10 @@ public class LocalRaftIntegration implements RaftIntegration {
             if (this == o) {
                 return true;
             }
-            if (!(o instanceof EndpointDropEntry)) {
+            if (!(o instanceof EndpointDropEntry that)) {
                 return false;
             }
 
-            EndpointDropEntry that = (EndpointDropEntry) o;
             return messageType.equals(that.messageType) && endpoint.equals(that.endpoint);
         }
 
@@ -430,5 +488,14 @@ public class LocalRaftIntegration implements RaftIntegration {
 
     @Override
     public void onGroupDestroyed(CPGroupId groupId) {
+    }
+
+    @Override
+    public void onNewLeaderElected(CPGroupId groupId) {
+    }
+
+    @Override
+    public Object newRestoreSnapshotOp(String serviceName, long commitIndex, Object chunk) {
+        return new RestoreSnapshotRaftRunnable(groupId, commitIndex, chunk);
     }
 }

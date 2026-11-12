@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +17,10 @@
 package com.hazelcast.jet.sql.impl.opt;
 
 import com.hazelcast.jet.sql.SqlTestSupport;
-import com.hazelcast.jet.sql.impl.CalciteSqlOptimizer;
+import com.hazelcast.jet.sql.impl.CalciteSqlOptimizerImpl;
 import com.hazelcast.jet.sql.impl.OptimizerContext;
 import com.hazelcast.jet.sql.impl.connector.generator.StreamSqlConnector;
+import com.hazelcast.jet.sql.impl.inject.PrimitiveUpsertTargetDescriptor;
 import com.hazelcast.jet.sql.impl.opt.logical.LogicalRel;
 import com.hazelcast.jet.sql.impl.opt.logical.LogicalRules;
 import com.hazelcast.jet.sql.impl.opt.logical.SelectByKeyMapLogicalRule;
@@ -34,17 +35,25 @@ import com.hazelcast.jet.sql.impl.validate.param.StrictParameterConverter;
 import com.hazelcast.sql.impl.ParameterConverter;
 import com.hazelcast.sql.impl.QueryParameterMetadata;
 import com.hazelcast.sql.impl.QueryUtils;
+import com.hazelcast.sql.impl.SqlServiceImpl;
+import com.hazelcast.sql.impl.extract.GenericQueryTargetDescriptor;
+import com.hazelcast.sql.impl.extract.QueryPath;
 import com.hazelcast.sql.impl.schema.ConstantTableStatistics;
 import com.hazelcast.sql.impl.schema.Table;
 import com.hazelcast.sql.impl.schema.TableField;
+import com.hazelcast.sql.impl.schema.map.MapTableField;
 import com.hazelcast.sql.impl.schema.map.MapTableIndex;
 import com.hazelcast.sql.impl.schema.map.PartitionedMapTable;
+import com.hazelcast.sql.impl.security.NoOpSqlSecurityContext;
 import com.hazelcast.sql.impl.type.QueryDataType;
+import com.hazelcast.test.HazelcastSerialClassRunner;
 import org.apache.calcite.plan.RelOptUtil;
+import org.apache.calcite.plan.hep.HepProgram;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.tools.RuleSets;
+import org.junit.runner.RunWith;
 
 import java.io.BufferedReader;
 import java.io.StringReader;
@@ -61,6 +70,7 @@ import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toMap;
 import static org.assertj.core.api.Assertions.assertThat;
 
+@RunWith(HazelcastSerialClassRunner.class)
 public abstract class OptimizerTestSupport extends SqlTestSupport {
 
     protected RelNode preOptimize(String sql, HazelcastTable... tables) {
@@ -111,7 +121,7 @@ public abstract class OptimizerTestSupport extends SqlTestSupport {
         LogicalRel logicalRel = optimizeLogicalInternal(sql, context);
         PhysicalRel physicalRel = (PhysicalRel) context
                 .optimize(logicalRel, PhysicalRules.getRuleSet(), OptUtils.toPhysicalConvention(logicalRel.getTraitSet()));
-        physicalRel = CalciteSqlOptimizer.postOptimizationRewrites(physicalRel);
+        physicalRel = CalciteSqlOptimizerImpl.postOptimizationRewrites(physicalRel);
         return new Result(logicalRel, physicalRel);
     }
 
@@ -120,12 +130,15 @@ public abstract class OptimizerTestSupport extends SqlTestSupport {
     }
 
     private static OptimizerContext context(HazelcastSchema schema, QueryDataType... parameterTypes) {
+        SqlServiceImpl sql = (SqlServiceImpl) (instance().getSql());
+        HepProgram subqueryRewriterProgram = sql.getOptimizer().getSubqueryRewriterProgram();
         OptimizerContext context = OptimizerContext.create(
                 HazelcastSchemaUtils.createCatalog(schema),
                 QueryUtils.prepareSearchPaths(null, null),
                 emptyList(),
-                1,
-                name -> null
+                name -> null,
+                subqueryRewriterProgram,
+                NoOpSqlSecurityContext.INSTANCE
         );
 
         ParameterConverter[] parameterConverters = IntStream.range(0, parameterTypes.length)
@@ -147,19 +160,32 @@ public abstract class OptimizerTestSupport extends SqlTestSupport {
             List<MapTableIndex> indexes,
             long rowCount
     ) {
+        return partitionedTable(name, fields, indexes, rowCount, emptyList(), false);
+    }
+
+    // TODO: migrate this code to builder
+    protected static HazelcastTable partitionedTable(
+            String name,
+            List<TableField> fields,
+            List<MapTableIndex> indexes,
+            long rowCount,
+            List<String> partitioningAttributes,
+            boolean supportsPartitionPruning
+    ) {
         PartitionedMapTable table = new PartitionedMapTable(
                 SCHEMA_NAME_PUBLIC,
                 name,
                 name,
                 fields,
                 new ConstantTableStatistics(rowCount),
-                null,
-                null,
-                null,
-                null,
+                GenericQueryTargetDescriptor.DEFAULT,
+                GenericQueryTargetDescriptor.DEFAULT,
+                PrimitiveUpsertTargetDescriptor.INSTANCE,
+                PrimitiveUpsertTargetDescriptor.INSTANCE,
                 indexes,
-                false
-        );
+                false,
+                partitioningAttributes,
+                supportsPartitionPruning);
         return new HazelcastTable(table, new HazelcastTableStatistic(rowCount));
     }
 
@@ -177,6 +203,10 @@ public abstract class OptimizerTestSupport extends SqlTestSupport {
         return new Field(name, type, false);
     }
 
+    protected static MapTableField mapField(String name, QueryDataType type, QueryPath queryPath) {
+        return new MapTableField(name, type, false, queryPath);
+    }
+
     protected static void assertPlan(RelNode rel, PlanRows expected) {
         BufferedReader reader = new BufferedReader(new StringReader(RelOptUtil.toString(rel, SqlExplainLevel.ALL_ATTRIBUTES)));
         List<PlanRow> rows = reader.lines()
@@ -189,14 +219,14 @@ public abstract class OptimizerTestSupport extends SqlTestSupport {
         int expectedRowCount = expected.getRowCount();
         int actualRowCount = actual.getRowCount();
         assertThat(actualRowCount)
-                .as("Plan are different" + "\n\n>>> EXPECTED PLAN:\n%s\n>>> ACTUAL PLAN:\n%s", expected, actual)
+                .as("Plan are different%n%n>>> EXPECTED PLAN:%n%s%n>>> ACTUAL PLAN:%n%s", expected, actual)
                 .isEqualTo(expectedRowCount);
 
         for (int i = 0; i < expectedRowCount; i++) {
             PlanRow expectedRow = expected.getRow(i);
             PlanRow actualRow = actual.getRow(i);
             assertThat(actualRow)
-                    .as("Plan rows are different at %s" + "\n\n>>> EXPECTED PLAN:\n%s\n>>> ACTUAL PLAN:\n%s", i + 1, expected, actual)
+                    .as("Plan rows are different at %s%n%n>>> EXPECTED PLAN:%n%s%n>>> ACTUAL PLAN:%n%s", i + 1, expected, actual)
                     .isEqualTo(expectedRow);
         }
     }

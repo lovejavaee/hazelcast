@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,6 @@ import com.hazelcast.nio.serialization.FieldType;
 import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import com.hazelcast.nio.serialization.genericrecord.GenericRecordBuilder;
 import com.hazelcast.nio.serialization.HazelcastSerializationException;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -41,7 +40,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.util.Set;
-import java.util.function.Function;
+import java.util.function.IntFunction;
 
 import static com.hazelcast.internal.nio.Bits.BOOLEAN_SIZE_IN_BYTES;
 import static com.hazelcast.internal.nio.Bits.BYTE_SIZE_IN_BYTES;
@@ -60,6 +59,7 @@ import static com.hazelcast.nio.serialization.FieldType.TIME_ARRAY;
 /**
  * See the javadoc of {@link InternalGenericRecord} for GenericRecord class hierarchy.
  */
+@SuppressWarnings("MethodCount")
 public class PortableInternalGenericRecord extends PortableGenericRecord implements InternalGenericRecord {
     protected final ClassDefinition cd;
     protected final PortableSerializer serializer;
@@ -413,7 +413,7 @@ public class PortableInternalGenericRecord extends PortableGenericRecord impleme
     }
 
 
-    private <T> T[] readObjectArrayField(@Nonnull String fieldName, FieldType fieldType, Function<Integer, T[]> constructor,
+    private <T> T[] readObjectArrayField(@Nonnull String fieldName, FieldType fieldType, IntFunction<T[]> constructor,
                                          Reader<ObjectDataInput, T> reader) {
         int currentPos = in.position();
         try {
@@ -549,7 +549,7 @@ public class PortableInternalGenericRecord extends PortableGenericRecord impleme
         INTERNAL_GENERIC_RECORD
     }
 
-    private <T> T[] readNestedArray(@Nonnull String fieldName, Function<Integer, T[]> constructor,
+    private <T> T[] readNestedArray(@Nonnull String fieldName, IntFunction<T[]> constructor,
                                     PortableReadMethod readMethod) {
         int currentPos = in.position();
         try {
@@ -679,7 +679,6 @@ public class PortableInternalGenericRecord extends PortableGenericRecord impleme
         }
     }
 
-    @SuppressFBWarnings({"NP_BOOLEAN_RETURN_NULL"})
     @Override
     public Boolean getBooleanFromArray(@Nonnull String fieldName, int index) {
         int position = readPosition(fieldName, FieldType.BOOLEAN_ARRAY);

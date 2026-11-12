@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,6 +54,8 @@ import static java.util.Collections.emptySet;
         "checkstyle:methodcount"})
 public class MemberStateImpl implements MemberState {
 
+    private static final String VECTOR_COLLECTIONS = "vectorCollections";
+
     private String address;
     private UUID uuid;
     private UUID cpMemberUuid;
@@ -71,8 +73,9 @@ public class MemberStateImpl implements MemberState {
     private Set<String> durableExecutorsWithStats = emptySet();
     private Set<String> cachesWithStats = emptySet();
     private Set<String> flakeIdGeneratorsWithStats = emptySet();
+    private Set<String> userCodeNamespacesWithStats = emptySet();
+    private Set<String> vectorCollections = emptySet();
     private Collection<ClientEndPointDTO> clients = emptySet();
-    private Map<UUID, String> clientStats = emptyMap();
     private MemberPartitionState memberPartitionState = new MemberPartitionStateImpl();
     private LocalOperationStats operationStats = new LocalOperationStatsImpl();
     private NodeState nodeState = new NodeStateImpl();
@@ -215,10 +218,27 @@ public class MemberStateImpl implements MemberState {
         this.flakeIdGeneratorsWithStats = flakeIdGeneratorsWithStats;
     }
 
+    public Set<String> getUserCodeNamespacesWithStats() {
+        return userCodeNamespacesWithStats;
+    }
+
+    public void setUserCodeNamespacesWithStats(Set<String> userCodeNamespacesWithStats) {
+        this.userCodeNamespacesWithStats = userCodeNamespacesWithStats;
+    }
+
+    public Set<String> getVectorCollections() {
+        return vectorCollections;
+    }
+
+    public void setVectorCollections(Set<String> vectorCollections) {
+        this.vectorCollections = vectorCollections;
+    }
+
     public void putLocalWanStats(String name, LocalWanStats localWanStats) {
         wanStats.put(name, localWanStats);
     }
 
+    @Override
     public Collection<ClientEndPointDTO> getClients() {
         return clients;
     }
@@ -268,14 +288,6 @@ public class MemberStateImpl implements MemberState {
         this.clusterHotRestartStatus = clusterHotRestartStatus;
     }
 
-    public Map<UUID, String> getClientStats() {
-        return clientStats;
-    }
-
-    public void setClientStats(Map<UUID, String> clientStats) {
-        this.clientStats = clientStats;
-    }
-
     @Override
     public JsonObject toJson() {
         final JsonObject root = new JsonObject();
@@ -317,6 +329,8 @@ public class MemberStateImpl implements MemberState {
         serializeAsMap(root, "cacheStats", cachesWithStats);
         serializeAsMap(root, "flakeIdStats", flakeIdGeneratorsWithStats);
         serializeMap(root, "wanStats", wanStats);
+        serializeAsMap(root, "userCodeNamespacesStats", userCodeNamespacesWithStats);
+        serializeAsMap(root, VECTOR_COLLECTIONS, vectorCollections);
 
         final JsonArray clientsArray = new JsonArray();
         for (ClientEndPointDTO client : clients) {
@@ -329,11 +343,6 @@ public class MemberStateImpl implements MemberState {
         root.add("hotRestartState", hotRestartState.toJson());
         root.add("clusterHotRestartStatus", clusterHotRestartStatus.toJson());
 
-        JsonObject clientStatsObject = new JsonObject();
-        for (Map.Entry<UUID, String> entry : clientStats.entrySet()) {
-            clientStatsObject.add(entry.getKey().toString(), entry.getValue());
-        }
-        root.add("clientStats", clientStatsObject);
         return root;
     }
 
@@ -358,8 +367,8 @@ public class MemberStateImpl implements MemberState {
     }
 
     private static void addJsonIfSerializable(JsonObject root, String key, Object value) {
-        if (value instanceof JsonSerializable) {
-            root.add(key, ((JsonSerializable) value).toJson());
+        if (value instanceof JsonSerializable serializable) {
+            root.add(key, serializable.toJson());
         }
     }
 
@@ -367,15 +376,15 @@ public class MemberStateImpl implements MemberState {
                                                           String key,
                                                           JsonObject serializedJson,
                                                           T instance) {
-        if (instance instanceof JsonSerializable) {
-            ((JsonSerializable) instance).fromJson(serializedJson);
+        if (instance instanceof JsonSerializable serializable) {
+            serializable.fromJson(serializedJson);
             deserializedValueMap.put(key, instance);
         }
     }
 
     private static <T> T readJsonIfDeserializable(JsonObject serializedJson, T instance) {
-        if (instance instanceof JsonSerializable) {
-            ((JsonSerializable) instance).fromJson(serializedJson);
+        if (instance instanceof JsonSerializable serializable) {
+            serializable.fromJson(serializedJson);
         }
         return instance;
     }
@@ -459,6 +468,15 @@ public class MemberStateImpl implements MemberState {
         for (JsonObject.Member next : getObject(json, "flakeIdStats")) {
             flakeIdGeneratorsWithStats.add(next.getName());
         }
+        userCodeNamespacesWithStats = new HashSet<>();
+        for (JsonObject.Member next : getObject(json, "userCodeNamespacesStats")) {
+            userCodeNamespacesWithStats.add(next.getName());
+        }
+        vectorCollections = new HashSet<>();
+        for (JsonObject.Member next : getObject(json, VECTOR_COLLECTIONS)) {
+            vectorCollections.add(next.getName());
+        }
+
         for (JsonObject.Member next : getObject(json, "wanStats", new JsonObject())) {
             putDeserializedIfSerializable(wanStats, next.getName(), next.getValue().asObject(),
                     new LocalWanStatsImpl());
@@ -494,10 +512,6 @@ public class MemberStateImpl implements MemberState {
             clusterHotRestartStatus = new ClusterHotRestartStatusDTO();
             clusterHotRestartStatus.fromJson(jsonClusterHotRestartStatus);
         }
-        clientStats = new HashMap<>();
-        for (JsonObject.Member next : getObject(json, "clientStats")) {
-            clientStats.put(UUID.fromString(next.getName()), next.getValue().asString());
-        }
     }
 
     @Override
@@ -507,6 +521,7 @@ public class MemberStateImpl implements MemberState {
                 + ", uuid=" + uuid
                 + ", cpMemberUuid=" + cpMemberUuid
                 + ", name=" + name
+                + ", clients=" + clients
                 + ", mapsWithStats=" + mapsWithStats
                 + ", multiMapsWithStats=" + multiMapsWithStats
                 + ", replicatedMapsWithStats=" + replicatedMapsWithStats
@@ -519,13 +534,14 @@ public class MemberStateImpl implements MemberState {
                 + ", durableExecutorStats=" + durableExecutorsWithStats
                 + ", cachesWithStats=" + cachesWithStats
                 + ", flakeIdGeneratorsWithStats=" + flakeIdGeneratorsWithStats
+                + ", userCodeNamespacesWithStats=" + userCodeNamespacesWithStats
+                + ", vectorCollections=" + vectorCollections
                 + ", wanStats=" + wanStats
                 + ", operationStats=" + operationStats
                 + ", memberPartitionState=" + memberPartitionState
                 + ", nodeState=" + nodeState
                 + ", hotRestartState=" + hotRestartState
                 + ", clusterHotRestartStatus=" + clusterHotRestartStatus
-                + ", clientStats=" + clientStats
                 + '}';
     }
 }

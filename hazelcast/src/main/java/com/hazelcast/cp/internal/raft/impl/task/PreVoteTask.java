@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.cp.internal.raft.impl.task;
 
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
 import com.hazelcast.cp.internal.raft.impl.RaftNodeImpl;
+import com.hazelcast.cp.internal.raft.impl.RaftRole;
 import com.hazelcast.cp.internal.raft.impl.dto.PreVoteRequest;
 import com.hazelcast.cp.internal.raft.impl.log.RaftLog;
 import com.hazelcast.cp.internal.raft.impl.state.RaftState;
@@ -47,10 +48,24 @@ public class PreVoteTask extends RaftNodeStatusAwareTask implements Runnable {
         RaftState state = raftNode.state();
 
         if (state.leader() != null) {
-            logger.fine("No new pre-vote phase, we already have a LEADER: " + state.leader());
+            if (raftNode.autoStepDownWhenLeaderForGroup()
+                    && state.role() == RaftRole.LEADER) {
+                // unlikely edge case: a restart and sustained leadership on an
+                // autoStepDown leader will require a retrigger of rebalancing.
+                logger.fine("Currently LEADER but configured to auto-step-down."
+                        + " Triggering leadership rebalancing task.");
+                raftNode.handleTriggerLeadershipRebalance();
+                return;
+            }
+            logger.fine("No new pre-vote phase, we already have a LEADER: %s", state.leader());
             return;
         } else if (state.term() != term) {
-            logger.fine("No new pre-vote phase for term= " + term + " because of new term: " + state.term());
+            logger.fine("No new pre-vote phase for term= %s because of new term: %s", term, state.term());
+            return;
+        }
+
+        if (term == 0 && raftNode.autoStepDownWhenLeaderForGroup()) {
+            logger.info("This node auto steps down from leadership, not participating in pre-vote for term 0");
             return;
         }
 
@@ -64,7 +79,7 @@ public class PreVoteTask extends RaftNodeStatusAwareTask implements Runnable {
         int nextTerm = state.term() + 1;
         RaftLog log = state.log();
         PreVoteRequest request = new PreVoteRequest(localMember(), nextTerm, log.lastLogOrSnapshotTerm(),
-                log.lastLogOrSnapshotIndex());
+                log.lastLogOrSnapshotIndex(), raftNode.autoStepDownWhenLeaderForGroup());
 
         logger.info("Pre-vote started for next term: " + request.nextTerm() + ", last log index: " + request.lastLogIndex()
                 + ", last log term: " + request.lastLogTerm());

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.internal.tpcengine.iobuffer;
 
 import com.hazelcast.internal.tpcengine.net.AsyncSocket;
+import com.hazelcast.internal.tpcengine.util.BufferUtil;
 
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -26,7 +27,6 @@ import static com.hazelcast.internal.tpcengine.util.BitUtil.SIZEOF_CHAR;
 import static com.hazelcast.internal.tpcengine.util.BitUtil.SIZEOF_INT;
 import static com.hazelcast.internal.tpcengine.util.BitUtil.SIZEOF_LONG;
 import static com.hazelcast.internal.tpcengine.util.BitUtil.nextPowerOfTwo;
-import static com.hazelcast.internal.tpcengine.util.BufferUtil.upcast;
 
 
 /**
@@ -39,9 +39,9 @@ import static com.hazelcast.internal.tpcengine.util.BufferUtil.upcast;
  * <p>
  * So instead of having a single ByteBuffer underneath, allow for a list of ByteBuffer all with some
  * fixed size, e.g. up to 16 KB. So if a 1MB chunk of data is received, just 64 byte-arrays of 16KB.
- * This will prevent the above fragmentation problem although it could lead to some increased
+ * This will prevent the above fragmentation problem, although it could lead to some increased
  * internal fragmentation because more memory is allocated than used. I believe this isn't such a
- * big problem because IOBuffer are short lived.
+ * big problem because IOBuffer are short-lived.
  * <p>
  * So if an IOBuffer should contain a list of ByteBuffers, then regular reading/writing to the IOBuffer
  * should be agnostic of the composition.
@@ -49,7 +49,7 @@ import static com.hazelcast.internal.tpcengine.util.BufferUtil.upcast;
  * Another feature that is required is ability to block align the pointer. This is needed for O_DIRECT. Probably
  * this isn't needed when we can just pass any pointer. It should be the task of the pointer provider to block align.
  * <p>
- * Also the ability to wrap any pointer. For more information see:
+ * Also, the ability to wrap any pointer. For more information see:
  * https://stackoverflow.com/questions/16465477/is-there-a-way-to-create-a-direct-bytebuffer-from-a-pointer-solely-in-java
  * E.g. in case of the buffer pool (application specific page cache) we just want to take a pointer to
  * some memory in the bufferpool and pass it to the IOBuffer for reading/writing that page to disk.
@@ -87,7 +87,7 @@ public class IOBuffer {
     }
 
     public void clear() {
-        upcast(buff).clear();
+        buff.clear();
     }
 
     public int position() {
@@ -95,21 +95,19 @@ public class IOBuffer {
     }
 
     public void position(int position) {
-        upcast(buff).position(position);
+        buff.position(position);
     }
 
     public void incPosition(int delta) {
-        upcast(buff).position(buff.position() + delta);
+        buff.position(buff.position() + delta);
     }
 
     public void flip() {
-        upcast(buff).flip();
+        buff.flip();
     }
 
     /**
      * Returns the number of bytes remaining in this buffer for reading or writing
-     *
-     * @return
      */
     public int remaining() {
         return buff.remaining();
@@ -122,7 +120,7 @@ public class IOBuffer {
             ByteBuffer newBuffer = buff.hasArray()
                     ? ByteBuffer.allocate(newCapacity)
                     : ByteBuffer.allocateDirect(newCapacity);
-            upcast(buff).flip();
+            buff.flip();
             newBuffer.put(buff);
             buff = newBuffer;
         }
@@ -164,7 +162,7 @@ public class IOBuffer {
     @SuppressWarnings("checkstyle:MagicNumber")
     public void writeShortL(short v) {
         ensureRemaining(SIZEOF_INT);
-        buff.put((byte) ((v) & 0xFF));
+        buff.put((byte) (v & 0xFF));
         buff.put((byte) ((v >>> 8) & 0xFF));
     }
 
@@ -188,7 +186,7 @@ public class IOBuffer {
     @SuppressWarnings("checkstyle:MagicNumber")
     public void writeIntL(int v) {
         ensureRemaining(SIZEOF_INT);
-        buff.put((byte) ((v) & 0xFF));
+        buff.put((byte) (v & 0xFF));
         buff.put((byte) ((v >>> 8) & 0xFF));
         buff.put((byte) ((v >>> 16) & 0xFF));
         buff.put((byte) ((v >>> 24) & 0xFF));
@@ -212,20 +210,8 @@ public class IOBuffer {
     }
 
     public void write(ByteBuffer src) {
-        write(src, src.remaining());
-    }
-
-    public void write(ByteBuffer src, int count) {
-        ensureRemaining(count);
-
-        if (src.remaining() <= count) {
-            buff.put(src);
-        } else {
-            int limit = src.limit();
-            upcast(src).limit(src.position() + count);
-            buff.put(src);
-            upcast(src).limit(limit);
-        }
+        ensureRemaining(src.remaining());
+        BufferUtil.put(buff, src);
     }
 
     // very inefficient

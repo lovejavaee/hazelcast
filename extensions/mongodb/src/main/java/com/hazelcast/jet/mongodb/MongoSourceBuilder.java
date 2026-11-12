@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,14 +19,14 @@ package com.hazelcast.jet.mongodb;
 import com.hazelcast.function.BiFunctionEx;
 import com.hazelcast.function.FunctionEx;
 import com.hazelcast.function.SupplierEx;
-import com.hazelcast.jet.core.ProcessorMetaSupplier;
+import com.hazelcast.jet.core.ProcessorSupplier;
+import com.hazelcast.jet.mongodb.impl.DbCheckingPMetaSupplierBuilder;
 import com.hazelcast.jet.mongodb.impl.ReadMongoP;
 import com.hazelcast.jet.mongodb.impl.ReadMongoParams;
 import com.hazelcast.jet.pipeline.BatchSource;
 import com.hazelcast.jet.pipeline.DataConnectionRef;
 import com.hazelcast.jet.pipeline.Sources;
 import com.hazelcast.jet.pipeline.StreamSource;
-import com.hazelcast.spi.annotation.Beta;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.model.Aggregates;
 import com.mongodb.client.model.changestream.ChangeStreamDocument;
@@ -39,8 +39,7 @@ import javax.annotation.Nullable;
 
 import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 import static com.hazelcast.jet.impl.util.Util.checkSerializable;
-import static com.hazelcast.jet.mongodb.impl.Mappers.streamToClass;
-import static com.hazelcast.jet.mongodb.impl.Mappers.toClass;
+import static com.hazelcast.jet.mongodb.impl.Mappers.bsonToDocument;
 
 /**
  * Top-level class for MongoDB custom source builders.
@@ -54,7 +53,6 @@ import static com.hazelcast.jet.mongodb.impl.Mappers.toClass;
  * @since 5.3
  *
  */
-@Beta
 public final class MongoSourceBuilder {
 
     private MongoSourceBuilder() {
@@ -198,69 +196,44 @@ public final class MongoSourceBuilder {
         return stream("MongoStreamSource(" + dataConnectionRef.getName() + ")", dataConnectionRef);
     }
 
-    private abstract static class Base<T> {
+    @SuppressWarnings("unchecked")
+    private abstract static class Base<T, SELF extends Base<T, SELF>> {
         protected ReadMongoParams<T> params;
+        protected ResourceChecks existenceChecks = ResourceChecks.ONCE_PER_JOB;
 
         protected String name;
+        protected boolean forceReadTotalParallelismOne;
 
         @Nonnull
-        public Base<T> database(String database) {
+        public SELF database(String database) {
             params.setDatabaseName(database);
-            return this;
-        }
-
-        @Nonnull
-        public abstract <T_NEW> Base<T_NEW> collection(String collectionName, Class<T_NEW> mongoType);
-
-        @Nonnull
-        public Base<Document> collection(String collectionName) {
-            return this.collection(collectionName, Document.class);
-        }
-    }
-
-    /**
-     * See {@link #batch(String, SupplierEx)}.
-     *
-     * @param <T> type of the emitted objects
-     */
-    public static final class Batch<T> extends Base<T> {
-
-        @SuppressWarnings("unchecked")
-        private Batch(
-                @Nonnull String name,
-                @Nonnull SupplierEx<? extends MongoClient> clientSupplier
-        ) {
-            checkSerializable(clientSupplier, "clientSupplier");
-            this.name = name;
-            this.params = new ReadMongoParams<>(false);
-            params
-                    .setClientSupplier(clientSupplier)
-                    .setMapItemFn((FunctionEx<Document, T>) toClass(Document.class));
-        }
-        @SuppressWarnings("unchecked")
-        private Batch(
-                @Nonnull String name,
-                @Nonnull DataConnectionRef dataConnectionRef
-        ) {
-            checkSerializable(dataConnectionRef, "clientSupplier");
-            this.name = name;
-            this.params = new ReadMongoParams<>(false);
-            params
-                    .setDataConnectionRef(dataConnectionRef)
-                    .setMapItemFn((FunctionEx<Document, T>) toClass(Document.class));
+            return (SELF) this;
         }
 
         /**
-         * If {@code true}, the lack of database or collection will cause an error.
-         * If {@code false}, database and collection will be automatically created.
-         * Default value is {@code true}.
+         * If set to true, reading will be done in only one thread.
          *
-         * @param throwOnNonExisting if exception should be thrown when database or collection does not exist.
+         * @param forceReadTotalParallelismOne if true, reading will be done in only one thread.
          */
         @Nonnull
-        public Batch<T> throwOnNonExisting(boolean throwOnNonExisting) {
-            params.setThrowOnNonExisting(throwOnNonExisting);
-            return this;
+        public SELF forceReadTotalParallelismOne(boolean forceReadTotalParallelismOne) {
+            this.forceReadTotalParallelismOne = forceReadTotalParallelismOne;
+            return (SELF) this;
+        }
+
+        /**
+         * If {@link ResourceChecks#NEVER}, the database and collection will be automatically created on the first usage.
+         * Otherwise, querying for a database or collection that don't exist will cause an error.
+         * Default value is {@link ResourceChecks#ONCE_PER_JOB}.
+         *
+         * @since 5.4
+         * @param checkResourceExistence mode of resource existence checks; whether exception should be thrown when
+         *                               database or collection does not exist and when the check will be performed.
+         */
+        @Nonnull
+        public SELF checkResourceExistence(ResourceChecks checkResourceExistence) {
+            existenceChecks = checkResourceExistence;
+            return (SELF) this;
         }
 
         /**
@@ -276,9 +249,9 @@ public final class MongoSourceBuilder {
          * @return this builder with projection added
          */
         @Nonnull
-        public Batch<T> project(@Nonnull Bson projection) {
-            params.addAggregate(Aggregates.project(projection).toBsonDocument());
-            return this;
+        public SELF project(@Nonnull Bson projection) {
+            params.setProjection(bsonToDocument(Aggregates.project(projection)));
+            return (SELF) this;
         }
 
         /**
@@ -295,9 +268,9 @@ public final class MongoSourceBuilder {
          * @return this builder with aggregate added
          */
         @Nonnull
-        public Batch<T> sort(@Nonnull Bson sort) {
-            params.addAggregate(Aggregates.sort(sort).toBsonDocument());
-            return this;
+        public SELF sort(@Nonnull Bson sort) {
+            params.setSort(bsonToDocument(Aggregates.sort(sort)));
+            return (SELF) this;
         }
 
         /**
@@ -316,10 +289,44 @@ public final class MongoSourceBuilder {
          * @return this builder with aggregate added
          */
         @Nonnull
-        public Batch<T> filter(@Nonnull Bson filter) {
+        public SELF filter(@Nonnull Bson filter) {
             checkNotNull(filter, "filter argument cannot be null");
-            params.addAggregate(Aggregates.match(filter).toBsonDocument());
-            return this;
+            params.setFilter(bsonToDocument(Aggregates.match(filter)));
+            return (SELF) this;
+        }
+    }
+
+    /**
+     * See {@link #batch(String, SupplierEx)}.
+     *
+     * @param <T> type of the emitted objects
+     */
+    @SuppressWarnings("UnusedReturnValue")
+    public static final class Batch<T> extends Base<T, Batch<T>> {
+
+        @SuppressWarnings("unchecked")
+        private Batch(
+                @Nonnull String name,
+                @Nonnull SupplierEx<? extends MongoClient> clientSupplier
+        ) {
+            checkSerializable(clientSupplier, "clientSupplier");
+            this.name = name;
+            this.params = new ReadMongoParams<>(false);
+            params
+                    .setClientSupplier(clientSupplier)
+                    .setItemClass(Document.class);
+        }
+        @SuppressWarnings("unchecked")
+        private Batch(
+                @Nonnull String name,
+                @Nonnull DataConnectionRef dataConnectionRef
+        ) {
+            checkSerializable(dataConnectionRef, "clientSupplier");
+            this.name = name;
+            this.params = new ReadMongoParams<>(false);
+            params
+                    .setDataConnectionRef(dataConnectionRef)
+                    .setItemClass(Document.class);
         }
 
         /**
@@ -333,16 +340,6 @@ public final class MongoSourceBuilder {
             Batch<T_NEW> newThis = (Batch<T_NEW>) this;
             newThis.params.setMapItemFn(mapFn);
             return newThis;
-        }
-
-        /**
-         * Specifies which database will be queried. If not specified, connector will look at all databases.
-         * @param database database name to query.
-         * @return this builder
-         */
-        @Override @Nonnull
-        public Batch<T> database(@Nullable String database) {
-            return (Batch<T>) super.database(database);
         }
 
         /**
@@ -361,7 +358,7 @@ public final class MongoSourceBuilder {
          * @param collectionName Name of the collection that will be queried.
          * @return this builder
          */
-        @Override @Nonnull
+        @Nonnull
         public Batch<Document> collection(@Nullable String collectionName) {
             return collection(collectionName, Document.class);
         }
@@ -391,12 +388,12 @@ public final class MongoSourceBuilder {
          * @param mongoType user defined type to which the document will be parsed.
          * @return this builder
          */
-        @Override @Nonnull
+        @Nonnull
         @SuppressWarnings("unchecked")
         public <T_NEW> Batch<T_NEW> collection(String collectionName, @Nonnull Class<T_NEW> mongoType) {
             Batch<T_NEW> newThis = (Batch<T_NEW>) this;
             newThis.params.setCollectionName(collectionName);
-            newThis.params.setMapItemFn(toClass(mongoType));
+            newThis.params.setItemClass(mongoType);
             return newThis;
         }
 
@@ -409,9 +406,18 @@ public final class MongoSourceBuilder {
             checkNotNull(params.getMapItemFn(), "mapFn must be set");
 
             final ReadMongoParams<T> localParams = params;
+            localParams.setCheckExistenceOnEachConnect(existenceChecks == ResourceChecks.ON_EACH_CONNECT);
 
-            return Sources.batchFromProcessor(name, ProcessorMetaSupplier.of(
-                    () -> new ReadMongoP<>(localParams)));
+            boolean checkResourceExistence = existenceChecks == ResourceChecks.ONCE_PER_JOB;
+            return Sources.batchFromProcessor(name, new DbCheckingPMetaSupplierBuilder()
+                    .withCheckResourceExistence(checkResourceExistence)
+                    .withForceTotalParallelismOne(false)
+                    .withDatabaseName(localParams.getDatabaseName())
+                    .withCollectionName(localParams.getCollectionName())
+                    .withClientSupplier(localParams.getClientSupplier())
+                    .withDataConnectionRef(localParams.getDataConnectionRef())
+                    .withProcessorSupplier(ProcessorSupplier.of(() -> new ReadMongoP<>(localParams)))
+                    .build());
         }
     }
 
@@ -420,7 +426,7 @@ public final class MongoSourceBuilder {
      *
      * @param <T> type of the queried documents
      */
-    public static final class Stream<T> extends Base<T> {
+    public static final class Stream<T> extends Base<T, Stream<T>> {
 
         @SuppressWarnings("unchecked")
         private Stream(
@@ -431,8 +437,7 @@ public final class MongoSourceBuilder {
             this.name = name;
             this.params = new ReadMongoParams<>(true);
             this.params.setClientSupplier(clientSupplier);
-            this.params.setMapStreamFn(
-                    (BiFunctionEx<ChangeStreamDocument<Document>, Long, T>) streamToClass(Document.class));
+            this.params.setItemClass(Document.class);
         }
         @SuppressWarnings("unchecked")
         private Stream(
@@ -443,70 +448,7 @@ public final class MongoSourceBuilder {
             this.name = name;
             this.params = new ReadMongoParams<>(true);
             this.params.setDataConnectionRef(dataConnectionRef);
-            this.params.setMapStreamFn(
-                    (BiFunctionEx<ChangeStreamDocument<Document>, Long, T>) streamToClass(Document.class));
-        }
-
-        /**
-         * If {@code true}, the lack of database or collection will cause an error.
-         * If {@code false}, database and collection will be automatically created.
-         * Default value is {@code true}.
-         *
-         * @param throwOnNonExisting if exception should be thrown when database or collection does not exist.
-         */
-        @Nonnull
-        public Stream<T> throwOnNonExisting(boolean throwOnNonExisting) {
-            params.setThrowOnNonExisting(throwOnNonExisting);
-            return this;
-        }
-
-        /**
-         * Adds a projection aggregate. Example use:
-         * <pre>{@code
-         * import static com.mongodb.client.model.Projections.include;
-         *
-         *  MongoSourceBuilder.stream(name, supplier)
-         *      .projection(include("fieldName"));
-         * }</pre>
-         * @param projection Bson form of projection;
-         *                   use {@link com.mongodb.client.model.Projections} to create projection.
-         * @return this builder with projection added
-         */
-        @Nonnull
-        public Stream<T> project(@Nonnull Bson projection) {
-            params.addAggregate(Aggregates.project(projection).toBsonDocument());
-            return this;
-        }
-
-        /**
-         * Adds filter aggregate to this builder, which allows to filter documents in MongoDB, without
-         * the need to download all documents.
-         * <p>
-         * Example usage:
-         * <pre>{@code
-         *  import static com.mongodb.client.model.Filters.eq;
-         *
-         *  MongoSourceBuilder.stream(name, supplier)
-         *      .filter(eq("fieldName", 10));
-         * }</pre>
-         * @param filter Bson form of filter. Use {@link com.mongodb.client.model.Filters} to create sort.
-         * @return this builder with aggregate added
-         */
-        @Nonnull
-        public Stream<T> filter(@Nonnull Bson filter) {
-            params.addAggregate(Aggregates.match(filter).toBsonDocument());
-            return this;
-        }
-
-        /**
-         * Specifies which database will be queried. If not specified, connector will look at all databases.
-         * @param database database name to query.
-         * @return this builder
-         */
-        @Nonnull @Override
-        public Stream<T> database(@Nonnull String database) {
-            params.setDatabaseName(database);
-            return this;
+            this.params.setItemClass(Document.class);
         }
 
         /**
@@ -525,7 +467,7 @@ public final class MongoSourceBuilder {
          * @param collectionName Name of the collection that will be queried.
          * @return this builder
          */
-        @Nonnull @Override
+        @Nonnull
         public Stream<Document> collection(@Nonnull String collectionName) {
             return collection(collectionName, Document.class);
         }
@@ -557,11 +499,10 @@ public final class MongoSourceBuilder {
          */
         @Nonnull
         @SuppressWarnings("unchecked")
-        @Override
         public <T_NEW> Stream<T_NEW> collection(@Nonnull String collectionName, @Nonnull Class<T_NEW> mongoType) {
             Stream<T_NEW> newThis = (Stream<T_NEW>) this;
             newThis.params.setCollectionName(collectionName);
-            newThis.params.setMapStreamFn(streamToClass(mongoType));
+            newThis.params.setItemClass(mongoType);
             return newThis;
         }
 
@@ -604,11 +545,24 @@ public final class MongoSourceBuilder {
             checkNotNull(params.getMapStreamFn(), "mapFn must be set");
 
             final ReadMongoParams<T> localParams = params;
+            boolean checkExistenceOnEachConnect = existenceChecks == ResourceChecks.ON_EACH_CONNECT;
+            boolean checkExistenceOncePerJob = existenceChecks == ResourceChecks.ONCE_PER_JOB;
+            boolean forceReadTotalParallelismOneLocal = forceReadTotalParallelismOne;
+
+            localParams.setCheckExistenceOnEachConnect(checkExistenceOnEachConnect);
 
             return Sources.streamFromProcessorWithWatermarks(name, true,
-                    eventTimePolicy -> ProcessorMetaSupplier.of(
-                        () -> new ReadMongoP<>(localParams.setEventTimePolicy(eventTimePolicy))));
+                    eventTimePolicy -> new DbCheckingPMetaSupplierBuilder()
+                            .withCheckResourceExistence(checkExistenceOncePerJob)
+                            .withForceTotalParallelismOne(forceReadTotalParallelismOneLocal)
+                            .withDatabaseName(localParams.getDatabaseName())
+                            .withCollectionName(localParams.getCollectionName())
+                            .withClientSupplier(localParams.getClientSupplier())
+                            .withDataConnectionRef(localParams.getDataConnectionRef())
+                            .withProcessorSupplier(ProcessorSupplier.of(
+                                    () -> new ReadMongoP<>(localParams.setEventTimePolicy(eventTimePolicy))))
+                            .build()
+            );
         }
     }
-
 }

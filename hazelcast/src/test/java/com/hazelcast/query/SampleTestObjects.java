@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,8 +26,11 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.sql.Timestamp;
 import java.util.Date;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class SampleTestObjects {
 
@@ -391,8 +394,97 @@ public final class SampleTestObjects {
         }
     }
 
+    // Mockito encounters non-deterministic failures in some tests when mocking
+    // the Employee object - to avoid further time spent investigating that issue,
+    // we simply provide our own basic spied invocation counter instead
+    public static class SpiedEmployee extends Employee {
+        private final Map<String, AtomicInteger> invocationCounters = new ConcurrentHashMap<>();
+
+        public SpiedEmployee(long id, String name, int age, boolean live, double salary, State state) {
+            super(id, name, age, live, salary, state);
+        }
+
+        public SpiedEmployee(long id, String name, int age, boolean live, double salary) {
+            super(id, name, age, live, salary);
+        }
+
+        public SpiedEmployee(String name, int age, boolean live, double salary) {
+            super(name, age, live, salary);
+        }
+
+        public SpiedEmployee(String name, String city, int age, boolean live, double salary) {
+            super(name, city, age, live, salary);
+        }
+
+        public SpiedEmployee(long id, String name, String city, int age, boolean live, double salary) {
+            super(id, name, city, age, live, salary);
+        }
+
+        public SpiedEmployee() {
+        }
+
+        @Override
+        public long getId() {
+            invocationCounters.computeIfAbsent("getId", i -> new AtomicInteger()).getAndIncrement();
+            return super.getId();
+        }
+
+        @Override
+        public Date getCreateDate() {
+            invocationCounters.computeIfAbsent("getCreateDate", i -> new AtomicInteger()).getAndIncrement();
+            return super.getCreateDate();
+        }
+
+        @Override
+        public Timestamp getDate() {
+            invocationCounters.computeIfAbsent("getDate", i -> new AtomicInteger()).getAndIncrement();
+            return super.getDate();
+        }
+
+        @Override
+        public String getName() {
+            invocationCounters.computeIfAbsent("getName", i -> new AtomicInteger()).getAndIncrement();
+            return super.getName();
+        }
+
+        @Override
+        public String getCity() {
+            invocationCounters.computeIfAbsent("getCity", i -> new AtomicInteger()).getAndIncrement();
+            return super.getCity();
+        }
+
+        @Override
+        public int getAge() {
+            invocationCounters.computeIfAbsent("getAge", i -> new AtomicInteger()).getAndIncrement();
+            return super.getAge();
+        }
+
+        @Override
+        public double getSalary() {
+            invocationCounters.computeIfAbsent("getSalary", i -> new AtomicInteger()).getAndIncrement();
+            return super.getSalary();
+        }
+
+        @Override
+        public boolean isActive() {
+            invocationCounters.computeIfAbsent("isActive", i -> new AtomicInteger()).getAndIncrement();
+            return super.isActive();
+        }
+
+        @Override
+        public State getState() {
+            invocationCounters.computeIfAbsent("getState", i -> new AtomicInteger()).getAndIncrement();
+            return super.getState();
+        }
+
+        public int getInvocationCount(String methodName) {
+            AtomicInteger counter = invocationCounters.get(methodName);
+            return counter == null ? 0 : counter.get();
+        }
+    }
+
     public static class ObjectWithInteger implements Serializable {
-        private int attribute;
+        private final int attribute;
 
         public ObjectWithInteger(int attribute) {
             this.attribute = attribute;
@@ -404,7 +496,7 @@ public final class SampleTestObjects {
     }
 
     public static class ObjectWithLong implements Serializable {
-        private long attribute;
+        private final long attribute;
 
         public ObjectWithLong(long attribute) {
             this.attribute = attribute;
@@ -416,7 +508,7 @@ public final class SampleTestObjects {
     }
 
     public static class ObjectWithShort implements Serializable {
-        private short attribute;
+        private final short attribute;
 
         public ObjectWithShort(short attribute) {
             this.attribute = attribute;
@@ -428,7 +520,7 @@ public final class SampleTestObjects {
     }
 
     public static class ObjectWithByte implements Serializable {
-        private byte attribute;
+        private final byte attribute;
 
         public ObjectWithByte(byte attribute) {
             this.attribute = attribute;
@@ -440,7 +532,7 @@ public final class SampleTestObjects {
     }
 
     public static class ObjectWithFloat implements Serializable {
-        private float attribute;
+        private final float attribute;
 
         public ObjectWithFloat(float attribute) {
             this.attribute = attribute;
@@ -452,7 +544,7 @@ public final class SampleTestObjects {
     }
 
     public static class ObjectWithDouble implements Serializable {
-        private double attribute;
+        private final double attribute;
 
         public ObjectWithDouble(double attribute) {
             this.attribute = attribute;
@@ -464,7 +556,7 @@ public final class SampleTestObjects {
     }
 
     public static class ObjectWithChar implements Serializable {
-        private char attribute;
+        private final char attribute;
 
         public ObjectWithChar(char attribute) {
             this.attribute = attribute;
@@ -476,7 +568,7 @@ public final class SampleTestObjects {
     }
 
     public static class ObjectWithBoolean implements Serializable {
-        private boolean attribute;
+        private final boolean attribute;
 
         public ObjectWithBoolean(boolean attribute) {
             this.attribute = attribute;
@@ -488,7 +580,7 @@ public final class SampleTestObjects {
     }
 
     public static class ObjectWithBigDecimal implements Serializable {
-        private BigDecimal attribute;
+        private final BigDecimal attribute;
 
         public ObjectWithBigDecimal(BigDecimal attribute) {
             this.attribute = attribute;
@@ -500,7 +592,7 @@ public final class SampleTestObjects {
     }
 
     public static class ObjectWithBigInteger implements Serializable {
-        private BigInteger attribute;
+        private final BigInteger attribute;
 
         public ObjectWithBigInteger(BigInteger attribute) {
             this.attribute = attribute;
@@ -512,7 +604,7 @@ public final class SampleTestObjects {
     }
 
     public static class ObjectWithSqlTimestamp implements Serializable {
-        private Timestamp attribute;
+        private final Timestamp attribute;
 
         public ObjectWithSqlTimestamp(Timestamp attribute) {
             this.attribute = attribute;
@@ -524,7 +616,7 @@ public final class SampleTestObjects {
     }
 
     public static class ObjectWithSqlDate implements Serializable {
-        private java.sql.Date attribute;
+        private final java.sql.Date attribute;
 
         public ObjectWithSqlDate(java.sql.Date attribute) {
             this.attribute = attribute;
@@ -536,7 +628,7 @@ public final class SampleTestObjects {
     }
 
     public static class ObjectWithDate implements Serializable {
-        private Date attribute;
+        private final Date attribute;
 
         public ObjectWithDate(Date attribute) {
             this.attribute = attribute;
@@ -548,7 +640,7 @@ public final class SampleTestObjects {
     }
 
     public static class ObjectWithUUID implements Serializable {
-        private UUID attribute;
+        private final UUID attribute;
 
         public ObjectWithUUID(UUID attribute) {
             this.attribute = attribute;
@@ -560,7 +652,7 @@ public final class SampleTestObjects {
     }
 
     public static class ObjectWithOptional<T> implements Serializable {
-        private T attribute;
+        private final T attribute;
 
         public ObjectWithOptional(T attribute) {
             this.attribute = attribute;

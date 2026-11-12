@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -89,7 +89,7 @@ public class DenseHyperLogLogEncoder implements HyperLogLogEncoder {
     @Override
     public HyperLogLogEncoder merge(HyperLogLogEncoder encoder) {
         DenseHyperLogLogEncoder otherDense;
-        if (SPARSE.equals(encoder.getEncodingType())) {
+        if (SPARSE == encoder.getEncodingType()) {
             otherDense = (DenseHyperLogLogEncoder) ((SparseHyperLogLogEncoder) encoder).asDense();
         } else {
             otherDense = (DenseHyperLogLogEncoder) encoder;
@@ -182,7 +182,7 @@ public class DenseHyperLogLogEncoder implements HyperLogLogEncoder {
         int i = 0;
         double[] rawEstimates = DenseHyperLogLogConstants.RAW_ESTIMATE_DATA[p - 4];
         double closestToZero = Math.abs(e - rawEstimates[0]);
-        NavigableMap<Double, Integer> distances = new TreeMap<Double, Integer>();
+        NavigableMap<Double, Integer> distances = new TreeMap<>();
         for (double est : rawEstimates) {
             double distance = e - est;
             distances.put(distance, i++);

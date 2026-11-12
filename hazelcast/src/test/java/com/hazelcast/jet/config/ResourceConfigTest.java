@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,25 +18,26 @@ package com.hazelcast.jet.config;
 
 import com.hazelcast.jet.JetException;
 import com.hazelcast.jet.core.JetTestSupport;
+import com.hazelcast.jet.impl.util.ReflectionUtils;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
 import java.net.URL;
 import java.nio.file.Paths;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -44,8 +45,6 @@ import static org.junit.Assert.assertTrue;
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class ResourceConfigTest extends JetTestSupport {
 
-    @Rule
-    public ExpectedException expectedException = ExpectedException.none();
     private JobConfig config;
     private File baseDir;
 
@@ -67,7 +66,7 @@ public class ResourceConfigTest extends JetTestSupport {
 
         // Then
         ResourceConfig resourceConfig = getFirstResourceConfig();
-        assertEquals(toId(this.getClass()), resourceConfig.getId());
+        assertEquals(ReflectionUtils.toClassResourceId(this.getClass()), resourceConfig.getId());
         assertEquals(ResourceType.CLASS, resourceConfig.getResourceType());
     }
 
@@ -81,21 +80,22 @@ public class ResourceConfigTest extends JetTestSupport {
         assertTrue(resourceConfigs
                 .stream()
                 .anyMatch(resourceConfig ->
-                        resourceConfig.getId().equals(toId(this.getClass())) &&
-                                resourceConfig.getResourceType().equals(ResourceType.CLASS)
+                        resourceConfig.getId().equals(ReflectionUtils.toClassResourceId(this.getClass())) &&
+                                resourceConfig.getResourceType() == ResourceType.CLASS
                 ));
         assertTrue(resourceConfigs
                 .stream()
                 .anyMatch(resourceConfig ->
                         resourceConfig.getId().contains("package.properties") &&
-                                resourceConfig.getResourceType().equals(ResourceType.CLASSPATH_RESOURCE)
+                                resourceConfig.getResourceType() == ResourceType.CLASSPATH_RESOURCE
                 ));
     }
 
     @Test
     public void when_addResourcesWithNonExistingPackage() {
         // When
-        config.addPackage("thispackage.does.not.exist");
+        config.addPackage("" +
+                          "thispackage.does.not.exist");
 
         // Then
         Collection<ResourceConfig> resourceConfigs = config.getResourceConfigs().values();
@@ -106,7 +106,7 @@ public class ResourceConfigTest extends JetTestSupport {
     public void when_addJarWithUrl() throws Exception {
         // Given
         String resourceId = "jarfile";
-        URL url = new URL("http://site/path/to/" + resourceId);
+        URL url = URI.create("http://site/path/to/" + resourceId).toURL();
 
         // When
         config.addJar(url);
@@ -121,28 +121,22 @@ public class ResourceConfigTest extends JetTestSupport {
     @Test
     public void when_addJarWithUrlNoPath_then_throwsException() throws Exception {
         // Given
-        URL url = new URL("http://hazelcast.org");
-
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
+        URL url = URI.create("http://hazelcast.org").toURL();
 
         // When
-        config.addJar(url);
+        assertThrows(IllegalArgumentException.class, () -> config.addJar(url));
     }
 
     @Test
     public void when_addDuplicateJarWithUrl_then_throwsException() throws Exception {
         // Given
         String resourceId = "file";
-        URL url1 = new URL("http://site/" + resourceId);
-        URL url2 = new URL("http://another.site/" + resourceId);
+        URL url1 = URI.create("http://site/" + resourceId).toURL();
+        URL url2 = URI.create("http://another.site/" + resourceId).toURL();
         config.addJar(url1);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
-
         // When
-        config.addJar(url2);
+        assertThrows(IllegalArgumentException.class, () -> config.addJar(url2));
     }
 
     private ResourceConfig getFirstResourceConfig() {
@@ -173,11 +167,7 @@ public class ResourceConfigTest extends JetTestSupport {
         File file2 = createFile("path/to/another/" + resourceId);
         config.addJar(file1);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
-
-        // When
-        config.addJar(file2);
+        assertThrows(IllegalArgumentException.class, () -> config.addJar(file2));
     }
 
     @Test
@@ -186,12 +176,10 @@ public class ResourceConfigTest extends JetTestSupport {
         String path = Paths.get("/i/do/not/exist").toString();
         File file = new File(path);
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable file: " + path);
-
         // When
-        config.addJar(file);
+        assertThatThrownBy(() -> config.addJar(file))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable file: " + path);
     }
 
     @Test
@@ -219,11 +207,8 @@ public class ResourceConfigTest extends JetTestSupport {
         String path2 = createFile("path/to/another/" + resourceId).toString();
         config.addJar(path1);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
-
         // When
-        config.addJar(path2);
+        assertThrows(IllegalArgumentException.class, () -> config.addJar(path2));
     }
 
     @Test
@@ -231,19 +216,17 @@ public class ResourceConfigTest extends JetTestSupport {
         // Given
         String path = Paths.get("/i/do/not/exist").toString();
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable file: " + path);
-
         // When
-        config.addJar(path);
+        assertThatThrownBy(() -> config.addJar(path))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable file: " + path);
     }
 
     @Test
     public void when_addZipOfJarWithUrl() throws Exception {
         // Given
         String resourceId = "zipFile";
-        URL url = new URL("http://path/to/" + resourceId);
+        URL url = URI.create("http://path/to/" + resourceId).toURL();
 
         // When
         config.addJarsInZip(url);
@@ -258,28 +241,22 @@ public class ResourceConfigTest extends JetTestSupport {
     @Test
     public void when_addZipOfJarWithUrlNoPath_then_throwsException() throws Exception {
         // Given
-        URL url = new URL("http://hazelcast.org");
-
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
+        URL url = URI.create("http://hazelcast.org").toURL();
 
         // When
-        config.addJarsInZip(url);
+        assertThrows(IllegalArgumentException.class, () -> config.addJarsInZip(url));
     }
 
     @Test
     public void when_addDuplicateZipOfJarWithUrl_then_throwsException() throws Exception {
         // Given
         String resourceId = "zipfile";
-        URL url1 = new URL("http://site/" + resourceId);
-        URL url2 = new URL("http://another.site/" + resourceId);
+        URL url1 = URI.create("http://site/" + resourceId).toURL();
+        URL url2 = URI.create("http://another.site/" + resourceId).toURL();
         config.addJarsInZip(url1);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
-
         // When
-        config.addJarsInZip(url2);
+        assertThrows(IllegalArgumentException.class, () -> config.addJarsInZip(url2));
     }
 
     @Test
@@ -307,11 +284,9 @@ public class ResourceConfigTest extends JetTestSupport {
         String path2 = createFile("path/to/another/" + resourceId).toString();
         config.addJarsInZip(path1);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
 
         // When
-        config.addJarsInZip(path2);
+        assertThrows(IllegalArgumentException.class, () -> config.addJarsInZip(path2));
     }
 
     @Test
@@ -319,12 +294,10 @@ public class ResourceConfigTest extends JetTestSupport {
         // Given
         String path = Paths.get("/i/do/not/exist").toString();
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable file: " + path);
-
         // When
-        config.addJarsInZip(path);
+        assertThatThrownBy(() -> config.addJarsInZip(path))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable file: " + path);
     }
 
     @Test
@@ -351,11 +324,9 @@ public class ResourceConfigTest extends JetTestSupport {
         File file2 = createFile("path/to/another/" + resourceId);
         config.addJarsInZip(file1);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
 
         // When
-        config.addJarsInZip(file2);
+        assertThrows(IllegalArgumentException.class, () -> config.addJarsInZip(file2));
     }
 
     @Test
@@ -364,12 +335,10 @@ public class ResourceConfigTest extends JetTestSupport {
         String path = Paths.get("/i/do/not/exist").toString();
         File file = new File(path);
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable file: " + path);
-
         // When
-        config.addJarsInZip(file);
+        assertThatThrownBy(() -> config.addJarsInZip(file))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable file: " + path);
     }
 
     @Test
@@ -397,11 +366,8 @@ public class ResourceConfigTest extends JetTestSupport {
         String path2 = createFile("path/to/another/" + resourceId).toString();
         config.addClasspathResource(path1);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
-
         // When
-        config.addClasspathResource(path2);
+        assertThrows(IllegalArgumentException.class, () -> config.addClasspathResource(path2));
     }
 
     @Test
@@ -409,12 +375,10 @@ public class ResourceConfigTest extends JetTestSupport {
         // Given
         String path = Paths.get("/i/do/not/exist").toString();
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable file: " + path);
-
         // When
-        config.addClasspathResource(path);
+        assertThatThrownBy(() -> config.addClasspathResource(path))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable file: " + path);
     }
 
     @Test
@@ -440,12 +404,10 @@ public class ResourceConfigTest extends JetTestSupport {
         String id = "exist";
         String path = Paths.get("/i/do/not/" + id).toString();
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable file: " + path);
-
         // When
-        config.addClasspathResource(path, id);
+        assertThatThrownBy(() -> config.addClasspathResource(path, id))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable file: " + path);
     }
 
     @Test
@@ -472,11 +434,8 @@ public class ResourceConfigTest extends JetTestSupport {
         File file2 = createFile("path/to/another/" + resourceId);
         config.addClasspathResource(file1);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
-
         // When
-        config.addClasspathResource(file2);
+        assertThrows(IllegalArgumentException.class, () -> config.addClasspathResource(file2));
     }
 
     @Test
@@ -485,12 +444,10 @@ public class ResourceConfigTest extends JetTestSupport {
         String path = Paths.get("/i/do/not/exist").toString();
         File file = new File(path);
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable file: " + path);
-
         // When
-        config.addClasspathResource(file);
+        assertThatThrownBy(() -> config.addClasspathResource(file))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable file: " + path);
     }
 
     @Test
@@ -516,19 +473,17 @@ public class ResourceConfigTest extends JetTestSupport {
         String path = Paths.get("/i/do/not/" + id).toString();
         File file = new File(path);
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable file: " + path);
-
         // When
-        config.addClasspathResource(file, id);
+        assertThatThrownBy(() -> config.addClasspathResource(file, id))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable file: " + path);
     }
 
     @Test
     public void when_addResourceWithURL() throws Exception {
         // Given
         String resourceId = "my.txt";
-        URL url = new URL("http://site/" + resourceId);
+        URL url = URI.create("http://site/" + resourceId).toURL();
 
         // When
         config.addClasspathResource(url);
@@ -544,27 +499,21 @@ public class ResourceConfigTest extends JetTestSupport {
     public void when_addDuplicateResourceWithUrl_then_throwsException() throws Exception {
         // Given
         String resourceId = "my.txt";
-        URL url1 = new URL("http://site/" + resourceId);
-        URL url2 = new URL("http://another.site/" + resourceId);
+        URL url1 = URI.create("http://site/" + resourceId).toURL();
+        URL url2 = URI.create("http://another.site/" + resourceId).toURL();
         config.addClasspathResource(url1);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
-
         // When
-        config.addClasspathResource(url2);
+        assertThrows(IllegalArgumentException.class, () -> config.addClasspathResource(url2));
     }
 
     @Test
     public void when_addResourceWithUrlNoPath_then_throwsException() throws Exception {
         // Given
-        URL url = new URL("http://hazelcast.org");
-
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
+        URL url = URI.create("http://hazelcast.org").toURL();
 
         // When
-        config.addClasspathResource(url);
+        assertThrows(IllegalArgumentException.class, () -> config.addClasspathResource(url));
     }
 
     @Test
@@ -574,19 +523,17 @@ public class ResourceConfigTest extends JetTestSupport {
         File file = createFile("path/to/resource");
         config.addClasspathResource(file, id);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage(id);
-
         // When
-        config.addClasspathResource(file, id);
+        assertThatThrownBy(() -> config.addClasspathResource(file, id))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(id);
     }
 
     @Test
     public void when_addResourceWithURLAndId() throws Exception {
         // Given
         String resourceId = "resourceId";
-        URL url = new URL("http://site/my.txt");
+        URL url = URI.create("http://site/my.txt").toURL();
 
         // When
         config.addClasspathResource(url, resourceId);
@@ -602,7 +549,7 @@ public class ResourceConfigTest extends JetTestSupport {
     public void when_attachFileWithUrl() throws Exception {
         // Given
         String resourceId = "resourceId";
-        URL url = new URL("http://site/" + resourceId);
+        URL url = URI.create("http://site/" + resourceId).toURL();
 
         // When
         config.attachFile(url);
@@ -618,27 +565,21 @@ public class ResourceConfigTest extends JetTestSupport {
     public void when_attachDuplicateFileWithUrl_then_throwsException() throws Exception {
         // Given
         String resourceId = "resourceId";
-        URL url1 = new URL("http://site/" + resourceId);
-        URL url2 = new URL("http://another.site/" + resourceId);
+        URL url1 = URI.create("http://site/" + resourceId).toURL();
+        URL url2 = URI.create("http://another.site/" + resourceId).toURL();
         config.attachFile(url1);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
-
         // When
-        config.attachFile(url2);
+        assertThrows(IllegalArgumentException.class, () -> config.attachFile(url2));
     }
 
     @Test
     public void when_attachFileWithUrlNoPath_then_throwsException() throws Exception {
         // Given
-        URL url = new URL("http://hazelcast.org");
-
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
+        URL url = URI.create("http://hazelcast.org").toURL();
 
         // When
-        config.attachFile(url);
+        assertThrows(IllegalArgumentException.class, () -> config.attachFile(url));
     }
 
     @Test
@@ -682,11 +623,8 @@ public class ResourceConfigTest extends JetTestSupport {
         String path2 = createFile("path/to/another/" + resourceId).toString();
         config.attachFile(path1);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
-
         // When
-        config.attachFile(path2);
+        assertThrows(IllegalArgumentException.class, () -> config.attachFile(path2));
     }
 
     @Test
@@ -694,12 +632,10 @@ public class ResourceConfigTest extends JetTestSupport {
         // Given
         String path = Paths.get("/i/do/not/exist").toString();
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable file: " + path);
-
         // When
-        config.attachFile(path);
+        assertThatThrownBy(() -> config.attachFile(path))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable file: " + path);
     }
 
     @Test
@@ -725,12 +661,10 @@ public class ResourceConfigTest extends JetTestSupport {
         String id = "exist";
         String path = Paths.get("/i/do/not/" + id).toString();
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable file: " + path);
-
         // When
-        config.attachFile(path, id);
+        assertThatThrownBy(() -> config.attachFile(path, id))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable file: " + path);
     }
 
     @Test
@@ -757,11 +691,8 @@ public class ResourceConfigTest extends JetTestSupport {
         File file2 = createFile("path/to/another/" + resourceId);
         config.attachFile(file1);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
-
         // When
-        config.attachFile(file2);
+        assertThrows(IllegalArgumentException.class, () -> config.attachFile(file2));
     }
 
     @Test
@@ -770,12 +701,10 @@ public class ResourceConfigTest extends JetTestSupport {
         String path = Paths.get("/i/do/not/exist").toString();
         File file = new File(path);
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable file: " + path);
-
         // When
-        config.attachFile(file);
+        assertThatThrownBy(() -> config.attachFile(file))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable file: " + path);
     }
 
     @Test
@@ -801,12 +730,10 @@ public class ResourceConfigTest extends JetTestSupport {
         String path = Paths.get("/i/do/not/" + id).toString();
         File file = new File(path);
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable file: " + path);
-
         // When
-        config.attachFile(file, id);
+        assertThatThrownBy(() -> config.attachFile(file, id))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable file: " + path);
     }
 
     @Test
@@ -816,12 +743,10 @@ public class ResourceConfigTest extends JetTestSupport {
         File file = createFile("path/to/resource");
         config.attachFile(file, id);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage(id);
-
         // When
-        config.attachFile(file, id);
+        assertThatThrownBy(() -> config.attachFile(file, id))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(id);
     }
 
     @Test
@@ -848,11 +773,8 @@ public class ResourceConfigTest extends JetTestSupport {
         URL url2 = createDirectory("path/to/another/dir").toURI().toURL();
         config.attachDirectory(url1);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
-
         // When
-        config.attachDirectory(url2);
+        assertThrows(IllegalArgumentException.class, () -> config.attachDirectory(url2));
     }
 
     @Test
@@ -861,12 +783,10 @@ public class ResourceConfigTest extends JetTestSupport {
         String path = "/i/do/not/exist";
         URL url = new File(path).toURI().toURL();
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable directory: ");
-
         // When
-        config.attachDirectory(url);
+        assertThatThrownBy(() -> config.attachDirectory(url))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable directory: ");
     }
 
     @Test
@@ -909,11 +829,8 @@ public class ResourceConfigTest extends JetTestSupport {
         String path2 = createDirectory("path/to/another/dir").toString();
         config.attachDirectory(path1);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
-
         // When
-        config.attachDirectory(path2);
+        assertThrows(IllegalArgumentException.class, () -> config.attachDirectory(path2));
     }
 
     @Test
@@ -921,12 +838,10 @@ public class ResourceConfigTest extends JetTestSupport {
         // Given
         String path = "/i/do/not/exist";
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable directory: ");
-
         // When
-        config.attachDirectory(path);
+        assertThatThrownBy(() -> config.attachDirectory(path))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable directory: ");
     }
 
     @Test
@@ -952,12 +867,10 @@ public class ResourceConfigTest extends JetTestSupport {
         String id = "exist";
         String path = "/i/do/not/" + id;
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable directory: ");
-
         // When
-        config.attachDirectory(path, id);
+        assertThatThrownBy(() -> config.attachDirectory(path, id))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable directory: ");
     }
 
     @Test
@@ -984,11 +897,8 @@ public class ResourceConfigTest extends JetTestSupport {
         File dir2 = createDirectory("path/to/another/" + resourceId);
         config.attachDirectory(dir1);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
-
         // When
-        config.attachDirectory(dir2);
+        assertThrows(IllegalArgumentException.class, () -> config.attachDirectory(dir2));
     }
 
     @Test
@@ -997,12 +907,10 @@ public class ResourceConfigTest extends JetTestSupport {
         String path = "/i/do/not/exist";
         File file = new File(path);
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable directory: ");
-
         // When
-        config.attachDirectory(file);
+        assertThatThrownBy(() -> config.attachDirectory(file))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable directory: ");
     }
 
     @Test
@@ -1028,12 +936,10 @@ public class ResourceConfigTest extends JetTestSupport {
         String path = "/i/do/not/" + id;
         File file = new File(path);
 
-        // Then
-        expectedException.expect(JetException.class);
-        expectedException.expectMessage("Not an existing, readable directory: ");
-
         // When
-        config.attachDirectory(file, id);
+        assertThatThrownBy(() -> config.attachDirectory(file, id))
+                .isInstanceOf(JetException.class)
+                .hasMessageContaining("Not an existing, readable directory: ");
     }
 
     @Test
@@ -1043,12 +949,10 @@ public class ResourceConfigTest extends JetTestSupport {
         File file = createDirectory("path/to/dirName");
         config.attachDirectory(file, id);
 
-        // Then
-        expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage(id);
-
         // When
-        config.attachDirectory(file, id);
+        assertThatThrownBy(() -> config.attachDirectory(file, id))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(id);
     }
 
     @Test
@@ -1090,9 +994,5 @@ public class ResourceConfigTest extends JetTestSupport {
         File dirFile = new File(baseDir, path);
         assertTrue("Failed to create directory " + dirFile, dirFile.mkdirs());
         return dirFile;
-    }
-
-    private static String toId(Class<?> clazz) {
-        return clazz.getName().replace('.', '/') + ".class";
     }
 }

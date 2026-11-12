@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,15 +27,14 @@ import com.hazelcast.nio.serialization.DataSerializable;
 import com.hazelcast.projection.Projection;
 import com.hazelcast.projection.Projections;
 import com.hazelcast.query.QueryException;
+import com.hazelcast.query.ReflectiveAttributeTestObject;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import java.io.IOException;
@@ -44,16 +43,13 @@ import java.util.Map;
 import java.util.Optional;
 
 import static com.hazelcast.spi.properties.ClusterProperty.PARTITION_COUNT;
-import static org.hamcrest.collection.IsIterableContainingInAnyOrder.containsInAnyOrder;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class SingleAttributeProjectionTest extends HazelcastTestSupport {
-
-    @Rule
-    public ExpectedException expected = ExpectedException.none();
 
     @Test(expected = IllegalArgumentException.class)
     public void singleAttribute_attributeNull() {
@@ -72,7 +68,7 @@ public class SingleAttributeProjectionTest extends HazelcastTestSupport {
 
         Collection<Double> result = map.project(Projections.singleAttribute("age"));
 
-        assertThat(result, containsInAnyOrder(1.0d, 4.0d, 7.0d));
+        assertThat(result).containsExactlyInAnyOrder(1.0d, 4.0d, 7.0d);
     }
 
     @Test
@@ -82,7 +78,7 @@ public class SingleAttributeProjectionTest extends HazelcastTestSupport {
 
         Collection<String> result = map.project(Projections.singleAttribute("__key"));
 
-        assertThat(result, containsInAnyOrder("key1", "key2", "key3"));
+        assertThat(result).containsExactlyInAnyOrder("key1", "key2", "key3");
     }
 
     @Test
@@ -93,7 +89,7 @@ public class SingleAttributeProjectionTest extends HazelcastTestSupport {
 
         Collection<Integer> result = map.project(Projections.singleAttribute("this"));
 
-        assertThat(result, containsInAnyOrder(1, 2));
+        assertThat(result).containsExactlyInAnyOrder(1, 2);
     }
 
     @Test
@@ -113,7 +109,7 @@ public class SingleAttributeProjectionTest extends HazelcastTestSupport {
 
         Collection<Double> result = map.project(Projections.singleAttribute("age"));
 
-        assertThat(result, containsInAnyOrder(null, 1.0d));
+        assertThat(result).containsExactlyInAnyOrder(null, 1.0d);
     }
 
     @Test
@@ -124,7 +120,7 @@ public class SingleAttributeProjectionTest extends HazelcastTestSupport {
 
         Collection<Double> result = map.project(Projections.singleAttribute("optionalAge"));
 
-        assertThat(result, containsInAnyOrder(null, 1.0d));
+        assertThat(result).containsExactlyInAnyOrder(null, 1.0d);
     }
 
     @Test
@@ -134,8 +130,57 @@ public class SingleAttributeProjectionTest extends HazelcastTestSupport {
 
         Projection<Map.Entry<String, Person>, Double> projection = Projections.singleAttribute("age123");
 
-        expected.expect(QueryException.class);
-        map.project(projection);
+        assertThatThrownBy(() -> map.project(projection))
+                .isInstanceOf(QueryException.class);
+    }
+
+    @Test
+    public void singleAttribute_restrictedLookup_staticField() {
+        IMap<String, ReflectiveAttributeTestObject> map = getMapWithNodeCount();
+        map.put("key1", new ReflectiveAttributeTestObject("a"));
+
+        assertThatThrownBy(() -> map.project(Projections.singleAttribute("staticInt")))
+                .isInstanceOf(QueryException.class)
+                .hasMessageContaining("cannot be used for attribute extraction");
+    }
+
+    @Test
+    public void singleAttribute_restrictedLookup_staticMethod() {
+        IMap<String, ReflectiveAttributeTestObject> map = getMapWithNodeCount();
+        map.put("key1", new ReflectiveAttributeTestObject("b"));
+
+        assertThatThrownBy(() -> map.project(Projections.singleAttribute("getStaticValue")))
+                .isInstanceOf(QueryException.class)
+                .hasMessageContaining("cannot be used for attribute extraction");
+    }
+
+    @Test
+    public void singleAttribute_restrictedLookup_voidMethod() {
+        IMap<String, ReflectiveAttributeTestObject> map = getMapWithNodeCount();
+        map.put("key1", new ReflectiveAttributeTestObject("c"));
+
+        assertThatThrownBy(() -> map.project(Projections.singleAttribute("doVoid")))
+                .isInstanceOf(QueryException.class)
+                .hasMessageContaining("cannot be used for attribute extraction");
+    }
+
+    @Test
+    public void singleAttribute_restrictedLookup_blockedClass() {
+        IMap<String, ReflectiveAttributeTestObject> map = getMapWithNodeCount();
+        map.put("key1", new ReflectiveAttributeTestObject("d"));
+
+        assertThatThrownBy(() -> map.project(Projections.singleAttribute("hazelcastInstance.name")))
+                .isInstanceOf(QueryException.class)
+                .hasMessageContaining("cannot be used for attribute extraction");
+    }
+
+    @Test
+    public void singleAttribute_restrictedLookup_whenMatchingStaticAndGetter_thenGetterIsUsed() {
+        IMap<String, ReflectiveAttributeTestObject> map = getMapWithNodeCount();
+        map.put("key1", new ReflectiveAttributeTestObject("e"));
+
+        Collection<String> result = map.project(Projections.singleAttribute("name"));
+        assertThat(result).containsExactly("e");
     }
 
     private <K, V> IMap<K, V> getMapWithNodeCount() {

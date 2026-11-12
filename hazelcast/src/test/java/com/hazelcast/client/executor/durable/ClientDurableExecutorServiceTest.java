@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,17 +31,13 @@ import com.hazelcast.executor.ExecutorServiceTestSupport.SleepingTask;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.DataSerializable;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import com.hazelcast.internal.util.RootCauseMatcher;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import java.io.IOException;
@@ -55,9 +51,11 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static com.hazelcast.internal.util.RootCauseMatcher.rootCause;
 import static com.hazelcast.test.HazelcastTestSupport.assertOpenEventually;
 import static com.hazelcast.test.HazelcastTestSupport.assertTrueEventually;
 import static com.hazelcast.test.HazelcastTestSupport.randomString;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -70,8 +68,6 @@ public class ClientDurableExecutorServiceTest {
     private static final String SINGLE_TASK = "singleTask";
 
     private final TestHazelcastFactory hazelcastFactory = new TestHazelcastFactory();
-    @Rule
-    public ExpectedException expectedException = ExpectedException.none();
     private HazelcastInstance client;
 
     @Before
@@ -96,39 +92,36 @@ public class ClientDurableExecutorServiceTest {
     }
 
     @Test
-    public void testInvokeAll() throws Exception {
+    public void testInvokeAll() {
         DurableExecutorService service = client.getDurableExecutorService(randomString());
         List<BasicTestCallable> callables = Collections.emptyList();
 
-        expectedException.expect(UnsupportedOperationException.class);
-        service.invokeAll(callables);
+        assertThatThrownBy(() -> service.invokeAll(callables)).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
-    public void testInvokeAll_WithTimeout() throws Exception {
+    public void testInvokeAll_WithTimeout() {
         DurableExecutorService service = client.getDurableExecutorService(randomString());
         List<BasicTestCallable> callables = Collections.emptyList();
 
-        expectedException.expect(UnsupportedOperationException.class);
-        service.invokeAll(callables, 1, TimeUnit.SECONDS);
+        assertThatThrownBy(() -> service.invokeAll(callables, 1, TimeUnit.SECONDS)).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
-    public void testInvokeAny() throws Exception {
+    public void testInvokeAny() {
         DurableExecutorService service = client.getDurableExecutorService(randomString());
         List<BasicTestCallable> callables = Collections.emptyList();
 
-        expectedException.expect(UnsupportedOperationException.class);
-        service.invokeAny(callables);
+        assertThatThrownBy(() -> service.invokeAny(callables)).isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
-    public void testInvokeAny_WithTimeout() throws Exception {
+    public void testInvokeAny_WithTimeout() {
         DurableExecutorService service = client.getDurableExecutorService(randomString());
         List<BasicTestCallable> callables = Collections.emptyList();
 
-        expectedException.expect(UnsupportedOperationException.class);
-        service.invokeAny(callables, 1, TimeUnit.SECONDS);
+        assertThatThrownBy(() -> service.invokeAny(callables, 1, TimeUnit.SECONDS))
+                .isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
@@ -138,14 +131,13 @@ public class ClientDurableExecutorServiceTest {
     }
 
     @Test
-    public void test_whenRingBufferIsFull_thenThrowRejectedExecutionException() throws Exception {
+    public void test_whenRingBufferIsFull_thenThrowRejectedExecutionException() {
         String key = randomString();
         DurableExecutorService service = client.getDurableExecutorService(SINGLE_TASK + randomString());
         service.submitToKeyOwner(new SleepingTask(100), key);
         DurableExecutorServiceFuture<String> future = service.submitToKeyOwner(new BasicTestCallable(), key);
 
-        expectedException.expect(new RootCauseMatcher(RejectedExecutionException.class));
-        future.get();
+        assertThatThrownBy(future::get).has(rootCause(RejectedExecutionException.class));
     }
 
     @Test
@@ -227,11 +219,7 @@ public class ClientDurableExecutorServiceTest {
 
         service.shutdownNow();
 
-        assertTrueEventually(new AssertTask() {
-            public void run() {
-                assertTrue(service.isShutdown());
-            }
-        });
+        assertTrueEventually(() -> assertTrue(service.isShutdown()));
     }
 
     @Test
@@ -240,20 +228,15 @@ public class ClientDurableExecutorServiceTest {
         service.shutdownNow();
         service.shutdown();
 
-        assertTrueEventually(new AssertTask() {
-            public void run() {
-                assertTrue(service.isShutdown());
-            }
-        });
+        assertTrueEventually(() -> assertTrue(service.isShutdown()));
     }
 
     @Test
-    public void testSubmitFailingCallableException() throws Exception {
+    public void testSubmitFailingCallableException() {
         DurableExecutorService service = client.getDurableExecutorService(randomString());
         Future<String> failingFuture = service.submit(new FailingCallable());
 
-        expectedException.expect(ExecutionException.class);
-        failingFuture.get();
+        assertThatThrownBy(failingFuture::get).isInstanceOf(ExecutionException.class);
     }
 
     @Test
@@ -268,12 +251,11 @@ public class ClientDurableExecutorServiceTest {
     }
 
     @Test
-    public void testSubmitFailingCallableReasonExceptionCause() throws Exception {
+    public void testSubmitFailingCallableReasonExceptionCause() {
         DurableExecutorService service = client.getDurableExecutorService(randomString());
         Future<String> future = service.submit(new FailingCallable());
 
-        expectedException.expect(new RootCauseMatcher(IllegalStateException.class));
-        future.get();
+        assertThatThrownBy(future::get).has(rootCause(IllegalStateException.class));
     }
 
     @Test
@@ -282,11 +264,11 @@ public class ClientDurableExecutorServiceTest {
         DurableExecutorService service = client.getDurableExecutorService(name);
         SerializedCounterCallable counterCallable = new SerializedCounterCallable();
 
-        Future future = service.submitToKeyOwner(counterCallable, name);
-        assertEquals(2, future.get());
+        Future<Integer> future = service.submitToKeyOwner(counterCallable, name);
+        assertEquals(Integer.valueOf(2), future.get());
     }
 
-    static class SerializedCounterCallable implements Callable, DataSerializable {
+    private static class SerializedCounterCallable implements Callable<Integer>, DataSerializable {
 
         int counter;
 
@@ -294,7 +276,7 @@ public class ClientDurableExecutorServiceTest {
         }
 
         @Override
-        public Object call() {
+        public Integer call() {
             return counter;
         }
 

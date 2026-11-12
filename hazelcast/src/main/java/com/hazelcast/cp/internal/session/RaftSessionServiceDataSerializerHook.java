@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -52,31 +52,18 @@ public class RaftSessionServiceDataSerializerHook implements DataSerializerHook 
 
     @Override
     public DataSerializableFactory createFactory() {
-        return typeId -> {
-            switch (typeId) {
-                case RAFT_SESSION:
-                    return new CPSessionInfo();
-                case RAFT_SESSION_REGISTRY:
-                    return new RaftSessionRegistry();
-                case SESSION_RESPONSE:
-                    return new SessionResponse();
-                case CREATE_SESSION_OP:
-                    return new CreateSessionOp();
-                case HEARTBEAT_SESSION_OP:
-                    return new HeartbeatSessionOp();
-                case CLOSE_SESSION_OP:
-                    return new CloseSessionOp();
-                case EXPIRE_SESSIONS_OP:
-                    return new ExpireSessionsOp();
-                case CLOSE_INACTIVE_SESSIONS_OP:
-                    return new CloseInactiveSessionsOp();
-                case GET_SESSIONS_OP:
-                    return new GetSessionsOp();
-                case GENERATE_THREAD_ID_OP:
-                    return new GenerateThreadIdOp();
-                default:
-                    throw new IllegalArgumentException("Undefined type: " + typeId);
-            }
+        return typeId -> switch (typeId) {
+            case RAFT_SESSION -> new CPSessionInfo();
+            case RAFT_SESSION_REGISTRY -> new RaftSessionRegistry();
+            case SESSION_RESPONSE -> new SessionResponse();
+            case CREATE_SESSION_OP -> new CreateSessionOp();
+            case HEARTBEAT_SESSION_OP -> new HeartbeatSessionOp();
+            case CLOSE_SESSION_OP -> new CloseSessionOp();
+            case EXPIRE_SESSIONS_OP -> new ExpireSessionsOp();
+            case CLOSE_INACTIVE_SESSIONS_OP -> new CloseInactiveSessionsOp();
+            case GET_SESSIONS_OP -> new GetSessionsOp();
+            case GENERATE_THREAD_ID_OP -> new GenerateThreadIdOp();
+            default -> throw new IllegalArgumentException("Undefined type: " + typeId);
         };
     }
 }

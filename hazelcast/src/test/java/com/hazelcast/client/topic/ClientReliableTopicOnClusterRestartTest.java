@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,8 +42,8 @@ import java.util.function.Consumer;
 import static com.hazelcast.test.HazelcastTestSupport.assertOpenEventually;
 import static com.hazelcast.test.HazelcastTestSupport.assertTrueEventually;
 import static com.hazelcast.test.HazelcastTestSupport.smallInstanceConfig;
-import static junit.framework.TestCase.assertEquals;
-import static junit.framework.TestCase.assertTrue;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertFalse;
 
 @RunWith(HazelcastParallelClassRunner.class)
@@ -193,7 +193,7 @@ public class ClientReliableTopicOnClusterRestartTest {
 
     private <T> DurableMessageListener<T> createListener(boolean lossTolerant,
                                                          Consumer<Message<T>> messageListener) {
-        return new DurableMessageListener<T>() {
+        return new DurableMessageListener<>() {
             @Override
             public void onMessage(Message<T> message) {
                 messageListener.accept(message);

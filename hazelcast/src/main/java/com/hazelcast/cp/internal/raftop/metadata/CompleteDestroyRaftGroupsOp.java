@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.hazelcast.cp.CPGroupId;
 import com.hazelcast.cp.internal.IndeterminateOperationStateAware;
 import com.hazelcast.cp.internal.MetadataRaftGroupManager;
 import com.hazelcast.cp.internal.RaftServiceDataSerializerHook;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
@@ -68,10 +69,7 @@ public class CompleteDestroyRaftGroupsOp extends MetadataRaftGroupOp implements 
 
     @Override
     public void writeData(ObjectDataOutput out) throws IOException {
-        out.writeInt(groupIds.size());
-        for (CPGroupId groupId : groupIds) {
-            out.writeObject(groupId);
-        }
+        SerializationUtil.writeCollection(groupIds, out);
     }
 
     @Override

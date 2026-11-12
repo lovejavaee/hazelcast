@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.hazelcast.instance.impl.NodeExtension;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
 import com.hazelcast.map.MapInterceptor;
+import com.hazelcast.map.MapInterceptorAdaptor;
 import com.hazelcast.spi.impl.operationexecutor.OperationRunner;
 import com.hazelcast.spi.impl.operationexecutor.impl.OperationQueueImpl;
 import com.hazelcast.spi.impl.operationexecutor.impl.OperationQueue;
@@ -34,14 +35,15 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
+import java.io.Serial;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static junit.framework.TestCase.assertFalse;
-import static junit.framework.TestCase.assertTrue;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 
 @RunWith(HazelcastParallelClassRunner.class)
@@ -76,15 +78,12 @@ public class InterceptorRegistryTest extends HazelcastTestSupport {
         thread.start();
 
         final CountDownLatch latch = new CountDownLatch(1);
-        Object task = new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    registry.register(interceptor.id, interceptor);
-                } catch (AssertionError e) {
-                    e.printStackTrace();
-                    latch.countDown();
-                }
+        Object task = (Runnable) () -> {
+            try {
+                registry.register(interceptor.id, interceptor);
+            } catch (AssertionError e) {
+                e.printStackTrace();
+                latch.countDown();
             }
         };
         queue.add(task, false);
@@ -121,15 +120,12 @@ public class InterceptorRegistryTest extends HazelcastTestSupport {
         registry.register(interceptor.id, interceptor);
 
         final CountDownLatch latch = new CountDownLatch(1);
-        Object task = new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    registry.deregister(interceptor.id);
-                } catch (AssertionError e) {
-                    e.printStackTrace();
-                    latch.countDown();
-                }
+        Object task = (Runnable) () -> {
+            try {
+                registry.deregister(interceptor.id);
+            } catch (AssertionError e) {
+                e.printStackTrace();
+                latch.countDown();
             }
         };
         queue.add(task, false);
@@ -144,18 +140,15 @@ public class InterceptorRegistryTest extends HazelcastTestSupport {
     @Test
     @Category(NightlyTest.class)
     public void test_afterConcurrentRegisterDeregister_thenInternalStructuresAreEmpty() throws Exception {
-        final AtomicBoolean stop = new AtomicBoolean(false);
+        final AtomicBoolean stop = new AtomicBoolean();
 
-        List<Thread> threads = new ArrayList<Thread>();
+        List<Thread> threads = new ArrayList<>();
         for (int i = 0; i < 10; i++) {
-            Thread thread = new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    TestMapInterceptor interceptor = new TestMapInterceptor();
-                    while (!stop.get()) {
-                        registry.register(interceptor.id, interceptor);
-                        registry.deregister(interceptor.id);
-                    }
+            Thread thread = new Thread(() -> {
+                TestMapInterceptor interceptor = new TestMapInterceptor();
+                while (!stop.get()) {
+                    registry.register(interceptor.id, interceptor);
+                    registry.deregister(interceptor.id);
                 }
             });
             thread.start();
@@ -202,36 +195,11 @@ public class InterceptorRegistryTest extends HazelcastTestSupport {
                 operationRunners, getClass().getClassLoader());
     }
 
-    private static class TestMapInterceptor implements MapInterceptor {
+    private static class TestMapInterceptor extends MapInterceptorAdaptor {
+        @Serial
+        private static final long serialVersionUID = 1L;
 
         public final String id = TestMapInterceptor.class.toString();
-
-        @Override
-        public Object interceptGet(Object value) {
-            return null;
-        }
-
-        @Override
-        public void afterGet(Object value) {
-        }
-
-        @Override
-        public Object interceptPut(Object oldValue, Object newValue) {
-            return null;
-        }
-
-        @Override
-        public void afterPut(Object value) {
-        }
-
-        @Override
-        public Object interceptRemove(Object removedValue) {
-            return null;
-        }
-
-        @Override
-        public void afterRemove(Object value) {
-        }
 
         @Override
         public int hashCode() {

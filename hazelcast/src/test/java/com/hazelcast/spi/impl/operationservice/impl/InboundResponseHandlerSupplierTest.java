@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,6 @@ import com.hazelcast.spi.impl.operationservice.impl.responses.NormalResponse;
 import com.hazelcast.spi.impl.sequence.CallIdSequenceWithoutBackpressure;
 import com.hazelcast.spi.properties.ClusterProperty;
 import com.hazelcast.spi.properties.HazelcastProperties;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
@@ -103,7 +102,7 @@ public class InboundResponseHandlerSupplierTest extends HazelcastTestSupport {
 
     private InboundResponseHandlerSupplier newSupplier(int threadCount) {
         Properties props = new Properties();
-        props.put(ClusterProperty.RESPONSE_THREAD_COUNT.getName(), "" + threadCount);
+        props.put(ClusterProperty.RESPONSE_THREAD_COUNT.getName(), String.valueOf(threadCount));
         HazelcastProperties properties = new HazelcastProperties(props);
         when(nodeEngine.getProperties()).thenReturn(properties);
 
@@ -141,13 +140,10 @@ public class InboundResponseHandlerSupplierTest extends HazelcastTestSupport {
 
         supplier.get().accept(response);
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                Invocation inv = invocationRegistry.get(callId);
-                System.out.println(inv);
-                assertNull(inv);
-            }
+        assertTrueEventually(() -> {
+            Invocation inv = invocationRegistry.get(callId);
+            System.out.println(inv);
+            assertNull(inv);
         });
 
         assertEquals(1, supplier.responsesNormal());
@@ -196,7 +192,7 @@ public class InboundResponseHandlerSupplierTest extends HazelcastTestSupport {
 
     private Invocation newInvocation() {
         Invocation.Context context = new Invocation.Context(
-                null, null, null, null, null, 0, invocationRegistry, null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, 0, invocationRegistry, null, null, null, null, null, null, null, null, null, null, null, null, null);
 
         Operation op = new DummyOperation();
         return new PartitionInvocation(context, op, 0, 0, 0, false, false);

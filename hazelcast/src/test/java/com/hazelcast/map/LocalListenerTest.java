@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package com.hazelcast.map;
 import com.hazelcast.config.Config;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.logging.AbstractLogger;
-import com.hazelcast.logging.LogEvent;
 import com.hazelcast.map.impl.MapService;
 import com.hazelcast.map.impl.MapServiceContext;
 import com.hazelcast.map.impl.event.MapEventPublisher;
@@ -80,10 +79,9 @@ public class LocalListenerTest extends HazelcastTestSupport {
         setFieldValueReflectively(mapEventPublisher, "logger", mapEventPublisherLogger);
     }
 
-    private class MapEventPublisherLogger extends AbstractLogger {
+    private static class MapEventPublisherLogger extends AbstractLogger {
 
-        private final CopyOnWriteArrayList logCollector
-                = new CopyOnWriteArrayList<>();
+        private final CopyOnWriteArrayList<Object> logCollector = new CopyOnWriteArrayList<>();
 
         @Override
         public void log(Level level, String message) {
@@ -95,11 +93,6 @@ public class LocalListenerTest extends HazelcastTestSupport {
             logCollector.add(level);
             logCollector.add(message);
             logCollector.add(thrown);
-        }
-
-        @Override
-        public void log(LogEvent logEvent) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

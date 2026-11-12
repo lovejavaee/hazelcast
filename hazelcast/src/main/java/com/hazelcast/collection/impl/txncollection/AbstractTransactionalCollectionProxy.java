@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@ import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 public abstract class AbstractTransactionalCollectionProxy<S extends RemoteService, E>
         extends TransactionalDistributedObject<S> {
 
-    protected final Set<Long> itemIdSet = new HashSet<Long>();
+    protected final Set<Long> itemIdSet = new HashSet<>();
     protected final String name;
     protected final int partitionId;
     protected final OperationService operationService;
@@ -157,7 +157,7 @@ public abstract class AbstractTransactionalCollectionProxy<S extends RemoteServi
     }
 
     protected void checkTransactionActive() {
-        if (!tx.getState().equals(Transaction.State.ACTIVE)) {
+        if (tx.getState() != Transaction.State.ACTIVE) {
             throw new TransactionNotActiveException("Transaction is not active!");
         }
     }

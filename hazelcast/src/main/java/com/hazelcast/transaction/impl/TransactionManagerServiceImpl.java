@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -121,14 +121,14 @@ public class TransactionManagerServiceImpl implements TransactionManagerService,
             return value;
         } catch (Throwable e) {
             context.rollbackTransaction();
-            if (e instanceof TransactionException) {
-                throw (TransactionException) e;
+            if (e instanceof TransactionException exception) {
+                throw exception;
             }
-            if (e.getCause() instanceof TransactionException) {
-                throw (TransactionException) e.getCause();
+            if (e.getCause() instanceof TransactionException transactionException) {
+                throw transactionException;
             }
-            if (e instanceof RuntimeException) {
-                throw (RuntimeException) e;
+            if (e instanceof RuntimeException exception) {
+                throw exception;
             }
             throw new TransactionException(e);
         }
@@ -192,8 +192,8 @@ public class TransactionManagerServiceImpl implements TransactionManagerService,
             logger.info("Committing/rolling-back live transactions of " + member.getAddress() + ", UUID: " + uuid);
             nodeEngine.getExecutionService().execute(ExecutionService.SYSTEM_EXECUTOR, () -> finalizeTransactionsOf(uuid));
         } else if (logger.isFinestEnabled()) {
-            logger.finest("Will not commit/roll-back transactions of " + member.getAddress() + ", UUID: " + uuid
-                    + " because this member is not running");
+            logger.finest("Will not commit/roll-back transactions of %s, UUID: %s because this member is not running",
+                    member.getAddress(), uuid);
         }
     }
 
@@ -218,13 +218,13 @@ public class TransactionManagerServiceImpl implements TransactionManagerService,
 
         if (log.state == ACTIVE) {
             if (logger.isFinestEnabled()) {
-                logger.finest("Rolling-back transaction[id:" + txnId + ", state:ACTIVE] of endpoint " + uuid);
+                logger.finest("Rolling-back transaction[id:%s, state:ACTIVE] of endpoint %s", txnId, uuid);
             }
             Collection<Member> memberList = nodeEngine.getClusterService().getMembers();
-            Collection<Future> futures = new ArrayList<>(memberList.size());
+            Collection<Future<Object>> futures = new ArrayList<>(memberList.size());
             for (Member member : memberList) {
                 Operation op = new BroadcastTxRollbackOperation(txnId);
-                Future f = operationService.invokeOnTarget(SERVICE_NAME, op, member.getAddress());
+                Future<Object> f = operationService.invokeOnTarget(SERVICE_NAME, op, member.getAddress());
                 futures.add(f);
             }
 
@@ -242,7 +242,7 @@ public class TransactionManagerServiceImpl implements TransactionManagerService,
 
             if (log.state == COMMITTING) {
                 if (logger.isFinestEnabled()) {
-                    logger.finest("Committing transaction[id:" + txnId + ", state:COMMITTING] of endpoint " + uuid);
+                    logger.finest("Committing transaction[id:%s, state:COMMITTING] of endpoint %s", txnId, uuid);
                 }
                 try {
                     tx.commit();

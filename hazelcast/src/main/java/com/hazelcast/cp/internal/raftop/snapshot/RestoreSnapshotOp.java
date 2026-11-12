@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,24 +16,29 @@
 
 package com.hazelcast.cp.internal.raftop.snapshot;
 
+import com.hazelcast.cp.CPGroupId;
+import com.hazelcast.cp.internal.RaftOp;
+import com.hazelcast.cp.internal.RaftServiceDataSerializerHook;
+import com.hazelcast.cp.internal.raft.ChunkedSnapshotAwareService;
+import com.hazelcast.cp.internal.raft.DataChunkGroup;
+import com.hazelcast.cp.internal.raft.SnapshotAwareService;
+import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshotRequest;
+import com.hazelcast.cp.internal.raft.impl.log.SnapshotEntry;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
-import com.hazelcast.cp.CPGroupId;
-import com.hazelcast.cp.internal.raft.SnapshotAwareService;
-import com.hazelcast.cp.internal.RaftServiceDataSerializerHook;
-import com.hazelcast.cp.internal.RaftOp;
 
 import java.io.IOException;
+import java.util.Objects;
 
 /**
  * {@code RaftOp} to restore snapshot using related
  * {@link SnapshotAwareService#takeSnapshot(CPGroupId, long)}.
  * <p>
  * This operation is appended to Raft log in
- * {@link com.hazelcast.cp.internal.raft.impl.log.SnapshotEntry} and sent to
+ * {@link SnapshotEntry} and sent to
  * followers via
- * {@link com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshot} RPC.
+ * {@link InstallSnapshotRequest} RPC.
  */
 public class RestoreSnapshotOp extends RaftOp implements IdentifiedDataSerializable {
 
@@ -55,7 +60,13 @@ public class RestoreSnapshotOp extends RaftOp implements IdentifiedDataSerializa
     @Override
     public Object run(CPGroupId groupId, long commitIndex) {
         SnapshotAwareService service = getService();
-        service.restoreSnapshot(groupId, commitIndex, snapshot);
+
+        if (service instanceof ChunkedSnapshotAwareService chunkedService) {
+            chunkedService.restoreSnapshotChunk(groupId, commitIndex, (DataChunkGroup) snapshot);
+        } else {
+            service.restoreSnapshot(groupId, commitIndex, snapshot);
+        }
+
         return null;
     }
 
@@ -84,6 +95,24 @@ public class RestoreSnapshotOp extends RaftOp implements IdentifiedDataSerializa
     @Override
     public String getServiceName() {
         return serviceName;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+
+        RestoreSnapshotOp that = (RestoreSnapshotOp) o;
+        return Objects.equals(serviceName, that.serviceName)
+                && Objects.equals(snapshot, that.snapshot);
+    }
+
+    @Override
+    public int hashCode() {
+        int result = Objects.hashCode(serviceName);
+        result = 31 * result + Objects.hashCode(snapshot);
+        return result;
     }
 
     @Override

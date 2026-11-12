@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.internal.serialization.SerializationService;
 import com.hazelcast.internal.serialization.impl.DefaultSerializationServiceBuilder;
 import com.hazelcast.internal.util.HashUtil;
+import com.hazelcast.logging.LoggingService;
 import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.After;
@@ -61,6 +62,7 @@ import static com.hazelcast.test.HazelcastTestSupport.randomString;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.mockito.Mockito.mock;
 
 @RunWith(HazelcastSerialClassRunner.class)
 @Category({ QuickTest.class })
@@ -97,7 +99,8 @@ public class AuthenticationInformationLeakTest {
             assertNotNull(res.get());
         });
         assertEquals(ErrorsCodec.EXCEPTION_MESSAGE_TYPE, res.get().getMessageType());
-        ClientExceptionFactory factory = new ClientExceptionFactory(false, Thread.currentThread().getContextClassLoader());
+        ClientExceptionFactory factory = new ClientExceptionFactory(false, Thread.currentThread().getContextClassLoader(),
+                mock(LoggingService.class));
         Throwable err = factory.createException(res.get());
         String message = err.getMessage();
         assertInstanceOf(AuthenticationException.class, err.getCause());
@@ -174,7 +177,8 @@ public class AuthenticationInformationLeakTest {
     private ClientMessage authenticate(String clusterName, byte serVersion, OutputStream os, InputStream is)
             throws IOException {
         UUID uuid = new UUID(0, 0);
-        ClientMessage msg = ClientAuthenticationCodec.encodeRequest(clusterName, null, null, uuid, "", serVersion, "", "", new ArrayList<>());
+        ClientMessage msg = ClientAuthenticationCodec.encodeRequest(clusterName, null, null, uuid, "",
+                serVersion, "", "", new ArrayList<>(), (byte) 1, false);
         ClientTestUtil.writeClientMessage(os, msg);
 
         ClientMessage res = ClientTestUtil.readResponse(is);

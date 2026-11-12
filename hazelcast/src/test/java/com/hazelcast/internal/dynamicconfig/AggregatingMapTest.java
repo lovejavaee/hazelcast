@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,11 +29,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
-import static org.hamcrest.Matchers.contains;
-import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -45,10 +43,10 @@ public class AggregatingMapTest extends HazelcastTestSupport {
     public void givenKeyExistInTheFirstMap_whenGet_theHit() {
         String key = "key";
         String value = "value";
-        Map<String, String> map1 = new HashMap<String, String>();
+        Map<String, String> map1 = new HashMap<>();
         map1.put(key, value);
 
-        Map<String, String> map2 = new HashMap<String, String>();
+        Map<String, String> map2 = new HashMap<>();
 
         Map<String, String> aggregatingMap = AggregatingMap.aggregate(map1, map2);
         assertEquals(value, aggregatingMap.get(key));
@@ -58,9 +56,9 @@ public class AggregatingMapTest extends HazelcastTestSupport {
     public void givenKeyExistInTheSecondMap_whenGet_theHit() {
         String key = "key";
         String value = "value";
-        Map<String, String> map1 = new HashMap<String, String>();
+        Map<String, String> map1 = new HashMap<>();
 
-        Map<String, String> map2 = new HashMap<String, String>();
+        Map<String, String> map2 = new HashMap<>();
         map2.put(key, value);
 
         Map<String, String> aggregatingMap = AggregatingMap.aggregate(map1, map2);
@@ -75,10 +73,10 @@ public class AggregatingMapTest extends HazelcastTestSupport {
 
     @Test
     public void testAggregatingSize() {
-        Map<String, String> map1 = new HashMap<String, String>();
+        Map<String, String> map1 = new HashMap<>();
         map1.put("key1", "value1");
 
-        Map<String, String> map2 = new HashMap<String, String>();
+        Map<String, String> map2 = new HashMap<>();
         map2.put("key2", "value2");
 
         Map<String, String> aggregatingMap = AggregatingMap.aggregate(map1, map2);
@@ -87,10 +85,10 @@ public class AggregatingMapTest extends HazelcastTestSupport {
 
     @Test
     public void testContainsKey() {
-        Map<String, String> map1 = new HashMap<String, String>();
+        Map<String, String> map1 = new HashMap<>();
         map1.put("key1", "value1");
 
-        Map<String, String> map2 = new HashMap<String, String>();
+        Map<String, String> map2 = new HashMap<>();
         map2.put("key2", "value2");
 
         Map<String, String> aggregatingMap = AggregatingMap.aggregate(map1, map2);
@@ -101,10 +99,10 @@ public class AggregatingMapTest extends HazelcastTestSupport {
 
     @Test
     public void testContainsValue() {
-        Map<String, String> map1 = new HashMap<String, String>();
+        Map<String, String> map1 = new HashMap<>();
         map1.put("key1", "value1");
 
-        Map<String, String> map2 = new HashMap<String, String>();
+        Map<String, String> map2 = new HashMap<>();
         map2.put("key2", "value2");
 
         Map<String, String> aggregatingMap = AggregatingMap.aggregate(map1, map2);
@@ -115,8 +113,8 @@ public class AggregatingMapTest extends HazelcastTestSupport {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testPutThrowUOE() {
-        Map<String, String> map1 = new HashMap<String, String>();
-        Map<String, String> map2 = new HashMap<String, String>();
+        Map<String, String> map1 = new HashMap<>();
+        Map<String, String> map2 = new HashMap<>();
 
         Map<String, String> aggregatingMap = AggregatingMap.aggregate(map1, map2);
         aggregatingMap.put("key", "value");
@@ -124,8 +122,8 @@ public class AggregatingMapTest extends HazelcastTestSupport {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testClearThrowUOE() {
-        Map<String, String> map1 = new HashMap<String, String>();
-        Map<String, String> map2 = new HashMap<String, String>();
+        Map<String, String> map1 = new HashMap<>();
+        Map<String, String> map2 = new HashMap<>();
 
         Map<String, String> aggregatingMap = AggregatingMap.aggregate(map1, map2);
         aggregatingMap.clear();
@@ -133,8 +131,8 @@ public class AggregatingMapTest extends HazelcastTestSupport {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testRemoveThrowUOE() {
-        Map<String, String> map1 = new HashMap<String, String>();
-        Map<String, String> map2 = new HashMap<String, String>();
+        Map<String, String> map1 = new HashMap<>();
+        Map<String, String> map2 = new HashMap<>();
 
         Map<String, String> aggregatingMap = AggregatingMap.aggregate(map1, map2);
         aggregatingMap.remove("key");
@@ -142,34 +140,34 @@ public class AggregatingMapTest extends HazelcastTestSupport {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testPutAllThrowUOE() {
-        Map<String, String> map1 = new HashMap<String, String>();
-        Map<String, String> map2 = new HashMap<String, String>();
+        Map<String, String> map1 = new HashMap<>();
+        Map<String, String> map2 = new HashMap<>();
 
         Map<String, String> aggregatingMap = AggregatingMap.aggregate(map1, map2);
-        Map<String, String> tempMap = new HashMap<String, String>();
+        Map<String, String> tempMap = new HashMap<>();
         tempMap.put("key", "value");
         aggregatingMap.putAll(tempMap);
     }
 
     @Test
     public void testKeys_hasKeyFromBothMaps() {
-        Map<String, String> map1 = new HashMap<String, String>();
+        Map<String, String> map1 = new HashMap<>();
         map1.put("key1", "value1");
-        Map<String, String> map2 = new HashMap<String, String>();
+        Map<String, String> map2 = new HashMap<>();
         map2.put("key2", "value2");
 
         Map<String, String> aggregatingMap = AggregatingMap.aggregate(map1, map2);
         Set<String> keySet = aggregatingMap.keySet();
 
         assertEquals(2, keySet.size());
-        assertThat(keySet, containsInAnyOrder("key1", "key2"));
+        assertThat(keySet).containsExactlyInAnyOrder("key1", "key2");
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testKeys_isUnmodifiable() {
-        Map<String, String> map1 = new HashMap<String, String>();
+        Map<String, String> map1 = new HashMap<>();
         map1.put("key1", "value1");
-        Map<String, String> map2 = new HashMap<String, String>();
+        Map<String, String> map2 = new HashMap<>();
         map2.put("key2", "value2");
 
         Map<String, String> aggregatingMap = AggregatingMap.aggregate(map1, map2);
@@ -180,23 +178,23 @@ public class AggregatingMapTest extends HazelcastTestSupport {
 
     @Test
     public void testValues_hasValuesFromBothMaps() {
-        Map<String, String> map1 = new HashMap<String, String>();
+        Map<String, String> map1 = new HashMap<>();
         map1.put("key1", "value");
-        Map<String, String> map2 = new HashMap<String, String>();
+        Map<String, String> map2 = new HashMap<>();
         map2.put("key2", "value");
 
         Map<String, String> aggregatingMap = AggregatingMap.aggregate(map1, map2);
         Collection<String> values = aggregatingMap.values();
 
         assertEquals(2, values.size());
-        assertThat(values, contains("value", "value"));
+        assertThat(values).contains("value", "value");
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testValues_isUnmodifiable() {
-        Map<String, String> map1 = new HashMap<String, String>();
+        Map<String, String> map1 = new HashMap<>();
         map1.put("key1", "value");
-        Map<String, String> map2 = new HashMap<String, String>();
+        Map<String, String> map2 = new HashMap<>();
         map2.put("key2", "value");
 
         Map<String, String> aggregatingMap = AggregatingMap.aggregate(map1, map2);
@@ -207,9 +205,9 @@ public class AggregatingMapTest extends HazelcastTestSupport {
 
     @Test
     public void testEntrySet_hasKeyFromBothMaps() {
-        Map<String, String> map1 = new HashMap<String, String>();
+        Map<String, String> map1 = new HashMap<>();
         map1.put("key1", "value1");
-        Map<String, String> map2 = new HashMap<String, String>();
+        Map<String, String> map2 = new HashMap<>();
         map2.put("key2", "value2");
 
         Map<String, String> aggregatingMap = AggregatingMap.aggregate(map1, map2);
@@ -227,9 +225,9 @@ public class AggregatingMapTest extends HazelcastTestSupport {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testEntrySet_isUnmodifiable() {
-        Map<String, String> map1 = new HashMap<String, String>();
+        Map<String, String> map1 = new HashMap<>();
         map1.put("key1", "value1");
-        Map<String, String> map2 = new HashMap<String, String>();
+        Map<String, String> map2 = new HashMap<>();
         map2.put("key2", "value2");
 
         Map<String, String> aggregatingMap = AggregatingMap.aggregate(map1, map2);

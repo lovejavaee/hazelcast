@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 package com.hazelcast.client;
 
 import com.hazelcast.cluster.Endpoint;
-
 import java.net.InetSocketAddress;
 import java.util.Set;
 import java.util.UUID;
@@ -36,6 +35,7 @@ public interface Client extends Endpoint {
      *
      * @return a unique UUID for this client
      */
+    @Override
     UUID getUuid();
 
     /**
@@ -43,6 +43,7 @@ public interface Client extends Endpoint {
      *
      * @return the socket address of this client
      */
+    @Override
     InetSocketAddress getSocketAddress();
 
     /**

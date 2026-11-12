@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -99,23 +99,21 @@ public class CardinalityEstimatorAdvancedTest extends HazelcastTestSupport {
             for (int i = 0; i < total / parallel; i++) {
                 final HazelcastInstance[] instances = new HazelcastInstance[parallel];
                 final CountDownLatch countDownLatch = new CountDownLatch(parallel);
-                final AtomicInteger counter = new AtomicInteger(0);
-                final AtomicInteger exceptionCount = new AtomicInteger(0);
+                final AtomicInteger counter = new AtomicInteger();
+                final AtomicInteger exceptionCount = new AtomicInteger();
                 for (int j = 0; j < parallel; j++) {
                     final int id = j;
-                    ex.execute(new Runnable() {
-                        public void run() {
-                            try {
-                                counter.incrementAndGet();
-                                instances[id] = nodeFactory.newHazelcastInstance();
-                                instances[id].getCardinalityEstimator(name)
-                                        .add(String.valueOf(counter.get()));
-                            } catch (Exception e) {
-                                exceptionCount.incrementAndGet();
-                                e.printStackTrace();
-                            } finally {
-                                countDownLatch.countDown();
-                            }
+                    ex.execute(() -> {
+                        try {
+                            counter.incrementAndGet();
+                            instances[id] = nodeFactory.newHazelcastInstance();
+                            instances[id].getCardinalityEstimator(name)
+                                    .add(String.valueOf(counter.get()));
+                        } catch (Exception e) {
+                            exceptionCount.incrementAndGet();
+                            e.printStackTrace();
+                        } finally {
+                            countDownLatch.countDown();
                         }
                     });
                 }

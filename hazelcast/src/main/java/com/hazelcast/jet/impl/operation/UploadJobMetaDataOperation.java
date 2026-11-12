@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,9 @@ import com.hazelcast.jet.impl.submitjob.memberside.JobMetaDataParameterObject;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
+import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.operationservice.Operation;
+import com.hazelcast.spi.properties.HazelcastProperties;
 
 import java.io.IOException;
 import java.nio.file.Paths;
@@ -33,6 +35,7 @@ import static com.hazelcast.internal.serialization.impl.SerializationUtil.writeL
 import static com.hazelcast.internal.util.UUIDSerializationUtil.readUUID;
 import static com.hazelcast.internal.util.UUIDSerializationUtil.writeUUID;
 import static com.hazelcast.jet.impl.util.Util.checkJetIsEnabled;
+import static com.hazelcast.spi.properties.ClusterProperty.JAR_UPLOAD_DIR_PATH;
 
 /**
  * Uploads the metadata of a job to be executed by a jar
@@ -76,8 +79,14 @@ public class UploadJobMetaDataOperation extends Operation implements IdentifiedD
     }
 
     private void runJarOnClient() {
+        // Assign the upload directory path
+        NodeEngine nodeEngine = getNodeEngine();
+        HazelcastProperties hazelcastProperties = nodeEngine.getProperties();
+        String uploadDirectoryPath = hazelcastProperties.getString(JAR_UPLOAD_DIR_PATH);
+        jobMetaDataParameterObject.setUploadDirectoryPath(uploadDirectoryPath);
+
         JetServiceBackend jetServiceBackend = getJetServiceBackend();
-        jetServiceBackend.storeJobMetaData(jobMetaDataParameterObject);
+        jetServiceBackend.jarOnClient(jobMetaDataParameterObject);
     }
 
     protected JetServiceBackend getJetServiceBackend() {

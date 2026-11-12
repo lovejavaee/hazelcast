@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,6 +42,8 @@ public class JobMetaDataParameterObject {
     private List<String> jobParameters;
 
     private Path jarPath;
+
+    private String uploadDirectoryPath;
 
     public UUID getSessionId() {
         return sessionId;
@@ -119,8 +121,16 @@ public class JobMetaDataParameterObject {
         this.jarPath = jarPath;
     }
 
+    public String getUploadDirectoryPath() {
+        return uploadDirectoryPath;
+    }
+
+    public void setUploadDirectoryPath(String uploadDirectoryPath) {
+        this.uploadDirectoryPath = uploadDirectoryPath;
+    }
+
     // Not all parameters need to be exposed
-    // Convert only parameters that should be with an exception
+    // Show only relevant parameters that should be in the exception
     public String exceptionString() {
         return "JobMetaDataParameterObject{" +
                "jarOnMember='" + jarOnMember + '\'' +

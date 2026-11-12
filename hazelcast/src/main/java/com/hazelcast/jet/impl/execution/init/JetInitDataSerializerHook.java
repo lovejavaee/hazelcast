@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.hazelcast.jet.impl.execution.init;
 import com.hazelcast.internal.serialization.DataSerializerHook;
 import com.hazelcast.internal.serialization.impl.FactoryIdHelper;
 import com.hazelcast.jet.JobStatusEvent;
+import com.hazelcast.jet.impl.JobAndSqlSummaryIds;
 import com.hazelcast.jet.impl.JobExecutionRecord;
 import com.hazelcast.jet.impl.JobExecutionRecord.SnapshotStats;
 import com.hazelcast.jet.impl.JobRecord;
@@ -29,6 +30,7 @@ import com.hazelcast.jet.impl.JobSummary;
 import com.hazelcast.jet.impl.JobSuspensionCauseImpl;
 import com.hazelcast.jet.impl.SnapshotValidationRecord;
 import com.hazelcast.jet.impl.connector.WriteFileP;
+import com.hazelcast.jet.impl.operation.AddJobStatusListenerOperation;
 import com.hazelcast.jet.impl.operation.CheckLightJobsOperation;
 import com.hazelcast.jet.impl.operation.GetJobAndSqlSummaryListOperation;
 import com.hazelcast.jet.impl.operation.GetJobConfigOperation;
@@ -39,7 +41,7 @@ import com.hazelcast.jet.impl.operation.GetJobStatusOperation;
 import com.hazelcast.jet.impl.operation.GetJobSubmissionTimeOperation;
 import com.hazelcast.jet.impl.operation.GetJobSummaryListOperation;
 import com.hazelcast.jet.impl.operation.GetJobSuspensionCauseOperation;
-import com.hazelcast.jet.impl.operation.GetLocalJobMetricsOperation;
+import com.hazelcast.jet.impl.operation.GetLocalExecutionMetricsOperation;
 import com.hazelcast.jet.impl.operation.InitExecutionOperation;
 import com.hazelcast.jet.impl.operation.IsJobUserCancelledOperation;
 import com.hazelcast.jet.impl.operation.JoinSubmittedJobOperation;
@@ -104,6 +106,7 @@ public final class JetInitDataSerializerHook implements DataSerializerHook {
     public static final int SNAPSHOT_STATS = 30;
     public static final int PREPARE_FOR_PASSIVE_CLUSTER_OP = 31;
     public static final int SNAPSHOT_VALIDATION_RECORD = 32;
+    public static final int ADD_JOB_STATUS_LISTENER_OP = 33;
     public static final int GET_JOB_METRICS_OP = 34;
     public static final int GET_LOCAL_JOB_METRICS_OP = 35;
     public static final int SNAPSHOT_PHASE2_OPERATION = 36;
@@ -120,6 +123,7 @@ public final class JetInitDataSerializerHook implements DataSerializerHook {
     public static final int UPLOAD_JOB_METADATA_OP = 52;
     public static final int UPLOAD_JOB_MULTIPART_OP = 53;
     public static final int UPDATE_JOB_CONFIG_OP = 54;
+    public static final int JOB_AND_SQL_SUMMARY = 55;
 
     public static final int FACTORY_ID = FactoryIdHelper.getFactoryId(JET_IMPL_DS_FACTORY, JET_IMPL_DS_FACTORY_ID);
 
@@ -134,111 +138,63 @@ public final class JetInitDataSerializerHook implements DataSerializerHook {
     }
 
     private static class Factory implements DataSerializableFactory {
-        @SuppressWarnings("checkstyle:returncount")
         @Override
         public IdentifiedDataSerializable create(int typeId) {
-            switch (typeId) {
-                case EXECUTION_PLAN:
-                    return new ExecutionPlan();
-                case EDGE_DEF:
-                    return new EdgeDef();
-                case VERTEX_DEF:
-                    return new VertexDef();
-                case JOB_RECORD:
-                    return new JobRecord();
-                case JOB_RESULT:
-                    return new JobResult();
-                case INIT_EXECUTION_OP:
-                    return new InitExecutionOperation();
-                case START_EXECUTION_OP:
-                    return new StartExecutionOperation();
-                case JOB_STATUS_EVENT:
-                    return new JobStatusEvent();
-                case SUBMIT_JOB_OP:
-                    return new SubmitJobOperation();
-                case GET_JOB_STATUS_OP:
-                    return new GetJobStatusOperation();
-                case SNAPSHOT_PHASE1_OPERATION:
-                    return new SnapshotPhase1Operation();
-                case JOB_EXECUTION_RECORD:
-                    return new JobExecutionRecord();
-                case SESSION_WINDOW_P_WINDOWS:
-                    return new SessionWindowP.Windows<>();
-                case SLIDING_WINDOW_P_SNAPSHOT_KEY:
-                    return new SnapshotKey();
-                case GET_JOB_IDS:
-                    return new GetJobIdsOperation();
-                case JOIN_SUBMITTED_JOB:
-                    return new JoinSubmittedJobOperation();
-                case UPDATE_JOB_EXECUTION_RECORD_EP:
-                    return new UpdateJobExecutionRecordEntryProcessor();
-                case TERMINATE_EXECUTION_OP:
-                    return new TerminateExecutionOperation();
-                case FILTER_JOB_RESULT_BY_NAME:
-                    return new FilterJobResultByNamePredicate();
-                case GET_JOB_IDS_RESULT:
-                    return new GetJobIdsResult();
-                case GET_JOB_SUBMISSION_TIME_OP:
-                    return new GetJobSubmissionTimeOperation();
-                case GET_JOB_CONFIG_OP:
-                    return new GetJobConfigOperation();
-                case TERMINATE_JOB_OP:
-                    return new TerminateJobOperation();
-                case ASYNC_SNAPSHOT_WRITER_SNAPSHOT_DATA_KEY:
-                    return new AsyncSnapshotWriterImpl.SnapshotDataKey();
-                case ASYNC_SNAPSHOT_WRITER_SNAPSHOT_DATA_VALUE_TERMINATOR:
-                    return AsyncSnapshotWriterImpl.SnapshotDataValueTerminator.INSTANCE;
-                case SNAPSHOT_PHASE1_RESULT:
-                    return new SnapshotPhase1Result();
-                case RESUME_JOB_OP:
-                    return new ResumeJobOperation();
-                case NOTIFY_MEMBER_SHUTDOWN_OP:
-                    return new NotifyMemberShutdownOperation();
-                case GET_JOB_SUMMARY_LIST_OP:
-                    return new GetJobSummaryListOperation();
-                case JOB_SUMMARY:
-                    return new JobSummary();
-                case SNAPSHOT_STATS:
-                    return new SnapshotStats();
-                case PREPARE_FOR_PASSIVE_CLUSTER_OP:
-                    return new PrepareForPassiveClusterOperation();
-                case SNAPSHOT_VALIDATION_RECORD:
-                    return new SnapshotValidationRecord();
-                case UPDATE_JOB_CONFIG_OP:
-                    return new UpdateJobConfigOperation();
-                case GET_JOB_METRICS_OP:
-                    return new GetJobMetricsOperation();
-                case GET_LOCAL_JOB_METRICS_OP:
-                    return new GetLocalJobMetricsOperation();
-                case SNAPSHOT_PHASE2_OPERATION:
-                    return new SnapshotPhase2Operation();
-                case WRITE_FILE_P_FILE_ID:
-                    return new WriteFileP.FileId();
-                case JOB_SUSPENSION_CAUSE:
-                    return new JobSuspensionCauseImpl();
-                case GET_JOB_SUSPENSION_CAUSE_OP:
-                    return new GetJobSuspensionCauseOperation();
-                case PROCESSOR_SUPPLIER_FROM_SIMPLE_SUPPLIER:
-                    return new ProcessorSupplierFromSimpleSupplier();
-                case NOOP_PROCESSOR_SUPPLIER:
-                    return new NoopP.NoopPSupplier();
-                case CHECK_LIGHT_JOBS_OP:
-                    return new CheckLightJobsOperation();
-                case GET_JOB_AND_SQL_SUMMARY_LIST_OP:
-                    return new GetJobAndSqlSummaryListOperation();
-                case WRAPPING_PROCESSOR_META_SUPPLIER:
-                    return new WrappingProcessorMetaSupplier();
-                case WRAPPING_PROCESSOR_SUPPLIER:
-                    return new WrappingProcessorSupplier();
-                case UPLOAD_JOB_METADATA_OP:
-                    return new UploadJobMetaDataOperation();
-                case UPLOAD_JOB_MULTIPART_OP:
-                    return new UploadJobMultiPartOperation();
-                case GET_JOB_USER_CANCELLED_OP:
-                    return new IsJobUserCancelledOperation();
-                default:
-                    throw new IllegalArgumentException("Unknown type id " + typeId);
-            }
+            return switch (typeId) {
+                case EXECUTION_PLAN -> new ExecutionPlan();
+                case EDGE_DEF -> new EdgeDef();
+                case VERTEX_DEF -> new VertexDef();
+                case JOB_RECORD -> new JobRecord();
+                case JOB_RESULT -> new JobResult();
+                case INIT_EXECUTION_OP -> new InitExecutionOperation();
+                case START_EXECUTION_OP -> new StartExecutionOperation();
+                case JOB_STATUS_EVENT -> new JobStatusEvent();
+                case SUBMIT_JOB_OP -> new SubmitJobOperation();
+                case GET_JOB_STATUS_OP -> new GetJobStatusOperation();
+                case SNAPSHOT_PHASE1_OPERATION -> new SnapshotPhase1Operation();
+                case JOB_EXECUTION_RECORD -> new JobExecutionRecord();
+                case SESSION_WINDOW_P_WINDOWS -> new SessionWindowP.Windows<>();
+                case SLIDING_WINDOW_P_SNAPSHOT_KEY -> new SnapshotKey();
+                case GET_JOB_IDS -> new GetJobIdsOperation();
+                case JOIN_SUBMITTED_JOB -> new JoinSubmittedJobOperation();
+                case UPDATE_JOB_EXECUTION_RECORD_EP -> new UpdateJobExecutionRecordEntryProcessor();
+                case TERMINATE_EXECUTION_OP -> new TerminateExecutionOperation();
+                case FILTER_JOB_RESULT_BY_NAME -> new FilterJobResultByNamePredicate();
+                case GET_JOB_IDS_RESULT -> new GetJobIdsResult();
+                case GET_JOB_SUBMISSION_TIME_OP -> new GetJobSubmissionTimeOperation();
+                case GET_JOB_CONFIG_OP -> new GetJobConfigOperation();
+                case TERMINATE_JOB_OP -> new TerminateJobOperation();
+                case ASYNC_SNAPSHOT_WRITER_SNAPSHOT_DATA_KEY -> new AsyncSnapshotWriterImpl.SnapshotDataKey();
+                case ASYNC_SNAPSHOT_WRITER_SNAPSHOT_DATA_VALUE_TERMINATOR ->
+                        AsyncSnapshotWriterImpl.SnapshotDataValueTerminator.INSTANCE;
+                case SNAPSHOT_PHASE1_RESULT -> new SnapshotPhase1Result();
+                case RESUME_JOB_OP -> new ResumeJobOperation();
+                case NOTIFY_MEMBER_SHUTDOWN_OP -> new NotifyMemberShutdownOperation();
+                case GET_JOB_SUMMARY_LIST_OP -> new GetJobSummaryListOperation();
+                case JOB_SUMMARY -> new JobSummary();
+                case SNAPSHOT_STATS -> new SnapshotStats();
+                case PREPARE_FOR_PASSIVE_CLUSTER_OP -> new PrepareForPassiveClusterOperation();
+                case SNAPSHOT_VALIDATION_RECORD -> new SnapshotValidationRecord();
+                case ADD_JOB_STATUS_LISTENER_OP -> new AddJobStatusListenerOperation();
+                case UPDATE_JOB_CONFIG_OP -> new UpdateJobConfigOperation();
+                case GET_JOB_METRICS_OP -> new GetJobMetricsOperation();
+                case GET_LOCAL_JOB_METRICS_OP -> new GetLocalExecutionMetricsOperation();
+                case SNAPSHOT_PHASE2_OPERATION -> new SnapshotPhase2Operation();
+                case WRITE_FILE_P_FILE_ID -> new WriteFileP.FileId();
+                case JOB_SUSPENSION_CAUSE -> new JobSuspensionCauseImpl();
+                case GET_JOB_SUSPENSION_CAUSE_OP -> new GetJobSuspensionCauseOperation();
+                case PROCESSOR_SUPPLIER_FROM_SIMPLE_SUPPLIER -> new ProcessorSupplierFromSimpleSupplier();
+                case NOOP_PROCESSOR_SUPPLIER -> new NoopP.NoopPSupplier();
+                case CHECK_LIGHT_JOBS_OP -> new CheckLightJobsOperation();
+                case GET_JOB_AND_SQL_SUMMARY_LIST_OP -> new GetJobAndSqlSummaryListOperation();
+                case WRAPPING_PROCESSOR_META_SUPPLIER -> new WrappingProcessorMetaSupplier();
+                case WRAPPING_PROCESSOR_SUPPLIER -> new WrappingProcessorSupplier();
+                case UPLOAD_JOB_METADATA_OP -> new UploadJobMetaDataOperation();
+                case UPLOAD_JOB_MULTIPART_OP -> new UploadJobMultiPartOperation();
+                case GET_JOB_USER_CANCELLED_OP -> new IsJobUserCancelledOperation();
+                case JOB_AND_SQL_SUMMARY -> new JobAndSqlSummaryIds();
+                default -> throw new IllegalArgumentException("Unknown type id " + typeId);
+            };
         }
     }
 }

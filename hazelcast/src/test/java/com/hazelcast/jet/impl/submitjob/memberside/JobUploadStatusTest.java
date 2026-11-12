@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +17,11 @@
 package com.hazelcast.jet.impl.submitjob.memberside;
 
 import com.hazelcast.jet.JetException;
+import com.hazelcast.mock.MockUtil;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -27,10 +29,11 @@ import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -40,10 +43,12 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.when;
+import static org.mockito.MockitoAnnotations.openMocks;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class JobUploadStatusTest {
+
     @Mock
     Clock clock;
     @Mock
@@ -51,9 +56,16 @@ public class JobUploadStatusTest {
     @InjectMocks
     JobUploadStatus jobUploadStatus;
 
+    private AutoCloseable openMocks;
+
     @Before
     public void setUp() {
-        MockitoAnnotations.openMocks(this);
+        openMocks = openMocks(this);
+    }
+
+    @After
+    public void cleanUp() {
+        MockUtil.closeMocks(openMocks);
     }
 
     @Test
@@ -193,5 +205,22 @@ public class JobUploadStatusTest {
 
         jobUploadStatus.changeLastUpdatedTime();
         assertEquals(fixedInstant, jobUploadStatus.lastUpdatedTime);
+    }
+
+    @Test
+    public void testGetJarPath() throws IOException {
+        Path jarPath = null;
+        try {
+            Path path = Paths.get("target");
+            Files.createDirectories(path);
+            String uploadPath = path.toAbsolutePath().toString();
+            when(jobMetaDataParameterObject.getUploadDirectoryPath()).thenReturn(uploadPath);
+            jarPath = jobUploadStatus.createJarPath();
+            assertTrue(Files.exists(jarPath));
+        } finally {
+            if (jarPath != null) {
+                Files.delete(jarPath);
+            }
+        }
     }
 }

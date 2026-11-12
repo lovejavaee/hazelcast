@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,29 +20,28 @@ import com.hazelcast.config.Config;
 import com.hazelcast.config.JoinConfig;
 import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
-import com.hazelcast.spring.CustomSpringJUnit4ClassRunner;
-import com.hazelcast.test.annotation.QuickTest;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
+import com.hazelcast.spring.CustomSpringExtension;
+import com.hazelcast.test.HazelcastTestSupport;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.PropertySource;
 import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
 import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 
-import java.util.Arrays;
+import java.util.List;
 
 /**
  * Tests for {@link HazelcastCache} for timeout.
  *
  * @author Gokhan Oner
  */
-@RunWith(CustomSpringJUnit4ClassRunner.class)
+@ExtendWith({SpringExtension.class, CustomSpringExtension.class})
 @ContextConfiguration(classes = HazelcastCacheReadTimeoutTestWithJavaConfig.TestConfig.class)
-@Category(QuickTest.class)
 public class HazelcastCacheReadTimeoutTestWithJavaConfig extends AbstractHazelcastCacheReadTimeoutTest {
 
     @Configuration
@@ -62,7 +61,7 @@ public class HazelcastCacheReadTimeoutTestWithJavaConfig extends AbstractHazelca
 
         @Bean
         Config config() {
-            Config config = smallInstanceConfig();
+            Config config = HazelcastTestSupport.smallInstanceConfig();
             config.setClusterName("readtimeout-javaConfig");
             config.setProperty("hazelcast.graceful.shutdown.max.wait", "120");
             config.setProperty("hazelcast.partition.backup.sync.interval", "1");
@@ -73,7 +72,7 @@ public class HazelcastCacheReadTimeoutTestWithJavaConfig extends AbstractHazelca
 
             config.getNetworkConfig().getInterfaces()
                     .setEnabled(true)
-                    .setInterfaces(Arrays.asList("127.0.0.1"));
+                    .setInterfaces(List.of("127.0.0.1"));
             return config;
         }
 
@@ -92,8 +91,8 @@ public class HazelcastCacheReadTimeoutTestWithJavaConfig extends AbstractHazelca
 
     }
 
-    @BeforeClass
-    @AfterClass
+    @BeforeAll
+    @AfterAll
     public static void start() {
         Hazelcast.shutdownAll();
     }

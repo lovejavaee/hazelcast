@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.hazelcast.config.NearCacheConfig;
 import com.hazelcast.internal.nearcache.impl.record.NearCacheDataRecord;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.serialization.SerializationService;
+import com.hazelcast.spi.properties.HazelcastProperties;
 
 import static com.hazelcast.internal.nearcache.NearCacheRecord.TIME_NOT_SET;
 import static com.hazelcast.internal.nearcache.impl.record.AbstractNearCacheRecord.NUMBER_OF_BOOLEAN_FIELD_TYPES;
@@ -40,18 +41,19 @@ public class NearCacheDataRecordStore<K, V> extends BaseHeapNearCacheRecordStore
     public NearCacheDataRecordStore(String name,
                                     NearCacheConfig nearCacheConfig,
                                     SerializationService serializationService,
-                                    ClassLoader classLoader) {
-        super(name, nearCacheConfig, serializationService, classLoader);
+                                    ClassLoader classLoader,
+                                    HazelcastProperties properties) {
+        super(name, nearCacheConfig, serializationService, classLoader, properties);
     }
 
     @Override
     protected long getKeyStorageMemoryCost(K key) {
-        if (key instanceof Data) {
+        if (key instanceof Data data) {
             return
                     // reference to this key data inside map ("store" field)
                     REFERENCE_COST_IN_BYTES
                             // heap cost of this key data
-                            + ((Data) key).getHeapCost();
+                            + data.getHeapCost();
         } else {
             // memory cost for non-data typed instance is not supported
             return 0L;

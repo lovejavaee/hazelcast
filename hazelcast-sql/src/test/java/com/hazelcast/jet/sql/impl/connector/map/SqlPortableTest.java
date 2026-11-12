@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,8 +33,10 @@ import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.sql.HazelcastSqlException;
 import com.hazelcast.sql.SqlRow;
 import com.hazelcast.sql.SqlService;
+import com.hazelcast.test.HazelcastSerialClassRunner;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -72,6 +74,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
+@RunWith(HazelcastSerialClassRunner.class)
 public class SqlPortableTest extends SqlTestSupport {
 
     private static SqlService sqlService;
@@ -637,26 +640,6 @@ public class SqlPortableTest extends SqlTestSupport {
     }
 
     @Test
-    public void when_unknownClassDef_then_wholeValueMapped() {
-        String name = randomName();
-        sqlService.execute("CREATE MAPPING " + name + ' '
-                + "TYPE " + IMapSqlConnector.TYPE_NAME + ' '
-                + "OPTIONS ("
-                + '\'' + OPTION_KEY_FORMAT + "'='" + PORTABLE_FORMAT + '\''
-                + ", '" + OPTION_KEY_FACTORY_ID + "'='9999'"
-                + ", '" + OPTION_KEY_CLASS_ID + "'='9999'"
-                + ", '" + OPTION_KEY_CLASS_VERSION + "'='9999'"
-                + ", '" + OPTION_VALUE_FORMAT + "'='" + PORTABLE_FORMAT + '\''
-                + ", '" + OPTION_VALUE_FACTORY_ID + "'='9998'"
-                + ", '" + OPTION_VALUE_CLASS_ID + "'='9998'"
-                + ", '" + OPTION_VALUE_CLASS_VERSION + "'='9998'"
-                + ")"
-        );
-
-        assertRowsAnyOrder("SELECT __key, this FROM " + name, emptyList());
-    }
-
-    @Test
     public void test_classDefMappingMismatch() {
         assertThatThrownBy(() -> sqlService.execute("CREATE MAPPING " + randomName() + " ("
                 + "id VARCHAR"
@@ -694,6 +677,26 @@ public class SqlPortableTest extends SqlTestSupport {
                 rows(2,
                         1, null,
                         2, null));
+    }
+
+    @Test
+    public void when_unknownClassDef_then_wholeValueMapped() {
+        String name = randomName();
+        sqlService.execute("CREATE MAPPING " + name + ' '
+                + "TYPE " + IMapSqlConnector.TYPE_NAME + ' '
+                + "OPTIONS ("
+                + '\'' + OPTION_KEY_FORMAT + "'='" + PORTABLE_FORMAT + '\''
+                + ", '" + OPTION_KEY_FACTORY_ID + "'='9999'"
+                + ", '" + OPTION_KEY_CLASS_ID + "'='9999'"
+                + ", '" + OPTION_KEY_CLASS_VERSION + "'='9999'"
+                + ", '" + OPTION_VALUE_FORMAT + "'='" + PORTABLE_FORMAT + '\''
+                + ", '" + OPTION_VALUE_FACTORY_ID + "'='9998'"
+                + ", '" + OPTION_VALUE_CLASS_ID + "'='9998'"
+                + ", '" + OPTION_VALUE_CLASS_VERSION + "'='9998'"
+                + ")"
+        );
+
+        assertRowsAnyOrder("SELECT __key, this FROM " + name, emptyList());
     }
 
     @SuppressWarnings({"OptionalGetWithoutIsPresent", "unchecked", "rawtypes"})

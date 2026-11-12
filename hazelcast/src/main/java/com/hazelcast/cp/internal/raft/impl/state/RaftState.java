@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.hazelcast.cp.internal.raft.impl.state;
 
+import com.hazelcast.config.cp.CPSubsystemConfig;
 import com.hazelcast.core.HazelcastException;
 import com.hazelcast.cp.CPGroupId;
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
@@ -27,6 +28,7 @@ import com.hazelcast.cp.internal.raft.impl.persistence.NopRaftStateStore;
 import com.hazelcast.cp.internal.raft.impl.persistence.RaftStateStore;
 import com.hazelcast.cp.internal.raft.impl.persistence.RestoredRaftState;
 import com.hazelcast.cp.internal.raft.impl.task.InitLeadershipTransferTask;
+import com.hazelcast.internal.util.Clock;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
 
 import java.io.IOException;
@@ -43,7 +45,7 @@ import static java.util.Collections.unmodifiableSet;
  * {@code RaftState} is the mutable state maintained by Raft state machine
  * on every node in the group.
  */
-@SuppressWarnings({"checkstyle:methodcount"})
+@SuppressWarnings("checkstyle:methodcount")
 public final class RaftState {
 
     /**
@@ -150,11 +152,18 @@ public final class RaftState {
      */
     private LeadershipTransferState leadershipTransferState;
 
+    /**
+     * Leadership stats
+     */
+    private final LeadershipStats leadershipStats = new LeadershipStats();
+
+    private long preVoteBackoffUntil;
+
     private RaftState(CPGroupId groupId, RaftEndpoint localEndpoint, Collection<RaftEndpoint> endpoints, int logCapacity,
                       RaftStateStore store) {
         this.groupId = groupId;
         this.localEndpoint = localEndpoint;
-        this.initialMembers = unmodifiableSet(new LinkedHashSet<RaftEndpoint>(endpoints));
+        this.initialMembers = unmodifiableSet(new LinkedHashSet<>(endpoints));
         RaftGroupMembers groupMembers = new RaftGroupMembers(0, endpoints, localEndpoint);
         this.committedGroupMembers = groupMembers;
         this.lastGroupMembers = groupMembers;
@@ -168,7 +177,7 @@ public final class RaftState {
         checkNotNull(store);
         this.groupId = groupId;
         this.localEndpoint = restoredState.localEndpoint();
-        this.initialMembers = unmodifiableSet(new LinkedHashSet<RaftEndpoint>(restoredState.initialMembers()));
+        this.initialMembers = unmodifiableSet(new LinkedHashSet<>(restoredState.initialMembers()));
         this.committedGroupMembers = new RaftGroupMembers(0, this.initialMembers, this.localEndpoint);
         this.lastGroupMembers = this.committedGroupMembers;
         this.term = restoredState.term();
@@ -402,8 +411,11 @@ public final class RaftState {
      * Switches this node to follower role. Clears leader and (pre)candidate states, updates the term.
      *
      * @param term current term
+     * @param preVoteBackoffUntil the time until which a new pre-vote round is suppressed when no leader
+     *                            is known, in milliseconds. This avoids immediately starting a new
+     *                            election round right after demotion.
      */
-    public void toFollower(int term) {
+    public void toFollower(int term, long preVoteBackoffUntil) {
         role = RaftRole.FOLLOWER;
         leader = null;
         preCandidateState = null;
@@ -412,6 +424,12 @@ public final class RaftState {
         completeLeadershipTransfer(null);
         setTerm(term);
         persistTerm();
+        leadershipStats.onFollower(Clock.currentTimeMillis());
+        this.preVoteBackoffUntil = preVoteBackoffUntil;
+    }
+
+    public boolean isPreVoteBackoffActive() {
+        return Clock.currentTimeMillis() < preVoteBackoffUntil;
     }
 
     /**
@@ -451,6 +469,7 @@ public final class RaftState {
         preCandidateState = null;
         candidateState = null;
         leaderState = new LeaderState(lastGroupMembers.remoteMembers(), log.lastLogOrSnapshotIndex());
+        leadershipStats.onLeaderElected(Clock.currentTimeMillis());
     }
 
     /**
@@ -603,5 +622,46 @@ public final class RaftState {
      */
     public LeadershipTransferState leadershipTransferState() {
         return leadershipTransferState;
+    }
+
+    /**
+     * In memory stats for a Raft node.
+     * <p>
+     * Average time spent as leader exposed via metrics to provide insight
+     * into leadership transitions, particularly useful for RaftNodes configured
+     * with {@link CPSubsystemConfig#isAutoStepDownWhenLeader()}
+     *
+     * @since @5.7
+     */
+    public static class LeadershipStats {
+        private long electedLeaderCount;
+        private long leadershipStartTimeMs;
+        private long totalLeadershipTimeMs;
+        private long avgTimeAsLeaderMs;
+
+        public void onLeaderElected(long now) {
+            electedLeaderCount++;
+            leadershipStartTimeMs = now;
+        }
+
+        public void onFollower(long now) {
+            if (leadershipStartTimeMs > 0) {
+                totalLeadershipTimeMs += (now - leadershipStartTimeMs);
+                avgTimeAsLeaderMs = totalLeadershipTimeMs / electedLeaderCount;
+                leadershipStartTimeMs = 0;
+            }
+        }
+
+        public long getElectedLeaderCount() {
+            return electedLeaderCount;
+        }
+
+        public long getAvgTimeAsLeaderMs() {
+            return avgTimeAsLeaderMs;
+        }
+    }
+
+    public LeadershipStats getLeadershipStats() {
+        return leadershipStats;
     }
 }

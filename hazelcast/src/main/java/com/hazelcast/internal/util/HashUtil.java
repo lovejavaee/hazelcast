@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  * Portions Copyright 2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,18 +20,19 @@ package com.hazelcast.internal.util;
 import com.hazelcast.internal.memory.ByteAccessStrategy;
 import com.hazelcast.internal.memory.MemoryAccessor;
 import com.hazelcast.internal.memory.impl.EndiannessUtil;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Arrays;
 
 import static com.hazelcast.internal.memory.GlobalMemoryAccessorRegistry.MEM;
+import static com.hazelcast.internal.memory.GlobalMemoryAccessorRegistry.MEM_AVAILABLE;
+import static com.hazelcast.internal.memory.HeapMemoryAccessor.ARRAY_BYTE_BASE_OFFSET;
+import static com.hazelcast.internal.memory.impl.AlignmentUtil.IS_PLATFORM_BIG_ENDIAN;
 import static com.hazelcast.internal.util.Preconditions.checkPositive;
 import static java.lang.Math.abs;
 
 /**
  * Utility methods related to hash tables.
  */
-@SuppressFBWarnings({"SF_SWITCH_FALLTHROUGH", "SF_SWITCH_NO_DEFAULT"})
 @SuppressWarnings({
         "checkstyle:magicnumber",
         "checkstyle:methodname",
@@ -46,7 +47,8 @@ public final class HashUtil {
     private static final int DEFAULT_MURMUR_SEED = 0x01000193;
     private static final int[] PERTURBATIONS = new int[Integer.SIZE];
 
-    private static final LoadStrategy<byte[]> BYTE_ARRAY_LOADER = new ByteArrayLoadStrategy();
+    private static final LoadStrategy<byte[]> BYTE_ARRAY_LOADER =
+            IS_PLATFORM_BIG_ENDIAN || !MEM_AVAILABLE ? new NarrowByteArrayLoadStrategy() : new WideByteArrayLoadStrategy();
     private static final LoadStrategy<MemoryAccessor> WIDE_DIRECT_LOADER = new WideDirectLoadStrategy();
     private static final LoadStrategy<MemoryAccessor> NARROW_DIRECT_LOADER = new NarrowDirectLoadStrategy();
 
@@ -62,11 +64,16 @@ public final class HashUtil {
 
     /**
      * Returns the MurmurHash3_x86_32 hash of a block inside a byte array.
+     * The caller is responsible for ensuring that the offset and len remain in range.
      */
     public static int MurmurHash3_x86_32(byte[] data, int offset, int len) {
-        final long endIndex = (long) offset + len - 1;
-        assert endIndex >= Integer.MIN_VALUE && endIndex <= Integer.MAX_VALUE
+        int dataLen = data != null ? data.length : 0;
+        // it is allowed to pass any offset if we read 0 bytes
+        assert offset >= 0 && len >= 0 && (offset + len <= dataLen || len == 0)
+                : String.format("offset %,d len %,d is out of bounds for array length %,d", offset, len, dataLen);
+        assert (long) offset + len - 1 <= Integer.MAX_VALUE
                 : String.format("offset %,d len %,d would cause int overflow", offset, len);
+
         return MurmurHash3_x86_32(BYTE_ARRAY_LOADER, data, offset, len, DEFAULT_MURMUR_SEED);
     }
 
@@ -136,8 +143,16 @@ public final class HashUtil {
 
     /**
      * Returns the MurmurHash3_x86_32 hash of a block inside a byte array.
+     * The caller is responsible for ensuring that the offset and len remain in range.
      */
     public static long MurmurHash3_x64_64(byte[] data, int offset, int len) {
+        int dataLen = data != null ? data.length : 0;
+        // it is allowed to pass any offset if we read 0 bytes
+        assert offset >= 0 && len >= 0 && (offset + len <= dataLen || len == 0)
+                : String.format("offset %,d len %,d is out of bounds for array length %,d", offset, len, dataLen);
+        assert (long) offset + len - 1 <= Integer.MAX_VALUE
+                : String.format("offset %,d len %,d would cause int overflow", offset, len);
+
         return MurmurHash3_x64_64(BYTE_ARRAY_LOADER, data, offset, len, DEFAULT_MURMUR_SEED);
     }
 
@@ -358,18 +373,42 @@ public final class HashUtil {
         return PERTURBATIONS[Integer.numberOfLeadingZeros(capacity)];
     }
 
-    abstract static class LoadStrategy<R> implements ByteAccessStrategy<R> {
+    public abstract static class LoadStrategy<R> implements ByteAccessStrategy<R> {
 
-        abstract int getInt(R resource, long offset);
+        public abstract int getInt(R resource, long offset);
 
-        abstract long getLong(R resource, long offset);
+        public abstract long getLong(R resource, long offset);
 
         @Override
         public final void putByte(R resource, long offset, byte value) {
         }
     }
 
-    private static final class ByteArrayLoadStrategy extends LoadStrategy<byte[]> {
+    /**
+     * Directly loads data from byte array in native order
+     */
+    public static final class WideByteArrayLoadStrategy extends LoadStrategy<byte[]> {
+
+        @Override
+        public int getInt(byte[] buf, long offset) {
+            return MEM.getInt(buf, (long) ARRAY_BYTE_BASE_OFFSET + offset);
+        }
+
+        @Override
+        public long getLong(byte[] buf, long offset) {
+            return MEM.getLong(buf, (long) ARRAY_BYTE_BASE_OFFSET + offset);
+        }
+
+        @Override
+        public byte getByte(byte[] buf, long offset) {
+            return MEM.getByte(buf, (long) ARRAY_BYTE_BASE_OFFSET + offset);
+        }
+    }
+
+    /**
+     * Loads data from byte array in guaranteed little endian order
+     */
+    private static final class NarrowByteArrayLoadStrategy extends LoadStrategy<byte[]> {
 
         @Override
         public int getInt(byte[] buf, long offset) {
@@ -387,7 +426,7 @@ public final class HashUtil {
         }
     }
 
-    private static final class WideDirectLoadStrategy extends LoadStrategy<MemoryAccessor> {
+    public static final class WideDirectLoadStrategy extends LoadStrategy<MemoryAccessor> {
 
         @Override
         public int getInt(MemoryAccessor mem, long offset) {

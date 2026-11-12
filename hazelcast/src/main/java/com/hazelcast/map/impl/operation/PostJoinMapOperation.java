@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,10 @@
 
 package com.hazelcast.map.impl.operation;
 
+import com.hazelcast.cluster.Address;
+import com.hazelcast.internal.namespace.NamespaceUtil;
+import com.hazelcast.spi.impl.NodeEngineThreadLocalContext;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.map.IMapEvent;
 import com.hazelcast.map.MapInterceptor;
 import com.hazelcast.map.impl.InterceptorRegistry;
@@ -30,17 +34,15 @@ import com.hazelcast.map.impl.querycache.accumulator.AccumulatorInfoSupplier;
 import com.hazelcast.map.impl.querycache.publisher.MapPublisherRegistry;
 import com.hazelcast.map.impl.querycache.publisher.PublisherContext;
 import com.hazelcast.map.impl.querycache.publisher.PublisherRegistry;
-import com.hazelcast.cluster.Address;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
+import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.operationservice.Operation;
 import com.hazelcast.spi.impl.operationservice.TargetAware;
 
 import java.io.IOException;
 import java.util.AbstractMap;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -60,6 +62,10 @@ public class PostJoinMapOperation extends Operation implements IdentifiedDataSer
     public void addMapInterceptors(MapContainer mapContainer) {
         InterceptorRegistry interceptorRegistry = mapContainer.getInterceptorRegistry();
         List<MapInterceptor> interceptorList = interceptorRegistry.getInterceptors();
+        // we do not send info for maps that do not have interceptors
+        if (interceptorList.isEmpty()) {
+            return;
+        }
         Map<String, MapInterceptor> interceptorMap = interceptorRegistry.getId2InterceptorMap();
         Map<MapInterceptor, String> revMap = createHashMap(interceptorMap.size());
         for (Map.Entry<String, MapInterceptor> entry : interceptorMap.entrySet()) {
@@ -102,10 +108,18 @@ public class PostJoinMapOperation extends Operation implements IdentifiedDataSer
         public void readData(ObjectDataInput in) throws IOException {
             mapName = in.readString();
             int size = in.readInt();
-            for (int i = 0; i < size; i++) {
-                String id = in.readString();
-                MapInterceptor interceptor = in.readObject();
-                interceptors.add(new AbstractMap.SimpleImmutableEntry<>(id, interceptor));
+
+            NodeEngine engine = NodeEngineThreadLocalContext.getNodeEngineThreadLocalContext();
+            String namespace = MapService.lookupNamespace(engine, mapName);
+            NamespaceUtil.setupNamespace(engine, namespace);
+            try {
+                for (int i = 0; i < size; i++) {
+                    String id = in.readString();
+                    MapInterceptor interceptor = in.readObject();
+                    interceptors.add(new AbstractMap.SimpleImmutableEntry<>(id, interceptor));
+                }
+            } finally {
+                NamespaceUtil.cleanupNamespace(engine, namespace);
             }
         }
 
@@ -172,15 +186,8 @@ public class PostJoinMapOperation extends Operation implements IdentifiedDataSer
     protected void writeInternal(ObjectDataOutput out) throws IOException {
         super.writeInternal(out);
 
-        out.writeInt(interceptorInfoList.size());
-        for (InterceptorInfo interceptorInfo : interceptorInfoList) {
-            out.writeObject(interceptorInfo);
-        }
-        int size = infoList.size();
-        out.writeInt(size);
-        for (AccumulatorInfo info : infoList) {
-            out.writeObject(info);
-        }
+        SerializationUtil.writeList(interceptorInfoList, out);
+        SerializationUtil.writeList(infoList, out);
     }
 
     @Override
@@ -191,16 +198,7 @@ public class PostJoinMapOperation extends Operation implements IdentifiedDataSer
         for (int i = 0; i < interceptorsCount; i++) {
             interceptorInfoList.add(in.readObject());
         }
-        int accumulatorsCount = in.readInt();
-        if (accumulatorsCount < 1) {
-            infoList = Collections.emptyList();
-            return;
-        }
-        infoList = new ArrayList<>(accumulatorsCount);
-        for (int i = 0; i < accumulatorsCount; i++) {
-            AccumulatorInfo info = in.readObject();
-            infoList.add(info);
-        }
+        infoList = SerializationUtil.readList(in);
     }
 
 

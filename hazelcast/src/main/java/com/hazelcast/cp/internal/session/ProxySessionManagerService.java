@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,6 +53,7 @@ public class ProxySessionManagerService extends AbstractProxySessionManager impl
     public static final String SERVICE_NAME = "hz:raft:proxySessionManagerService";
 
     private static final long SHUTDOWN_TASK_PERIOD_IN_MILLIS = SECONDS.toMillis(1);
+    private volatile boolean skipSessionCloseOnShutdown;
 
 
     private final NodeEngine nodeEngine;
@@ -81,6 +82,9 @@ public class ProxySessionManagerService extends AbstractProxySessionManager impl
 
     @Override
     protected InternalCompletableFuture<Object> closeSession(RaftGroupId groupId, Long sessionId) {
+        if (skipSessionCloseOnShutdown) {
+            return InternalCompletableFuture.newCompletedFuture(Boolean.TRUE);
+        }
         return getInvocationManager().invoke(groupId, new CloseSessionOp(sessionId));
     }
 
@@ -91,7 +95,20 @@ public class ProxySessionManagerService extends AbstractProxySessionManager impl
 
     @Override
     public boolean onShutdown(long timeout, TimeUnit unit) {
+        this.skipSessionCloseOnShutdown = shouldSkipCpCleanupNow();
         ILogger logger = nodeEngine.getLogger(getClass());
+
+        // HZ-5226: Limited scope — optimized for ordered and graceful shutdown semantics
+        // (e.g., orderedReady in Kubernetes).
+        //
+        // If all nodes shut down in parallel, this member may become the last active one
+        // during its own shutdown hook. In that case, it might attempt to replicate a
+        // CloseSession operation with a cluster size of one. This is harmless but can cause
+        // the shutdown process to stall unnecessarily.
+        if (skipSessionCloseOnShutdown) {
+            logger.fine("Skipping CP session close for this shutdown as this is the last active member.");
+            return true;
+        }
 
         Map<RaftGroupId, InternalCompletableFuture<Object>> futures = shutdown();
         long remainingTimeNanos = unit.toNanos(timeout);
@@ -107,7 +124,7 @@ public class ProxySessionManagerService extends AbstractProxySessionManager impl
                     it.remove();
                     try {
                         f.get();
-                        logger.fine("Session closed for " + groupId);
+                        logger.fine("Session closed for %s", groupId);
                     } catch (Exception e) {
                         logger.warning("Close session failed for " + groupId, e);
                         successful = false;
@@ -128,6 +145,14 @@ public class ProxySessionManagerService extends AbstractProxySessionManager impl
         return successful && futures.isEmpty();
     }
 
+    /*
+    If last member in the cluster, there are no other members to replicate to.
+     */
+    private boolean shouldSkipCpCleanupNow() {
+        RaftService raftService = nodeEngine.getService(RaftService.SERVICE_NAME);
+        return raftService.getMetadataGroupManager().getActiveMembers().size() <= 1;
+    }
+
     private RaftInvocationManager getInvocationManager() {
         RaftService raftService = nodeEngine.getService(RaftService.SERVICE_NAME);
         return raftService.getInvocationManager();
@@ -145,6 +170,11 @@ public class ProxySessionManagerService extends AbstractProxySessionManager impl
     public void shutdown(boolean terminate) {
     }
 
+    // TODO: This is never actually called from anywhere ... as
+    // this class is not a RaftRemoteService (see resetLocalRaftState)
+    // After resest, the internal state will exist for some short time
+    // until cleaned up by lack of heartbeats. Doesn't result in any
+    // long lived state but should be fixed.
     @Override
     public void onCPSubsystemRestart() {
         resetInternalState();

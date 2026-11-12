@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,13 +43,12 @@ import com.hazelcast.test.annotation.SlowTest;
 import com.hazelcast.version.Version;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -63,6 +62,7 @@ import static com.hazelcast.internal.cluster.impl.ClusterDataSerializerHook.MEMB
 import static com.hazelcast.internal.partition.impl.PartitionDataSerializerHook.SHUTDOWN_REQUEST;
 import static com.hazelcast.jet.config.ProcessingGuarantee.EXACTLY_ONCE;
 import static com.hazelcast.jet.config.ProcessingGuarantee.NONE;
+import static com.hazelcast.jet.core.JobAssertions.assertThat;
 import static com.hazelcast.jet.core.JobStatus.FAILED;
 import static com.hazelcast.jet.core.JobStatus.RUNNING;
 import static com.hazelcast.jet.core.JobStatus.STARTING;
@@ -74,12 +74,11 @@ import static com.hazelcast.test.PacketFiltersUtil.dropOperationsBetween;
 import static com.hazelcast.test.PacketFiltersUtil.rejectOperationsBetween;
 import static com.hazelcast.test.PacketFiltersUtil.resetPacketFiltersFrom;
 import static java.util.Collections.singletonList;
-import static org.hamcrest.Matchers.empty;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.junit.runners.Parameterized.UseParametersRunnerFactory;
@@ -95,9 +94,6 @@ public class TopologyChangeTest extends JetTestSupport {
 
     @Parameterized.Parameter
     public boolean[] liteMemberFlags;
-
-    @Rule
-    public ExpectedException expectedException = ExpectedException.none();
 
     private int nodeCount;
 
@@ -154,7 +150,7 @@ public class TopologyChangeTest extends JetTestSupport {
 
         assertTrueEventually(() -> {
             assertEquals(nodeCount, MockPS.closeCount.get());
-            assertThat(MockPS.receivedCloseErrors, empty());
+            assertThat(MockPS.receivedCloseErrors).isEmpty();
         });
     }
 
@@ -176,7 +172,7 @@ public class TopologyChangeTest extends JetTestSupport {
 
         assertTrueEventually(() -> {
             assertEquals(nodeCount, MockPS.closeCount.get());
-            assertThat(MockPS.receivedCloseErrors, empty());
+            assertThat(MockPS.receivedCloseErrors).isEmpty();
         });
     }
 
@@ -232,7 +228,7 @@ public class TopologyChangeTest extends JetTestSupport {
         instances[2].getLifecycleService().terminate();
         NoOutputSourceP.proceedLatch.countDown();
 
-        assertJobStatusEventually(job, snapshotted ? SUSPENDED : FAILED, 10);
+        assertThat(job).eventuallyHasStatus(snapshotted ? SUSPENDED : FAILED, Duration.ofSeconds(10));
         if (!snapshotted) {
             try {
                 job.join();
@@ -398,7 +394,7 @@ public class TopologyChangeTest extends JetTestSupport {
 
 
         // Then
-        assertJobStatusEventually(job, STARTING);
+        assertThat(job).eventuallyHasStatus(STARTING);
         assertTrueAllTheTime(() -> assertEquals(STARTING, job.getStatus()), 5);
 
         resetPacketFiltersFrom(instances[0]);
@@ -479,7 +475,7 @@ public class TopologyChangeTest extends JetTestSupport {
         spawn(() -> instances[2].shutdown());
 
         // Then, it restarts until the shutting down node is gone
-        assertJobStatusEventually(job, STARTING);
+        assertThat(job).eventuallyHasStatus(STARTING);
         assertTrueAllTheTime(() -> assertEquals(STARTING, job.getStatus()), 5);
 
         resetPacketFiltersFrom(instances[2]);
@@ -498,7 +494,7 @@ public class TopologyChangeTest extends JetTestSupport {
 
         DAG dag = new DAG().vertex(new Vertex("test", new MockPS(TestProcessors.Identity::new, nodeCount - 1)));
         Job job = instances[0].getJet().newJob(dag);
-        assertJobStatusEventually(job, RUNNING);
+        assertThat(job).eventuallyHasStatus(RUNNING);
 
         // When a participant shuts down during execution
         instances[2].getLifecycleService().terminate();
@@ -515,7 +511,7 @@ public class TopologyChangeTest extends JetTestSupport {
         int memberListVersion = Accessors.getClusterService(master).getMemberListVersion();
         Set<MemberInfo> memberInfos = new HashSet<>();
         for (int i = 1; i < instances.length; i++) {
-            memberInfos.add(new MemberInfo(getNode(instances[i]).getLocalMember()));
+            memberInfos.add(new MemberInfo(Accessors.getNode(instances[i]).getLocalMember()));
         }
 
         Version version = instances[0].getCluster().getLocalMember().getVersion().asVersion();

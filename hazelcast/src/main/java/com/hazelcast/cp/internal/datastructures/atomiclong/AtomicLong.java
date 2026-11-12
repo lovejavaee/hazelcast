@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import com.hazelcast.cp.internal.datastructures.spi.atomic.RaftAtomicValue;
 /**
  * State-machine implementation of the Raft-based atomic long
  */
+@SuppressWarnings({"NonAtomicOperationOnVolatileField", "squid:S3078"})
 public class AtomicLong extends RaftAtomicValue<Long> {
 
     private volatile long value;
@@ -31,13 +32,11 @@ public class AtomicLong extends RaftAtomicValue<Long> {
         this.value = value;
     }
 
-    @SuppressWarnings("NonAtomicOperationOnVolatileField")
     public long addAndGet(long delta) {
         value += delta;
         return value;
     }
 
-    @SuppressWarnings("NonAtomicOperationOnVolatileField")
     public long getAndAdd(long delta) {
         long v = value;
         value += delta;

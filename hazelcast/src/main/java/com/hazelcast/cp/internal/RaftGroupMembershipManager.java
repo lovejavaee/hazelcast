@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,14 +16,10 @@
 
 package com.hazelcast.cp.internal;
 
-import com.hazelcast.cp.CPGroup;
 import com.hazelcast.cp.CPGroup.CPGroupStatus;
 import com.hazelcast.cp.CPGroupId;
-import com.hazelcast.cp.CPMember;
 import com.hazelcast.cp.exception.CPGroupDestroyedException;
 import com.hazelcast.cp.internal.MembershipChangeSchedule.CPGroupMembershipChange;
-import com.hazelcast.cp.internal.operation.GetLeadedGroupsOp;
-import com.hazelcast.cp.internal.operation.TransferLeadershipOp;
 import com.hazelcast.cp.internal.raft.MembershipChangeMode;
 import com.hazelcast.cp.internal.raft.exception.MismatchingGroupMembersCommitIndexException;
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
@@ -31,8 +27,6 @@ import com.hazelcast.cp.internal.raft.impl.RaftNode;
 import com.hazelcast.cp.internal.raft.impl.RaftNodeStatus;
 import com.hazelcast.cp.internal.raftop.metadata.CompleteDestroyRaftGroupsOp;
 import com.hazelcast.cp.internal.raftop.metadata.CompleteRaftGroupMembershipChangesOp;
-import com.hazelcast.cp.internal.raftop.metadata.GetActiveCPMembersOp;
-import com.hazelcast.cp.internal.raftop.metadata.GetActiveRaftGroupIdsOp;
 import com.hazelcast.cp.internal.raftop.metadata.GetDestroyingRaftGroupIdsOp;
 import com.hazelcast.cp.internal.raftop.metadata.GetMembershipChangeScheduleOp;
 import com.hazelcast.cp.internal.raftop.metadata.GetRaftGroupOp;
@@ -41,10 +35,8 @@ import com.hazelcast.logging.ILogger;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
 import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.executionservice.ExecutionService;
-import com.hazelcast.spi.impl.operationservice.OperationService;
 import com.hazelcast.spi.properties.HazelcastProperty;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -53,7 +45,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -61,39 +52,30 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
-
 import static com.hazelcast.cp.internal.RaftService.CP_SUBSYSTEM_MANAGEMENT_EXECUTOR;
 import static com.hazelcast.cp.internal.raft.QueryPolicy.LEADER_LOCAL;
 import static com.hazelcast.internal.util.ExceptionUtil.peel;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
-import static java.util.stream.Collectors.groupingBy;
-import static java.util.stream.Collectors.partitioningBy;
-import static java.util.stream.Collectors.mapping;
-import static java.util.stream.Collectors.toList;
-import static java.util.stream.Collectors.toSet;
-
 /**
  * Realizes pending Raft group membership changes and periodically checks
  * validity of local {@link RaftNode} instances on CP members
  */
-class RaftGroupMembershipManager {
+public class RaftGroupMembershipManager {
 
     static final long MANAGEMENT_TASK_PERIOD_IN_MILLIS = SECONDS.toMillis(1);
     static final HazelcastProperty LEADERSHIP_BALANCE_TASK_PERIOD
             = new HazelcastProperty("hazelcast.raft.leadership.rebalance.period", 60);
     private static final long CHECK_LOCAL_RAFT_NODES_TASK_PERIOD = 10;
 
-    private final NodeEngine nodeEngine;
-    private final RaftService raftService;
-    private final ILogger logger;
-    private final RaftInvocationManager invocationManager;
-    private final AtomicBoolean initialized = new AtomicBoolean();
+    protected final NodeEngine nodeEngine;
+    protected final RaftService raftService;
+    protected final ILogger logger;
+    protected final RaftInvocationManager invocationManager;
+    protected final AtomicBoolean initialized = new AtomicBoolean();
     private final Executor internalAsyncExecutor;
 
-    RaftGroupMembershipManager(NodeEngine nodeEngine, RaftService raftService) {
+    protected RaftGroupMembershipManager(NodeEngine nodeEngine, RaftService raftService) {
         this.nodeEngine = nodeEngine;
         this.logger = nodeEngine.getLogger(getClass());
         this.raftService = raftService;
@@ -114,22 +96,32 @@ class RaftGroupMembershipManager {
                 MANAGEMENT_TASK_PERIOD_IN_MILLIS, MANAGEMENT_TASK_PERIOD_IN_MILLIS, MILLISECONDS);
         executionService.scheduleWithRepetition(CP_SUBSYSTEM_MANAGEMENT_EXECUTOR, new CheckLocalRaftNodesTask(),
                 CHECK_LOCAL_RAFT_NODES_TASK_PERIOD, CHECK_LOCAL_RAFT_NODES_TASK_PERIOD, SECONDS);
-        int leadershipRebalancePeriod = nodeEngine.getProperties().getInteger(LEADERSHIP_BALANCE_TASK_PERIOD);
-        executionService.scheduleWithRepetition(CP_SUBSYSTEM_MANAGEMENT_EXECUTOR, new RaftGroupLeadershipBalanceTask(),
-                leadershipRebalancePeriod, leadershipRebalancePeriod, SECONDS);
+        scheduleAdditionalTasks(executionService);
     }
 
-    private boolean skipRunningTask() {
+    void scheduleAdditionalTasks(ExecutionService executionService) {
+    }
+
+    protected boolean skipRunningTask() {
         return !(raftService.isDiscoveryCompleted() && raftService.isStartCompleted()
                 && raftService.getMetadataGroupManager().isMetadataGroupLeader());
     }
 
     void rebalanceGroupLeaderships() {
-        new RaftGroupLeadershipBalanceTask().run();
+        // no-op
+    }
+
+    void suspendLeadershipRebalance() {
+        // no-op
+    }
+
+    void resumeLeadershipRebalance() {
+        // no-op
     }
 
     private class CheckLocalRaftNodesTask implements Runnable {
 
+        @Override
         public void run() {
             if (!(raftService.isDiscoveryCompleted() && raftService.isStartCompleted())) {
                 return;
@@ -213,7 +205,7 @@ class RaftGroupMembershipManager {
             try {
                 future.get();
                 return true;
-            }  catch (InterruptedException e) {
+            } catch (InterruptedException e) {
                 logger.severe("Cannot get result of DESTROY commit to " + groupId, e);
                 return false;
             } catch (ExecutionException e) {
@@ -257,7 +249,7 @@ class RaftGroupMembershipManager {
             }
 
             if (logger.isFineEnabled()) {
-                logger.fine("Handling " + schedule);
+                logger.fine("Handling %s", schedule);
             }
 
             List<CPGroupMembershipChange> changes = schedule.getChanges();
@@ -335,8 +327,7 @@ class RaftGroupMembershipManager {
         private void checkMemberAddCommitIndex(Map<CPGroupId, BiTuple<Long, Long>> changedGroups, CPGroupMembershipChange change,
                                                Throwable t) {
             RaftEndpoint memberToAdd = change.getMemberToAdd();
-            if (t instanceof MismatchingGroupMembersCommitIndexException) {
-                MismatchingGroupMembersCommitIndexException m = (MismatchingGroupMembersCommitIndexException) t;
+            if (t instanceof MismatchingGroupMembersCommitIndexException m) {
                 String msg = "MEMBER ADD commit of " + change + " failed. Actual group members: " + m.getMembers()
                         + " with commit index: " + m.getCommitIndex();
 
@@ -386,8 +377,7 @@ class RaftGroupMembershipManager {
         private long checkMemberRemoveCommitIndex(Map<CPGroupId, BiTuple<Long, Long>> changedGroups,
                                                   CPGroupMembershipChange change, Throwable t) {
             RaftEndpoint removedMember = change.getMemberToRemove();
-            if (t instanceof MismatchingGroupMembersCommitIndexException) {
-                MismatchingGroupMembersCommitIndexException m = (MismatchingGroupMembersCommitIndexException) t;
+            if (t instanceof MismatchingGroupMembersCommitIndexException m) {
                 String msg = "MEMBER REMOVE commit of " + change + " failed. Actual group members: " + m.getMembers()
                         + " with commit index: " + m.getCommitIndex();
 
@@ -451,295 +441,7 @@ class RaftGroupMembershipManager {
         }
     }
 
-    private final class RaftGroupLeadershipBalanceTask implements Runnable {
-
-        @Override
-        public void run() {
-            if (skipRunningTask()) {
-                return;
-            }
-
-            try {
-                rebalanceLeaderships();
-            } catch (Exception e) {
-                if (logger.isFineEnabled()) {
-                    logger.warning("Cannot execute leadership rebalance at the moment", e);
-                } else {
-                    logger.info("Cannot execute leadership rebalance at the moment: "
-                            + e.getClass().getName() + ": " + e.getMessage());
-                }
-            }
-        }
-
-        private void rebalanceLeaderships() {
-            Collection<CPMember> allMembers = getMembers().values();
-            Map<CPMember, Entry<Integer, Collection<CPGroupId>>> leadershipPriorityMap
-                    = getLeadershipPriorityMap(allMembers);
-
-            Collection<CPGroupId> groupIds = getCpGroupIds();
-            List<CPGroupSummary> cpGroupSummaries
-                    = groupIds.stream()
-                    .map(this::getCpGroup)
-                    .collect(Collectors.toList());
-
-            // Transferring leaderships from the lowest priority CP members
-            Set<CPMember> priorityCPMembers
-                    = rebalanceLeadershipsByPriority(leadershipPriorityMap, cpGroupSummaries);
-
-            // If there are several CP members with the same priority level, we should rebalance leadership evenly among them
-            if (priorityCPMembers.size() > 1) {
-                rebalanceLeadershipsEvenly(priorityCPMembers, cpGroupSummaries, allMembers);
-            }
-        }
-
-        private Map<CPMember, Map.Entry<Integer, Collection<CPGroupId>>> getLeadershipPriorityMap(Collection<CPMember> members) {
-            Map<CPMember, Map.Entry<Integer, Collection<CPGroupId>>> leadershipsWithPriorities = new HashMap<>();
-            OperationService operationService = nodeEngine.getOperationService();
-            StringBuilder s = new StringBuilder("Current leadership claims:");
-            for (CPMember member : members) {
-                try {
-                    Map.Entry<Integer, Collection<CPGroupId>> entry =
-                            operationService.<Map.Entry<Integer, Collection<CPGroupId>>>invokeOnTarget(
-                                    RaftService.SERVICE_NAME, new GetLeadedGroupsOp(), member.getAddress())
-                                    .join();
-                        leadershipsWithPriorities.put(member, entry);
-                        int priority = entry.getKey();
-                        Collection<CPGroupId> groups = entry.getValue();
-                        if (logger.isFineEnabled()) {
-                            logger.fine(member + " claims it's leader of " + groups.size() + " groups: " + groups);
-                        }
-                        s.append('\n').append('\t').append(member).append(" priority ").append(priority)
-                                .append(" has ").append(groups.size()).append(",");
-                } catch (Exception e) {
-                    logger.info("Skipped " + member + " for leadership rebalancing due to " + e);
-                }
-            }
-            s.append(" leaderships.");
-            logger.info(s.toString());
-            return leadershipsWithPriorities;
-        }
-
-        private Set<CPMember> rebalanceLeadershipsByPriority(
-                Map<CPMember, Entry<Integer, Collection<CPGroupId>>> leadershipPriorityMap,
-                List<CPGroupSummary> cpGroupSummaries) {
-
-            // CP member(s) in each CP group with the highest priority
-            Map<CPGroupId, List<CPMember>> priorityMembersInAGroup = new HashMap<>();
-            // Priorities eligible for leadership - is a set of the highest priorities taken from each CP group
-            Set<Integer> maxPriorities = new HashSet<>();
-            for (CPGroupSummary cpGroupSummary : cpGroupSummaries) {
-                Collection<CPMember> groupMembers = cpGroupSummary.members();
-                Entry<Integer, List<CPMember>> priorityMembersInAGroupEntry
-                        = getPriorityMembersInAGroup(leadershipPriorityMap, groupMembers);
-                int priority = priorityMembersInAGroupEntry.getKey();
-                List<CPMember> priorityMembers = priorityMembersInAGroupEntry.getValue();
-                maxPriorities.add(priority);
-                priorityMembersInAGroup.put(cpGroupSummary.id(), priorityMembers);
-            }
-
-            Map<Boolean, Set<CPMember>> partitionedMembersByPriority = leadershipPriorityMap.entrySet().stream()
-                    .collect(
-                            partitioningBy(
-                                    e -> maxPriorities.contains(e.getValue().getKey()),
-                                    mapping(Entry::getKey, toSet())
-                            ));
-            // CP members with the lowest priorities from which leadership should be transferred
-            Set<CPMember> fromCPMembers = partitionedMembersByPriority.get(false);
-            // CP members having maxPriorities levels. Leadership from these members shouldn't be transferred
-            Set<CPMember> allPriorityMembers = partitionedMembersByPriority.get(true);
-
-            int roundRobinCounter = 0;
-            for (CPMember fromCPMember : fromCPMembers) {
-                Collection<CPGroupId> leadedGroups = leadershipPriorityMap.get(fromCPMember).getValue();
-
-                for (CPGroupId cpGroupId : leadedGroups) {
-                    List<CPMember> priorityMembers = priorityMembersInAGroup.get(cpGroupId);
-                    int roundRobinNumber = (roundRobinCounter++) % priorityMembers.size();
-                    CPMember toCPMember = priorityMembers.get(roundRobinNumber);
-                    logger.info("Transferring leadership for " + cpGroupId.getName() + " group:"
-                            + " from " + fromCPMember + " with priority " + leadershipPriorityMap.get(fromCPMember).getKey()
-                            + " to " + toCPMember + " with priority " + leadershipPriorityMap.get(toCPMember).getKey());
-
-                    if (!transferLeadership(fromCPMember, toCPMember, cpGroupId)) {
-                        // could not transfer leadership
-                        // try next time
-                        return Collections.EMPTY_SET;
-                    }
-                }
-            }
-            return allPriorityMembers;
-        }
-
-        private Entry<Integer, List<CPMember>> getPriorityMembersInAGroup(
-                Map<CPMember, Entry<Integer, Collection<CPGroupId>>> leadershipPriorityMap,
-                Collection<CPMember> cpGroupMembers) {
-            return cpGroupMembers.stream()
-                    .flatMap(m -> leadershipPriorityMap.containsKey(m)
-                            ? Stream.of(BiTuple.of(leadershipPriorityMap.get(m).getKey(), m))
-                            : Stream.empty())
-                    .collect(groupingBy(
-                            BiTuple::element1,
-                            TreeMap::new,
-                            mapping(BiTuple::element2, toList())))
-                    .lastEntry();
-        }
-
-        private void rebalanceLeadershipsEvenly(Set<CPMember> priorityMembers,
-                                                Collection<CPGroupSummary> cpGroupSummaries,
-                                                Collection<CPMember> allMembers) {
-            final int avgGroupsPerMember = cpGroupSummaries.size() / priorityMembers.size();
-            final boolean overAvgAllowed = cpGroupSummaries.size() % priorityMembers.size() != 0;
-
-            logger.fine("Searching for leadership imbalance in " + cpGroupSummaries.size() + " CPGroups, "
-                    + "average groups per member is " + avgGroupsPerMember);
-
-            Set<CPMember> handledMembers = new HashSet<>(priorityMembers.size());
-
-            for (; ;) {
-                Map<CPMember, Entry<Integer, Collection<CPGroupId>>> leadershipPriorityMap
-                        = getLeadershipPriorityMap(allMembers);
-                // Filtering CP members to evenly rebalance leadership among them
-                Map<CPMember, Collection<CPGroupId>>  leaderships = leadershipPriorityMap.entrySet().stream()
-                        .filter(e -> priorityMembers.contains(e.getKey()))
-                        .collect(Collectors.toMap(Entry::getKey, v -> v.getValue().getValue()));
-
-                BiTuple<CPMember, Integer> from = getEndpointWithMaxLeaderships(leaderships, avgGroupsPerMember, handledMembers);
-                if (from.element1 == null) {
-                    // nothing to transfer
-                    logger.info("CPGroup leadership balance is fine, cannot rebalance further...");
-                    return;
-                }
-
-                logger.info("Searching a candidate transfer leadership from "
-                        + from.element1 + " with " + from.element2 + " leaderships.");
-                Collection<CPGroupSummary> groups
-                        = getLeaderGroupsOf(from.element1, leaderships.get(from.element1), cpGroupSummaries);
-
-                int maxLeaderships;
-                if (overAvgAllowed) {
-                    // - When from-member has more than (avg + 1), then leadership can be transferred to any member
-                    // which has leaderships equal to or less than avg.
-                    // - When from-member has equal to (avg + 1), then leadership can be transferred to only members
-                    // which have leaderships less than avg.
-                    if (from.element2 > avgGroupsPerMember + 1) {
-                        maxLeaderships = avgGroupsPerMember;
-                    } else {
-                        maxLeaderships = avgGroupsPerMember - 1;
-                    }
-                } else {
-                    maxLeaderships = avgGroupsPerMember;
-                }
-                BiTuple<CPMember, CPGroupId> to = getEndpointWithMinLeaderships(groups, leaderships, maxLeaderships);
-                if (to.element1 == null) {
-                    logger.info("No candidate could be found to get leadership from " + from.element1 + ". Skipping to next...");
-                    // could not found target member to transfer membership
-                    // try to find next leader
-                    handledMembers.add(from.element1);
-                    continue;
-                }
-
-                if (!transferLeadership(from.element1, to.element1, to.element2)) {
-                    // could not transfer leadership
-                    // try next time
-                    return;
-                }
-            }
-        }
-
-        private Collection<CPGroupSummary> getLeaderGroupsOf(CPMember member, Collection<CPGroupId> leaderships,
-                Collection<CPGroupSummary> groups) {
-            List<CPGroupSummary> memberGroups = new ArrayList<>();
-            for (CPGroupSummary group : groups) {
-                if (CPGroup.METADATA_CP_GROUP_NAME.equals(group.id().getName())) {
-                    // ignore metadata group, we don't expect any significant load on metadata
-                    continue;
-                }
-                if (!leaderships.contains(group.id())) {
-                    continue;
-                }
-                if (group.members().contains(member)) {
-                    memberGroups.add(group);
-                }
-            }
-            return memberGroups;
-        }
-
-        private BiTuple<CPMember, CPGroupId> getEndpointWithMinLeaderships(Collection<CPGroupSummary> groups,
-                                                                          Map<CPMember, Collection<CPGroupId>> leaderships,
-                                                                          int maxLeaderships) {
-            CPMember to = null;
-            CPGroupId groupId = null;
-            int min = maxLeaderships;
-            for (CPGroupSummary group : groups) {
-                for (CPMember member : group.members()) {
-                    Collection<CPGroupId> g = leaderships.get(member);
-                    if (g == null) {
-                        continue;
-                    }
-                    int k = g.size();
-                    if (k <= min) {
-                        min = k;
-                        to = member;
-                        groupId = group.id();
-                    }
-                }
-            }
-            return BiTuple.of(to, groupId);
-        }
-
-        private BiTuple<CPMember, Integer> getEndpointWithMaxLeaderships(Map<CPMember, Collection<CPGroupId>> leaderships,
-                                                                         int minLeaderships, Set<CPMember> excludeSet) {
-            CPMember from = null;
-            int max = minLeaderships;
-            for (Entry<CPMember, Collection<CPGroupId>> entry : leaderships.entrySet()) {
-                if (excludeSet.contains(entry.getKey())) {
-                    continue;
-                }
-                int count = entry.getValue().size();
-                if (count > max) {
-                    from = entry.getKey();
-                    max = count;
-                }
-            }
-            return BiTuple.of(from, max);
-        }
-
-        private boolean transferLeadership(CPMember from, CPMember to, CPGroupId groupId) {
-            logger.info("Transferring leadership from " + from + " to " + to + " in " + groupId);
-            try {
-                nodeEngine.getOperationService()
-                        .invokeOnTarget(null, new TransferLeadershipOp(groupId, to), from.getAddress())
-                        .join();
-                return true;
-            } catch (Exception e) {
-                logger.warning(e);
-            }
-            return false;
-        }
-
-        private Map<RaftEndpoint, CPMember> getMembers() {
-            InternalCompletableFuture<Collection<CPMemberInfo>> future = queryMetadata(new GetActiveCPMembersOp());
-            Collection<CPMemberInfo> members = future.join();
-            Map<RaftEndpoint, CPMember> map = new HashMap<>(members.size());
-            for (CPMemberInfo member : members) {
-                map.put(member.toRaftEndpoint(), member);
-            }
-            return map;
-        }
-
-        private CPGroupSummary getCpGroup(CPGroupId groupId) {
-            InternalCompletableFuture<CPGroupSummary> f = queryMetadata(new GetRaftGroupOp(groupId));
-            return f.join();
-        }
-
-        private Collection<CPGroupId> getCpGroupIds() {
-            InternalCompletableFuture<Collection<CPGroupId>> future = queryMetadata(new GetActiveRaftGroupIdsOp());
-            Collection<CPGroupId> groupIds = future.join();
-            return groupIds;
-        }
-    }
-
-    private <T> InternalCompletableFuture<T> queryMetadata(RaftOp op) {
+    protected  <T> InternalCompletableFuture<T> queryMetadata(RaftOp op) {
         return invocationManager.query(raftService.getMetadataGroupId(), op, LEADER_LOCAL);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,14 +21,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Holds some specific informations for per cache in the node and shared by all partitions of that cache on the node.
+ * Holds some specific information for per cache in the node and shared by all partitions of that cache on the node.
  */
 public class CacheContext {
 
     private final AtomicBoolean implicitMerkleTreeEnableLogged = new AtomicBoolean();
-    private final AtomicLong entryCount = new AtomicLong(0L);
-    private final AtomicInteger cacheEntryListenerCount = new AtomicInteger(0);
-    private final AtomicInteger invalidationListenerCount = new AtomicInteger(0);
+    private final AtomicLong entryCount = new AtomicLong();
+    private final AtomicInteger cacheEntryListenerCount = new AtomicInteger();
+    private final AtomicInteger invalidationListenerCount = new AtomicInteger();
 
     public long getEntryCount() {
         return entryCount.get();
@@ -63,7 +63,8 @@ public class CacheContext {
     }
 
     public void decreaseCacheEntryListenerCount() {
-        cacheEntryListenerCount.decrementAndGet();
+        int newCount = cacheEntryListenerCount.decrementAndGet();
+        assert newCount >= 0 : "CacheEntryListenerCount decremented to a value below zero! New value: " + newCount;
     }
 
     public void resetCacheEntryListenerCount() {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,7 +38,6 @@ import static org.junit.Assert.assertTrue;
 public class MapMBeanTest extends HazelcastTestSupport {
 
     private static final String TYPE_NAME = "IMap";
-    private static final Object[] EMPTY_STRING_PARAMETER = {""};
 
     private TestHazelcastInstanceFactory hazelcastInstanceFactory = createHazelcastInstanceFactory(1);
     private MBeanDataHolder holder = new MBeanDataHolder(hazelcastInstanceFactory);
@@ -80,6 +79,8 @@ public class MapMBeanTest extends HazelcastTestSupport {
         map.put("secondKey", "secondValue");
         map.remove("secondKey");
         map.set("thirdKey", "thirdValue");
+        map.values();
+        map.entrySet();
         map.remove("thirdKey");
         map.size();
         String value = map.get("firstKey");
@@ -101,6 +102,8 @@ public class MapMBeanTest extends HazelcastTestSupport {
         long localSetOperationCount = getLongAttribute("localSetOperationCount");
         long localGetOperationCount = getLongAttribute("localGetOperationCount");
         long localRemoveOperationCount = getLongAttribute("localRemoveOperationCount");
+        long localValuesOperationCount = getLongAttribute("localValuesOperationCount");
+        long localEntrySetOperationCount = getLongAttribute("localEntrySetOperationCount");
 
         long localTotalPutLatency = getLongAttribute("localTotalPutLatency");
         long localTotalSetLatency = getLongAttribute("localTotalSetLatency");
@@ -116,6 +119,7 @@ public class MapMBeanTest extends HazelcastTestSupport {
         long localTotal = getLongAttribute("localTotal");
         long localTotalHeapCost = getLongAttribute("localHeapCost");
         int size = getIntegerAttribute("size");
+
 
         assertEquals("firstValue", value);
 
@@ -144,6 +148,8 @@ public class MapMBeanTest extends HazelcastTestSupport {
         assertEquals(1, localSetOperationCount);
         assertEquals(1, localGetOperationCount);
         assertEquals(2, localRemoveOperationCount);
+        assertEquals(1, localValuesOperationCount);
+        assertEquals(1, localEntrySetOperationCount);
 
         assertTrue("localTotalPutLatency should be >= 0", localTotalPutLatency >= 0);
         assertTrue("localTotalSetLatency should be >= 0", localTotalSetLatency >= 0);
@@ -176,9 +182,5 @@ public class MapMBeanTest extends HazelcastTestSupport {
 
     private Integer getIntegerAttribute(String name) throws Exception {
         return (Integer) holder.getMBeanAttribute(TYPE_NAME, objectName, name);
-    }
-
-    private String invokeMethod(String methodName, Object[] params) throws Exception {
-        return (String) holder.invokeMBeanOperation(TYPE_NAME, objectName, methodName, params, null);
     }
 }

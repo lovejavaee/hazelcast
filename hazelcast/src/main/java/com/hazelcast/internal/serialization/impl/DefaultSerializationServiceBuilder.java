@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,9 @@
 
 package com.hazelcast.internal.serialization.impl;
 
+import com.hazelcast.config.ClassFilter;
 import com.hazelcast.config.CompactSerializationConfig;
 import com.hazelcast.config.GlobalSerializerConfig;
-import com.hazelcast.config.JavaSerializationFilterConfig;
 import com.hazelcast.config.SerializationConfig;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.core.HazelcastInstanceAware;
@@ -26,6 +26,7 @@ import com.hazelcast.core.ManagedContext;
 import com.hazelcast.instance.BuildInfoProvider;
 import com.hazelcast.internal.memory.GlobalMemoryAccessorRegistry;
 import com.hazelcast.internal.nio.ClassLoaderUtil;
+import com.hazelcast.internal.nio.Packet;
 import com.hazelcast.internal.serialization.InputOutputFactory;
 import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.internal.serialization.SerializationClassNameFilter;
@@ -33,6 +34,7 @@ import com.hazelcast.internal.serialization.SerializationServiceBuilder;
 import com.hazelcast.internal.serialization.impl.bufferpool.BufferPoolFactoryImpl;
 import com.hazelcast.internal.serialization.impl.compact.SchemaService;
 import com.hazelcast.internal.util.StringUtil;
+import com.hazelcast.jet.impl.connector.DataSourceFromJdbcUrl;
 import com.hazelcast.nio.serialization.ClassDefinition;
 import com.hazelcast.nio.serialization.ClassNameFilter;
 import com.hazelcast.nio.serialization.DataSerializableFactory;
@@ -42,6 +44,7 @@ import com.hazelcast.nio.serialization.Serializer;
 import com.hazelcast.nio.serialization.SerializerHook;
 import com.hazelcast.partition.PartitioningStrategy;
 import com.hazelcast.spi.properties.ClusterProperty;
+import com.hazelcast.spi.properties.HazelcastProperties;
 
 import java.nio.ByteOrder;
 import java.util.HashMap;
@@ -80,9 +83,13 @@ public class DefaultSerializationServiceBuilder implements SerializationServiceB
     protected HazelcastInstance hazelcastInstance;
     protected CompactSerializationConfig compactSerializationConfig;
     protected Supplier<RuntimeException> notActiveExceptionSupplier;
-    protected ClassNameFilter classNameFilter;
+    protected ClassNameFilter classNameSerializationFilter;
+
     protected SchemaService schemaService;
     protected boolean isCompatibility;
+    protected boolean versionedSerializationEnabled;
+    protected ClusterVersionAware clusterVersionAware;
+    protected HazelcastProperties properties;
 
     @Override
     public SerializationServiceBuilder setVersion(byte version) {
@@ -123,9 +130,14 @@ public class DefaultSerializationServiceBuilder implements SerializationServiceB
         enableSharedObject = config.isEnableSharedObject();
         allowUnsafe = config.isAllowUnsafe();
         allowOverrideDefaultSerializers = config.isAllowOverrideDefaultSerializers();
-        JavaSerializationFilterConfig filterConfig = config.getJavaSerializationFilterConfig();
-        classNameFilter = filterConfig == null ? null : new SerializationClassNameFilter(filterConfig);
+        classNameSerializationFilter = new SerializationClassNameFilter(config.getJavaSerializationFilterConfig());
         compactSerializationConfig = config.getCompactSerializationConfig();
+        return this;
+    }
+
+    @Override
+    public SerializationServiceBuilder setProperties(HazelcastProperties properties) {
+        this.properties = properties;
         return this;
     }
 
@@ -229,8 +241,21 @@ public class DefaultSerializationServiceBuilder implements SerializationServiceB
     }
 
     @Override
+    public SerializationServiceBuilder setVersionedSerializationEnabled(boolean versionedSerializationEnabled) {
+        this.versionedSerializationEnabled = versionedSerializationEnabled;
+        return this;
+    }
+
+    @Override
+    public SerializationServiceBuilder setClusterVersionAware(ClusterVersionAware clusterVersionAware) {
+        this.clusterVersionAware = clusterVersionAware;
+        return this;
+    }
+
+    @Override
     public InternalSerializationService build() {
         initVersions();
+
         if (config != null) {
             addConfigDataSerializableFactories(dataSerializableFactories, config, classLoader);
             addConfigPortableFactories(portableFactories, config, classLoader);
@@ -254,8 +279,8 @@ public class DefaultSerializationServiceBuilder implements SerializationServiceB
                     }
                 }
 
-                if (serializer instanceof HazelcastInstanceAware) {
-                    ((HazelcastInstanceAware) serializer).setHazelcastInstance(hazelcastInstance);
+                if (serializer instanceof HazelcastInstanceAware aware) {
+                    aware.setHazelcastInstance(hazelcastInstance);
                 }
 
                 ((AbstractSerializationService) ss)
@@ -300,12 +325,18 @@ public class DefaultSerializationServiceBuilder implements SerializationServiceB
                     .withEnableCompression(enableCompression)
                     .withEnableSharedObject(enableSharedObject)
                     .withNotActiveExceptionSupplier(notActiveExceptionSupplier)
-                    .withClassNameFilter(classNameFilter)
+                    .withClassNameFilter(classNameSerializationFilter)
                     .withCheckClassDefErrors(checkClassDefErrors)
                     .withAllowOverrideDefaultSerializers(allowOverrideDefaultSerializers)
                     .withCompactSerializationConfig(compactSerializationConfig)
+                    .withClusterVersionAware(clusterVersionAware)
+                    .withVersionedSerializationEnabled(versionedSerializationEnabled)
                     .withSchemaService(schemaService)
                     .withCompatibility(isCompatibility)
+                    .withReflectiveCompactSerializationRestrictions(new ExtraReflectiveCompactSerializationRestrictions(
+                           null, null, createReflectiveCompactSerializerDefaultBlockList()
+                    ))
+                    .withProperties(properties)
                     .build();
                 serializationServiceV1.registerClassDefinitions(classDefinitions);
                 return serializationServiceV1;
@@ -316,6 +347,34 @@ public class DefaultSerializationServiceBuilder implements SerializationServiceB
         }
     }
 
+    protected ClassFilter createReflectiveCompactSerializerDefaultBlockList() {
+        ClassFilter blockList = new ClassFilter();
+        blockList.addPrefixes(
+                // https://hazelcast.atlassian.net/browse/CTT-1202
+                "com.hazelcast.instance.impl",
+                "com.hazelcast.shaded",
+                // https://hazelcast.atlassian.net/browse/CTT-1204
+                "org.springframework.beans",
+                "org.apache.logging.log4j"
+        );
+        blockList.addPackages(
+                // https://hazelcast.atlassian.net/browse/CTT-1202
+                "com.hazelcast.client.impl.clientside",
+                "com.hazelcast.osgi.impl",
+                "org.jctools.queues"
+        );
+        blockList.addClasses(
+                HeapData.class.getName(),
+                Packet.class.getName(),
+                UnsafeObjectDataInput.class.getName(),
+                "com.hazelcast.kubernetes.KubernetesConfig$DefaultFileContentsReader",
+                "org.agrona.concurrent.status.AtomicCounter",
+                // https://hazelcast.atlassian.net/browse/CTT-1204
+                DataSourceFromJdbcUrl.class.getName()
+        );
+        return blockList;
+    }
+
     private void registerSerializerHooks(InternalSerializationService ss) {
         SerializerHookLoader serializerHookLoader = new SerializerHookLoader(config, classLoader);
         Map<Class, Object> serializers = serializerHookLoader.getSerializers();
@@ -323,13 +382,13 @@ public class DefaultSerializationServiceBuilder implements SerializationServiceB
             Class serializationType = entry.getKey();
             Object value = entry.getValue();
             Serializer serializer;
-            if (value instanceof SerializerHook) {
-                serializer = ((SerializerHook) value).createSerializer();
+            if (value instanceof SerializerHook hook) {
+                serializer = hook.createSerializer(ss);
             } else {
                 serializer = (Serializer) value;
             }
-            if (value instanceof HazelcastInstanceAware) {
-                ((HazelcastInstanceAware) value).setHazelcastInstance(hazelcastInstance);
+            if (value instanceof HazelcastInstanceAware aware) {
+                aware.setHazelcastInstance(hazelcastInstance);
             }
             if (ClassLoaderUtil.isInternalType(value.getClass())) {
                 ((AbstractSerializationService) ss).safeRegister(serializationType, serializer);
@@ -371,8 +430,8 @@ public class DefaultSerializationServiceBuilder implements SerializationServiceB
         buildDataSerializableFactories(dataSerializableFactories, config, cl);
 
         for (DataSerializableFactory f : dataSerializableFactories.values()) {
-            if (f instanceof HazelcastInstanceAware) {
-                ((HazelcastInstanceAware) f).setHazelcastInstance(hazelcastInstance);
+            if (f instanceof HazelcastInstanceAware aware) {
+                aware.setHazelcastInstance(hazelcastInstance);
             }
         }
     }
@@ -422,8 +481,8 @@ public class DefaultSerializationServiceBuilder implements SerializationServiceB
         PortableFactoriesHelper.buildPortableFactories(portableFactories, config, cl);
 
         for (PortableFactory f : portableFactories.values()) {
-            if (f instanceof HazelcastInstanceAware) {
-                ((HazelcastInstanceAware) f).setHazelcastInstance(hazelcastInstance);
+            if (f instanceof HazelcastInstanceAware aware) {
+                aware.setHazelcastInstance(hazelcastInstance);
             }
         }
     }

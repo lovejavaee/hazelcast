@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,8 @@
 
 package com.hazelcast.jet.sql.impl.connector.map;
 
+import com.hazelcast.instance.impl.TestUtil;
+import com.hazelcast.internal.serialization.impl.AbstractSerializationService;
 import com.hazelcast.jet.config.JobConfig;
 import com.hazelcast.jet.core.test.TestSupport;
 import com.hazelcast.jet.sql.SqlTestSupport;
@@ -25,6 +27,7 @@ import com.hazelcast.sql.impl.expression.ColumnExpression;
 import com.hazelcast.sql.impl.expression.ConstantExpression;
 import com.hazelcast.sql.impl.expression.Expression;
 import com.hazelcast.sql.impl.expression.ParameterExpression;
+import com.hazelcast.sql.impl.expression.UntrustedExpressionEvalContext;
 import com.hazelcast.sql.impl.expression.math.PlusFunction;
 import com.hazelcast.sql.impl.extract.GenericQueryTargetDescriptor;
 import com.hazelcast.sql.impl.extract.QueryPath;
@@ -32,10 +35,14 @@ import com.hazelcast.sql.impl.schema.ConstantTableStatistics;
 import com.hazelcast.sql.impl.schema.map.MapTableField;
 import com.hazelcast.sql.impl.schema.map.PartitionedMapTable;
 import com.hazelcast.sql.impl.type.QueryDataType;
+import com.hazelcast.test.HazelcastSerialClassRunner;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 
+import javax.security.auth.Subject;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -48,9 +55,13 @@ import static com.hazelcast.sql.impl.type.QueryDataType.BIGINT;
 import static com.hazelcast.sql.impl.type.QueryDataType.INT;
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptySet;
 import static java.util.Collections.singletonList;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+@RunWith(HazelcastSerialClassRunner.class)
 public class UpdateProcessorTest extends SqlTestSupport {
 
     private static final String MAP_NAME = "map";
@@ -59,7 +70,7 @@ public class UpdateProcessorTest extends SqlTestSupport {
 
     @BeforeClass
     public static void beforeClass() {
-        initialize(2, null);
+        initializeWithClient(2, null, null);
     }
 
     @Before
@@ -107,6 +118,31 @@ public class UpdateProcessorTest extends SqlTestSupport {
         assertThat(map).containsExactly(entry(1, 1));
     }
 
+    @Test
+    public void when_serializedObject_then_deserializedCorrect() {
+        AbstractSerializationService service = (AbstractSerializationService) TestUtil.getNode(instance()).getSerializationService();
+
+        var evalContextMock = mock(UntrustedExpressionEvalContext.class);
+        when(evalContextMock.getSerializationService()).thenReturn(mock());
+        var subject = new Subject(true, emptySet(), emptySet(), emptySet());
+        when(evalContextMock.subject()).thenReturn(subject);
+
+        var processor = UpdatingEntryProcessor.supplier(
+                partitionedTable(INT),
+                emptyList(),
+                emptyList()
+        ).get(evalContextMock);
+
+        var data = service.toData(processor);
+        var actual = service.toObject(data);
+
+        assertThat(actual)
+                .usingRecursiveComparison()
+                .comparingOnlyFields("rowProjectorSupplier", "valueProjectorSupplier", "arguments")
+                .ignoringFields("subject.pubCredentials", "subject.privCredentials")
+                .isEqualTo(processor);
+    }
+
     private static PartitionedMapTable partitionedTable(QueryDataType valueType) {
         return new PartitionedMapTable(
                 QueryUtils.SCHEMA_NAME_PUBLIC,
@@ -122,8 +158,9 @@ public class UpdateProcessorTest extends SqlTestSupport {
                 PrimitiveUpsertTargetDescriptor.INSTANCE,
                 PrimitiveUpsertTargetDescriptor.INSTANCE,
                 emptyList(),
-                false
-        );
+                false,
+                Collections.emptyList(),
+                false);
     }
 
     private Object executeUpdate(

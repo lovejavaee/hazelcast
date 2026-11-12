@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -80,9 +80,7 @@ public class PublisherCreateOperation extends AbstractNamedOperation {
     @Override
     public void run() {
         boolean populate = info.isPopulate();
-        if (populate) {
-            info.setPublishable(false);
-        }
+        info.setPublishable(!populate);
         init();
         if (populate) {
             this.queryResult = createSnapshot();

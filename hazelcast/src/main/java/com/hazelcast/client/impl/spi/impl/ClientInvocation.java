@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,15 @@
 package com.hazelcast.client.impl.spi.impl;
 
 import com.hazelcast.client.HazelcastClientNotActiveException;
-import com.hazelcast.client.impl.clientside.HazelcastClientInstanceImpl;
+import com.hazelcast.client.impl.clientside.HazelcastClientInstance;
 import com.hazelcast.client.impl.connection.ClientConnection;
+import com.hazelcast.client.config.RoutingMode;
 import com.hazelcast.client.impl.protocol.ClientMessage;
 import com.hazelcast.client.impl.spi.EventHandler;
 import com.hazelcast.core.HazelcastInstanceNotActiveException;
 import com.hazelcast.core.LifecycleService;
 import com.hazelcast.core.OperationTimeoutException;
+import com.hazelcast.internal.tpcengine.util.ReflectionUtil;
 import com.hazelcast.spi.exception.RetryableException;
 import com.hazelcast.spi.exception.TargetDisconnectedException;
 import com.hazelcast.spi.exception.TargetNotMemberException;
@@ -32,13 +34,12 @@ import com.hazelcast.spi.impl.operationservice.impl.BaseInvocation;
 import com.hazelcast.spi.impl.sequence.CallIdSequence;
 
 import java.io.IOException;
+import java.lang.invoke.VarHandle;
 import java.util.UUID;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
-import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
-import static com.hazelcast.internal.util.Clock.currentTimeMillis;
 import static com.hazelcast.internal.util.StringUtil.timeToString;
 
 /**
@@ -49,15 +50,14 @@ import static com.hazelcast.internal.util.StringUtil.timeToString;
  * 3) How many times is it retried?
  */
 public class ClientInvocation extends BaseInvocation implements Runnable {
-    private static final AtomicReferenceFieldUpdater<ClientInvocation, ClientConnection> SENT_CONNECTION
-            = AtomicReferenceFieldUpdater.newUpdater(ClientInvocation.class, ClientConnection.class, "sentConnection");
+    private static final VarHandle SENT_CONNECTION = ReflectionUtil.findVarHandle("sentConnection", ClientConnection.class);
     private static final int MAX_FAST_INVOCATION_COUNT = 5;
     private static final int UNASSIGNED_PARTITION = -1;
     private static final AtomicLongFieldUpdater<ClientInvocation> INVOKE_COUNT
             = AtomicLongFieldUpdater.newUpdater(ClientInvocation.class, "invokeCount");
     final LifecycleService lifecycleService;
     private final ClientInvocationFuture clientInvocationFuture;
-    private final ClientInvocationServiceImpl invocationService;
+    private final ClientInvocationServiceInternal invocationService;
     private final TaskScheduler executionService;
     private volatile ClientMessage clientMessage;
     private final CallIdSequence callIdSequence;
@@ -67,7 +67,7 @@ public class ClientInvocation extends BaseInvocation implements Runnable {
     private final long startTimeMillis;
     private final long retryPauseMillis;
     private final Object objectName;
-    private final boolean isUnisocketClient;
+    private final RoutingMode routingMode;
     /**
      * We achieve synchronization of different threads via this field
      * sentConnection starts as null.
@@ -87,15 +87,15 @@ public class ClientInvocation extends BaseInvocation implements Runnable {
     private boolean allowRetryOnRandom = true;
     private volatile boolean invoked;
 
-    protected ClientInvocation(HazelcastClientInstanceImpl client,
+    protected ClientInvocation(HazelcastClientInstance client,
                                ClientMessage clientMessage,
                                Object objectName,
                                int partitionId,
                                UUID uuid,
                                ClientConnection connection) {
-        super(((ClientInvocationServiceImpl) client.getInvocationService()).invocationLogger);
+        super(((ClientInvocationServiceInternal) client.getInvocationService()).getInvocationLogger());
         this.lifecycleService = client.getLifecycleService();
-        this.invocationService = (ClientInvocationServiceImpl) client.getInvocationService();
+        this.invocationService = (ClientInvocationServiceInternal) client.getInvocationService();
         this.executionService = client.getTaskScheduler();
         this.objectName = objectName;
         this.clientMessage = clientMessage;
@@ -107,20 +107,20 @@ public class ClientInvocation extends BaseInvocation implements Runnable {
         this.callIdSequence = invocationService.getCallIdSequence();
         this.clientInvocationFuture = new ClientInvocationFuture(this, clientMessage, logger, callIdSequence);
         this.invocationTimeoutMillis = invocationService.getInvocationTimeoutMillis();
-        this.isUnisocketClient = invocationService.isUnisocketClient();
+        this.routingMode = invocationService.getRoutingMode();
     }
 
     /**
      * Create an invocation that will be executed on random member.
      */
-    public ClientInvocation(HazelcastClientInstanceImpl client, ClientMessage clientMessage, Object objectName) {
+    public ClientInvocation(HazelcastClientInstance client, ClientMessage clientMessage, Object objectName) {
         this(client, clientMessage, objectName, UNASSIGNED_PARTITION, null, null);
     }
 
     /**
      * Create an invocation that will be executed on owner of {@code partitionId}.
      */
-    public ClientInvocation(HazelcastClientInstanceImpl client, ClientMessage clientMessage, Object objectName,
+    public ClientInvocation(HazelcastClientInstance client, ClientMessage clientMessage, Object objectName,
                             int partitionId) {
         this(client, clientMessage, objectName, partitionId, null, null);
         clientMessage.setPartitionId(partitionId);
@@ -129,7 +129,7 @@ public class ClientInvocation extends BaseInvocation implements Runnable {
     /**
      * Create an invocation that will be executed on member with given {@code address}.
      */
-    public ClientInvocation(HazelcastClientInstanceImpl client, ClientMessage clientMessage, Object objectName,
+    public ClientInvocation(HazelcastClientInstance client, ClientMessage clientMessage, Object objectName,
                             UUID uuid) {
         this(client, clientMessage, objectName, UNASSIGNED_PARTITION, uuid, null);
     }
@@ -137,7 +137,7 @@ public class ClientInvocation extends BaseInvocation implements Runnable {
     /**
      * Create an invocation that will be executed on given {@code connection}.
      */
-    public ClientInvocation(HazelcastClientInstanceImpl client, ClientMessage clientMessage, Object objectName,
+    public ClientInvocation(HazelcastClientInstance client, ClientMessage clientMessage, Object objectName,
                             ClientConnection connection) {
         this(client, clientMessage, objectName, UNASSIGNED_PARTITION, null, connection);
     }
@@ -188,7 +188,7 @@ public class ClientInvocation extends BaseInvocation implements Runnable {
             }
 
             boolean invoked;
-            if (!isUnisocketClient) {
+            if (routingMode != RoutingMode.SINGLE_MEMBER) {
                 if (partitionId != -1) {
                     invoked = invocationService.invokeOnPartitionOwner(this, partitionId);
                 } else if (uuid != null) {
@@ -202,6 +202,7 @@ public class ClientInvocation extends BaseInvocation implements Runnable {
             } else {
                 invoked = invocationService.invoke(this);
             }
+
             if (!invoked) {
                 notifyExceptionWithOwnedPermission(new IOException("No connection found to invoke"));
             }
@@ -210,7 +211,6 @@ public class ClientInvocation extends BaseInvocation implements Runnable {
             notifyExceptionWithOwnedPermission(e);
         }
     }
-
 
     @Override
     public void run() {
@@ -279,6 +279,10 @@ public class ClientInvocation extends BaseInvocation implements Runnable {
         return SENT_CONNECTION.compareAndSet(this, deadConnection, null);
     }
 
+    public ClientConnection getSentConnection() {
+        return (ClientConnection) SENT_CONNECTION.get(this);
+    }
+
     @Override
     protected boolean shouldCompleteWithoutBackups() {
         return true;
@@ -296,6 +300,7 @@ public class ClientInvocation extends BaseInvocation implements Runnable {
         invocationService.deRegisterInvocation(clientMessage.getCorrelationId());
     }
 
+    @Override
     protected boolean shouldFailOnIndeterminateOperationState() {
         return invocationService.shouldFailOnIndeterminateOperationState();
     }
@@ -323,7 +328,8 @@ public class ClientInvocation extends BaseInvocation implements Runnable {
             return;
         }
 
-        long timePassed = System.currentTimeMillis() - startTimeMillis;
+        long currentTimeMillis = System.currentTimeMillis();
+        long timePassed = currentTimeMillis - startTimeMillis;
         if (timePassed > invocationTimeoutMillis) {
             if (logger.isFinestEnabled()) {
                 logger.finest("Exception will not be retried because invocation timed out", exception);
@@ -332,10 +338,10 @@ public class ClientInvocation extends BaseInvocation implements Runnable {
             StringBuilder sb = new StringBuilder();
             sb.append(this);
             sb.append(" timed out because exception occurred after client invocation timeout ");
-            sb.append(invocationService.getInvocationTimeoutMillis()).append(" ms. ");
-            sb.append("Current time: ").append(timeToString(currentTimeMillis())).append(". ");
+            sb.append(invocationTimeoutMillis).append(" ms. ");
+            sb.append("Current time: ").append(timeToString(currentTimeMillis)).append(". ");
             sb.append("Start time: ").append(timeToString(startTimeMillis)).append(". ");
-            sb.append("Total elapsed time: ").append(currentTimeMillis() - startTimeMillis).append(" ms. ");
+            sb.append("Total elapsed time: ").append(timePassed).append(" ms. ");
             String msg = sb.toString();
             completeExceptionally(new OperationTimeoutException(msg, exception));
             return;
@@ -448,7 +454,8 @@ public class ClientInvocation extends BaseInvocation implements Runnable {
         return callIdSequence;
     }
 
-    ClientInvocationFuture getClientInvocationFuture() {
+    // Used in tests
+    public ClientInvocationFuture getClientInvocationFuture() {
         return clientInvocationFuture;
     }
 }

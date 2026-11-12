@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,9 +35,11 @@ import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
 import com.hazelcast.map.IMap;
 import com.hazelcast.map.MapInterceptor;
+import com.hazelcast.map.MapInterceptorAdaptor;
 import com.hazelcast.spi.impl.SpiDataSerializerHook;
 import com.hazelcast.spi.impl.operationservice.impl.operations.Backup;
 import com.hazelcast.spi.properties.ClusterProperty;
+import com.hazelcast.test.Accessors;
 import com.hazelcast.test.HazelcastParametrizedRunner;
 import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.HazelcastSerialParametersRunnerFactory;
@@ -68,6 +70,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -88,7 +91,6 @@ import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.AdditionalAnswers.answersWithDelay;
-import static org.mockito.AdditionalAnswers.returnsSecondArg;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -174,7 +176,7 @@ public class IndeterminateSnapshotTest {
             return firstExecutionConsumer((idx) -> {
                 logger.info("Breaking replication in " + message + " for " + idx);
                 snapshotAction.run();
-                logger.finest("Proceeding with " + message + " " + idx + " after breaking replication");
+                logger.finest("Proceeding with %s %s after breaking replication", message, idx);
             });
         }
 
@@ -214,6 +216,7 @@ public class IndeterminateSnapshotTest {
          *                   or -1 if no snapshot is expected
          */
         protected static void assumeLastSnapshotPresent(int snapshotId) {
+            var s = SnapshotInstrumentationP.savedCounters.values();
             if (snapshotId >= 0) {
                 assumeThat(SnapshotInstrumentationP.savedCounters.values())
                         .as("Current snapshot is different than expected")
@@ -241,6 +244,19 @@ public class IndeterminateSnapshotTest {
         protected Job createJob(int numItems) {
             DAG dag = new DAG();
             Vertex source = dag.newVertex("source", throttle(() -> new SnapshotInstrumentationP(numItems), 1)).localParallelism(LOCAL_PARALLELISM);
+            Vertex sink = dag.newVertex("sink", Processors.noopP()).localParallelism(1);
+            dag.edge(between(source, sink));
+
+            return instances[0].getJet().newJob(dag, customizeJobConfig(new JobConfig()
+                    .setProcessingGuarantee(EXACTLY_ONCE)
+                    // trigger snapshot often to speed up test
+                    .setSnapshotIntervalMillis(1000)));
+        }
+
+        @Nonnull
+        protected Job createJob(int numItems, AtomicBoolean allowComplete) {
+            DAG dag = new DAG();
+            Vertex source = dag.newVertex("source", throttle(() -> new SnapshotInstrumentationP(numItems, allowComplete), 1)).localParallelism(LOCAL_PARALLELISM);
             Vertex sink = dag.newVertex("sink", Processors.noopP()).localParallelism(1);
             dag.edge(between(source, sink));
 
@@ -312,9 +328,9 @@ public class IndeterminateSnapshotTest {
             IMap<String, String> map = instances[0].getMap("testMapPutAndGet");
 
             InternalPartition partitionForKey = getPartitionForKey("Hello");
-            logger.fine("KEY partition id:" + partitionForKey.getPartitionId() + " owner: " + partitionForKey.getOwnerOrNull());
+            logger.fine("KEY partition id:%s owner: %s", partitionForKey.getPartitionId(), partitionForKey.getOwnerOrNull());
             for (int i = 0; i < 3; ++i) {
-                logger.fine("KEY partition addr:" + partitionForKey.getReplica(i));
+                logger.fine("KEY partition addr:%s", partitionForKey.getReplica(i));
             }
 
             int masterPartitionInstanceIdx = partitionForKey.getReplica(0).address().getPort() - BASE_PORT;
@@ -375,9 +391,9 @@ public class IndeterminateSnapshotTest {
             IMap<String, String> map = instances[0].getMap("testMapPutAndGet");
 
             InternalPartition partitionForKey = getPartitionForKey("Hello");
-            logger.fine("KEY partition id:" + partitionForKey.getPartitionId() + " owner: " + partitionForKey.getOwnerOrNull());
+            logger.fine("KEY partition id:%s owner: %s", partitionForKey.getPartitionId(), partitionForKey.getOwnerOrNull());
             for (int i = 0; i < 3; ++i) {
-                logger.fine("KEY partition addr:" + partitionForKey.getReplica(i));
+                logger.fine("KEY partition addr:%s", partitionForKey.getReplica(i));
             }
 
             int masterPartitionInstanceIdx = partitionForKey.getReplica(0).address().getPort() - BASE_PORT;
@@ -415,7 +431,7 @@ public class IndeterminateSnapshotTest {
 
             IMap<String, String> mapNoInstance = instances[noPartitionInstanceIdx].getMap("testMapPutAndGet");
 
-            logger.fine("Size after clear: " + mapNoInstance.size());
+            logger.fine("Size after clear: %s", mapNoInstance.size());
             assertGreaterOrEquals("Should lose some clear executions", mapNoInstance.size(), 1);
 
             assertEquals("Should lose clear on master", "World", mapNoInstance.get("Hello"));
@@ -449,7 +465,7 @@ public class IndeterminateSnapshotTest {
         private <K> InternalPartition getPartitionForKey(K key) {
             // to determine partition we can use any instance (let's pick the first one)
             HazelcastInstance instance = instances[0];
-            InternalPartitionService partitionService = getNode(instance).getPartitionService();
+            InternalPartitionService partitionService = Accessors.getNode(instance).getPartitionService();
             int partitionId = partitionService.getPartitionId(key);
             return partitionService.getPartition(partitionId);
         }
@@ -488,7 +504,7 @@ public class IndeterminateSnapshotTest {
             int liveInstance = masterKeyPartitionInstanceIdx;
 
             // ensure that job started
-            assertJobStatusEventually(job, JobStatus.RUNNING);
+            JobAssertions.assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
 
             waitForSnapshot();
             sleepMillis(500);
@@ -563,7 +579,7 @@ public class IndeterminateSnapshotTest {
             int liveInstance = backupKeyPartitionInstanceIdx;
 
             // ensure that job started
-            assertJobStatusEventually(job, JobStatus.RUNNING);
+            JobAssertions.assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
 
             waitForSnapshot();
             sleepMillis(500);
@@ -666,7 +682,7 @@ public class IndeterminateSnapshotTest {
              * @param blockRatio 0 - block none, 1 - block all, 0.5 - block random 50%
              */
             MapBackupPacketDropFilter(HazelcastInstance instance, float blockRatio) {
-                super(getNode(instance).getSerializationService());
+                super(Accessors.getNode(instance).getSerializationService());
                 this.sourceAddress = instance.getCluster().getLocalMember().getAddress();
                 this.blockRatio = blockRatio;
             }
@@ -779,7 +795,7 @@ public class IndeterminateSnapshotTest {
                     .start();
 
             Job job = createJob(initialSnapshotsCount + 3);
-            assertJobStatusEventually(job, JobStatus.RUNNING);
+            JobAssertions.assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
 
             if (initialSnapshotsCount > 0) {
                 waitForSnapshot();
@@ -787,7 +803,7 @@ public class IndeterminateSnapshotTest {
 
             // wait for job restart
             logger.info("Waiting for job restart...");
-            assertJobStatusEventually(job, JobStatus.STARTING);
+            JobAssertions.assertThat(job).eventuallyHasStatus(JobStatus.STARTING);
             assertSnapshotNotCommitted();
 
             // terminate coordinator
@@ -831,7 +847,7 @@ public class IndeterminateSnapshotTest {
 
             Job job = createJob(initialSnapshotsCount + 3);
 
-            assertJobStatusEventually(job, JobStatus.RUNNING);
+            JobAssertions.assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
 
             if (initialSnapshotsCount > 0) {
                 // wait for initial successful snapshots
@@ -881,7 +897,7 @@ public class IndeterminateSnapshotTest {
 
             Job job = createJob(initialSnapshotsCount + 3);
 
-            assertJobStatusEventually(job, JobStatus.RUNNING);
+            JobAssertions.assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
 
             if (initialSnapshotsCount > 0) {
                 // wait for initial successful snapshots
@@ -891,7 +907,7 @@ public class IndeterminateSnapshotTest {
             job.suspend();
             // suspend will fail (be indeterminate) and job will be restarted,
             // but after restart it will still be indeterminate
-            assertJobStatusEventually(job, JobStatus.STARTING);
+            JobAssertions.assertThat(job).eventuallyHasStatus(JobStatus.STARTING);
             logger.info("Suspend failed and job restarted");
             assertSnapshotNotCommitted();
 
@@ -899,7 +915,7 @@ public class IndeterminateSnapshotTest {
             coordinatorTerminated.complete(null);
 
             job = instances[1].getJet().getJob(job.getId());
-            assertJobStatusEventually(job, JobStatus.RUNNING);
+            JobAssertions.assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
 
             logger.info("Joining job...");
             job.join();
@@ -931,7 +947,7 @@ public class IndeterminateSnapshotTest {
                     .start();
 
             Job job = createJob(initialSnapshotsCount + 3);
-            assertJobStatusEventually(job, JobStatus.RUNNING);
+            JobAssertions.assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
 
             if (initialSnapshotsCount > 0) {
                 snapshotDone.await();
@@ -952,7 +968,7 @@ public class IndeterminateSnapshotTest {
         }
 
         @Nonnull
-        private IMap<Object, Object> getJobExecutionRecordIMap() {
+        public IMap<Object, Object> getJobExecutionRecordIMap() {
             // use last instance, 0 is master, 1 non-master - may be terminated during the test
             return instances[NODE_COUNT - 1].getMap(JOB_EXECUTION_RECORDS_MAP_NAME);
         }
@@ -1193,13 +1209,34 @@ public class IndeterminateSnapshotTest {
             }
         }
 
+        public static class OnceFailedUpdateInterceptor extends MapInterceptorAdaptor {
+
+            // This is not thread safe, but it is not a problem in this test
+            private static volatile boolean firstRun = true;
+
+            // This class is deserialized using JavaDefaultSerializers, so the constructor is not called.
+            // However, be aware that using a different serializer might invoke the constructor and reset the state.
+            public OnceFailedUpdateInterceptor() {
+                firstRun = true;
+            }
+
+            @Override
+            public Object interceptPut(Object key, Object value) {
+                if (key == null) {
+                    return value;
+                }
+                if (firstRun) {
+                    firstRun = false;
+                    throw new IndeterminateOperationStateException("Once simulated lost IMap update");
+                } else {
+                    return value;
+                }
+            }
+        }
+
         private void singleIndeterminatePutLost() {
             // affects put and also executeOnKey
-            MapInterceptor mockInt = mock(MapInterceptor.class, withSettings().serializable());
-            when(mockInt.interceptPut(any(), any()))
-                    .thenThrow(new IndeterminateOperationStateException("Simulated lost IMap update"))
-                    .thenAnswer(returnsSecondArg());
-            getJobExecutionRecordIMap().addInterceptor(mockInt);
+            getJobExecutionRecordIMap().addInterceptor(new OnceFailedUpdateInterceptor());
         }
 
         private String allIndeterminatePutsLost() {
@@ -1244,8 +1281,15 @@ public class IndeterminateSnapshotTest {
         public static volatile Consumer<Boolean> snapshotCommitFinishConsumer = b -> { };
         public static volatile boolean restoredFromSnapshot = false;
 
+        private static AtomicBoolean allowCompletion = new AtomicBoolean(true);
+
         SnapshotInstrumentationP(int numItems) {
             this.numItems = numItems;
+        }
+
+        SnapshotInstrumentationP(int numItems, AtomicBoolean allowCompletion) {
+            this.numItems = numItems;
+            SnapshotInstrumentationP.allowCompletion = allowCompletion;
         }
 
         /**
@@ -1261,6 +1305,7 @@ public class IndeterminateSnapshotTest {
             snapshotCommitPrepareConsumer = null;
             snapshotCommitFinishConsumer = b -> { };
             restoredFromSnapshot = false;
+            allowCompletion.set(true);
         }
 
         @Override
@@ -1274,7 +1319,8 @@ public class IndeterminateSnapshotTest {
             // emit current snapshot counter
             // finish when the requested number of items was emitted
             return tryEmit(10000 * (globalIndex + 1) + snapshotCounter)
-                    && snapshotCounter == numItems;
+                    && snapshotCounter == numItems
+                    && allowCompletion.get();
         }
 
         @Override
@@ -1307,7 +1353,7 @@ public class IndeterminateSnapshotTest {
 
         @Override
         protected void restoreFromSnapshot(@Nonnull Object key, @Nonnull Object value) {
-            if (key instanceof BroadcastKey && ((BroadcastKey<?>) key).key().equals(globalIndex)) {
+            if (key instanceof BroadcastKey broadcastKey && broadcastKey.key().equals(globalIndex)) {
                 restoredCounters.put(globalIndex, (Integer) value);
                 // Note that counter will not be incremented before first snapshot after restore.
                 // snapshotCounter can be less than snapshot id if some snapshots are lost.

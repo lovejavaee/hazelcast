@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,12 +21,12 @@ import com.hazelcast.cp.internal.IndeterminateOperationStateAware;
 import com.hazelcast.cp.internal.MetadataRaftGroupManager;
 import com.hazelcast.cp.internal.RaftServiceDataSerializerHook;
 import com.hazelcast.cp.internal.raft.impl.util.PostponedResponse;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -78,22 +78,14 @@ public class InitMetadataRaftGroupOp extends MetadataRaftGroupOp implements Inde
     @Override
     public void writeData(ObjectDataOutput out) throws IOException {
         out.writeObject(callerCPMember);
-        out.writeInt(discoveredCPMembers.size());
-        for (CPMemberInfo member : discoveredCPMembers) {
-            out.writeObject(member);
-        }
+        SerializationUtil.writeList(discoveredCPMembers, out);
         out.writeLong(groupIdSeed);
     }
 
     @Override
     public void readData(ObjectDataInput in) throws IOException {
         callerCPMember = in.readObject();
-        int len = in.readInt();
-        discoveredCPMembers = new ArrayList<>(len);
-        for (int i = 0; i < len; i++) {
-            CPMemberInfo member = in.readObject();
-            discoveredCPMembers.add(member);
-        }
+        discoveredCPMembers = SerializationUtil.readList(in);
         groupIdSeed = in.readLong();
     }
 

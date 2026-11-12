@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package com.hazelcast.test;
 
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Log4j2Factory;
-import com.hazelcast.logging.LogEvent;
 import com.hazelcast.logging.LoggerFactorySupport;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.spi.LoggerContext;
@@ -55,13 +54,13 @@ public class TestLoggerFactory extends LoggerFactorySupport {
      * Store all the logging context being created, because we need to
      * clear them in order to change the configuration to reload it.
      */
-    private final Collection<LoggerContext> loggerContexts = new ConcurrentLinkedQueue<LoggerContext>();
+    private final Collection<LoggerContext> loggerContexts = new ConcurrentLinkedQueue<>();
 
     /**
      * Reference to a {@link Log4j2Factory}, which is used to create
      * loggers for older Hazelcast versions.
      */
-    private final AtomicReference<Log4j2Factory> legacyLog4j2Factory = new AtomicReference<Log4j2Factory>();
+    private final AtomicReference<Log4j2Factory> legacyLog4j2Factory = new AtomicReference<>();
 
     /**
      * Changes the configuration to be used.
@@ -256,13 +255,6 @@ public class TestLoggerFactory extends LoggerFactorySupport {
         public void log(Level level, String message, Throwable thrown) {
             long startNanos = System.nanoTime();
             delegate.log(level, message, thrown);
-            logOnSlowLogging(startNanos);
-        }
-
-        @Override
-        public void log(LogEvent logEvent) {
-            long startNanos = System.nanoTime();
-            delegate.log(logEvent);
             logOnSlowLogging(startNanos);
         }
 

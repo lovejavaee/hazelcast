@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import com.hazelcast.config.LoginModuleConfig.LoginModuleUsage;
 /**
  * Typed authentication configuration for {@code BasicLdapLoginModule} and {@code LdapLoginModule}.
  */
-@SuppressWarnings({"checkstyle:methodcount"})
+@SuppressWarnings("checkstyle:methodcount")
 public class LdapAuthenticationConfig extends AbstractClusterLoginConfig<LdapAuthenticationConfig> {
 
     private String url;
@@ -102,6 +102,7 @@ public class LdapAuthenticationConfig extends AbstractClusterLoginConfig<LdapAut
      *
      * @deprecated Use {@link #getParseDn()}
      */
+    @Deprecated(forRemoval = true, since = "5.4")
     public boolean isParseDn() {
         return parseDn != null && parseDn.booleanValue();
     }
@@ -314,7 +315,7 @@ public class LdapAuthenticationConfig extends AbstractClusterLoginConfig<LdapAut
     }
 
     @Override
-    @SuppressWarnings({"checkstyle:CyclomaticComplexity"})
+    @SuppressWarnings("checkstyle:CyclomaticComplexity")
     public boolean equals(Object obj) {
         if (this == obj) {
             return true;

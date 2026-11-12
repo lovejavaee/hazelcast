@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.client.cp.internal.datastructures.semaphore;
 
 import com.hazelcast.client.test.TestHazelcastFactory;
+import com.hazelcast.config.Config;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.cp.ISemaphore;
 import com.hazelcast.test.HazelcastParallelClassRunner;
@@ -52,7 +53,9 @@ public class ClientSemaphoreThreadedTest {
 
     @Before
     public void setup() {
-        hazelcastFactory.newHazelcastInstance();
+        Config config = new Config();
+        config.getCPSubsystemConfig().setCPMemberCount(3);
+        hazelcastFactory.newInstances(config, 3);
         client = hazelcastFactory.newHazelcastClient();
     }
 
@@ -70,8 +73,8 @@ public class ClientSemaphoreThreadedTest {
     public void concurrent_trySemaphoreTest(final boolean tryWithTimeOut) {
         final ISemaphore semaphore = client.getCPSubsystem().getSemaphore(randomString());
         semaphore.init(1);
-        final AtomicInteger upTotal = new AtomicInteger(0);
-        final AtomicInteger downTotal = new AtomicInteger(0);
+        final AtomicInteger upTotal = new AtomicInteger();
+        final AtomicInteger downTotal = new AtomicInteger();
 
         final SemaphoreTestThread[] threads = new SemaphoreTestThread[8];
         for (int i = 0; i < threads.length; i++) {
@@ -98,7 +101,8 @@ public class ClientSemaphoreThreadedTest {
             super(semaphore, upTotal, downTotal);
         }
 
-        public void iterativelyRun() throws Exception {
+        @Override
+        public void iterativelyRun() {
             if (semaphore.tryAcquire()) {
                 work();
                 semaphore.release();
@@ -111,6 +115,7 @@ public class ClientSemaphoreThreadedTest {
             super(semaphore, upTotal, downTotal);
         }
 
+        @Override
         public void iterativelyRun() throws Exception {
             if (semaphore.tryAcquire(1, TimeUnit.MILLISECONDS)) {
                 work();
@@ -121,7 +126,7 @@ public class ClientSemaphoreThreadedTest {
 
     abstract static class SemaphoreTestThread extends Thread {
 
-        private static final int MAX_ITTERATIONS = 1000 * 10;
+        private static final int MAX_ITERATIONS = 1000 * 10;
 
         public volatile Throwable error;
 
@@ -137,9 +142,10 @@ public class ClientSemaphoreThreadedTest {
             this.downTotal = downTotal;
         }
 
+        @Override
         public final void run() {
             try {
-                for (int i = 0; i < MAX_ITTERATIONS; i++) {
+                for (int i = 0; i < MAX_ITERATIONS; i++) {
                     iterativelyRun();
                 }
             } catch (Throwable e) {

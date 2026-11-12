@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import com.hazelcast.jet.impl.execution.init.JetInitDataSerializerHook;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
@@ -42,7 +41,7 @@ import static com.hazelcast.jet.impl.util.Util.toLocalTime;
  */
 public class JobExecutionRecord implements IdentifiedDataSerializable {
 
-    public static final int NO_SNAPSHOT = -1;
+    public static final long NO_SNAPSHOT = -1;
     /**
      * Timestamp to order async updates to the JobRecord. {@link
      * JobRepository#writeJobExecutionRecord}.
@@ -104,10 +103,18 @@ public class JobExecutionRecord implements IdentifiedDataSerializable {
     }
 
     /**
-     * Updates the quorum size if it's larger than the current value. Ignores, if it's not.
+     * Updates the quorum size if it's larger than the current value and
+     * returns the previous value.
      */
-    void setLargerQuorumSize(int newQuorumSize) {
-        quorumSize.getAndAccumulate(newQuorumSize, Math::max);
+    int setLargerQuorumSize(int newQuorumSize) {
+        return quorumSize.getAndAccumulate(newQuorumSize, Math::max);
+    }
+
+    /**
+     * Sets the quorum size to zero and returns the previous value.
+     */
+    int resetQuorumSize() {
+        return quorumSize.getAndSet(0);
     }
 
     /**
@@ -143,9 +150,9 @@ public class JobExecutionRecord implements IdentifiedDataSerializable {
         executed = true;
     }
 
-    @SuppressWarnings("NonAtomicOperationOnVolatileField")
-    @SuppressFBWarnings(value = "VO_VOLATILE_INCREMENT",
-            justification = "all updates to ongoingSnapshotId are synchronized")
+    @SuppressWarnings({"NonAtomicOperationOnVolatileField", "squid:S3078"})
+//    @SuppressFBWarnings(value = "VO_VOLATILE_INCREMENT",
+//            justification = "all updates to ongoingSnapshotId are synchronized")
     public void startNewSnapshot(String exportedSnapshotName) {
         ongoingSnapshotId++;
         ongoingSnapshotStartTime = Clock.currentTimeMillis();
@@ -180,6 +187,13 @@ public class JobExecutionRecord implements IdentifiedDataSerializable {
         ongoingExportedSnapshotName = null;
         ongoingSnapshotStartTime = Long.MIN_VALUE;
         return res;
+    }
+
+    @SuppressWarnings({"NonAtomicOperationOnVolatileField", "squid:S3078"})
+//    @SuppressFBWarnings(value = "VO_VOLATILE_INCREMENT",
+//            justification = "all updates to ongoingSnapshotId are synchronized")
+    void resetOngoingSnapshotId() {
+        ongoingSnapshotId--;
     }
 
     /**

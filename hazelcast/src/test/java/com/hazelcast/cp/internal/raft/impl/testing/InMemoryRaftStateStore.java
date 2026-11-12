@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,12 +19,16 @@ package com.hazelcast.cp.internal.raft.impl.testing;
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
 import com.hazelcast.cp.internal.raft.impl.log.LogEntry;
 import com.hazelcast.cp.internal.raft.impl.log.RaftLog;
+import com.hazelcast.cp.internal.raft.impl.log.SnapshotChunk;
 import com.hazelcast.cp.internal.raft.impl.log.SnapshotEntry;
 import com.hazelcast.cp.internal.raft.impl.persistence.RaftStateStore;
 import com.hazelcast.cp.internal.raft.impl.persistence.RestoredRaftState;
 
 import javax.annotation.Nonnull;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.NavigableMap;
+import java.util.TreeMap;
 
 import static com.hazelcast.cp.internal.raft.impl.log.RaftLog.newRaftLog;
 
@@ -34,7 +38,9 @@ public class InMemoryRaftStateStore implements RaftStateStore {
     private Collection<RaftEndpoint> initialMembers;
     private int term;
     private RaftEndpoint votedFor;
-    private RaftLog raftLog;
+    private SnapshotPersistenceState snapshotPersistenceState;
+
+    private final RaftLog raftLog;
 
     public InMemoryRaftStateStore(int capacity) {
         this.raftLog = newRaftLog(capacity);
@@ -45,7 +51,7 @@ public class InMemoryRaftStateStore implements RaftStateStore {
     }
 
     @Override
-    public void persistInitialMembers(
+    public synchronized void persistInitialMembers(
             @Nonnull RaftEndpoint localMember,
             @Nonnull Collection<RaftEndpoint> initialMembers
     ) {
@@ -54,35 +60,54 @@ public class InMemoryRaftStateStore implements RaftStateStore {
     }
 
     @Override
-    public void persistTerm(int term, @Nonnull RaftEndpoint votedFor) {
+    public synchronized void persistTerm(int term, @Nonnull RaftEndpoint votedFor) {
         this.term = term;
         this.votedFor = votedFor;
     }
 
     @Override
-    public void persistEntry(@Nonnull LogEntry entry) {
+    public synchronized void persistEntry(@Nonnull LogEntry entry) {
         raftLog.appendEntries(entry);
     }
 
     @Override
-    public void persistSnapshot(@Nonnull SnapshotEntry entry) {
-        raftLog.setSnapshot(entry);
+    public synchronized void persistSnapshotChunk(@Nonnull SnapshotChunk chunk) {
+        if (snapshotPersistenceState == null || snapshotPersistenceState.snapshotIndex != chunk.index()) {
+            snapshotPersistenceState = new SnapshotPersistenceState(chunk.term(), chunk.index(),
+                    chunk.chunkCount(), chunk.groupMembersLogIndex(), chunk.groupMembers());
+        }
+
+        snapshotPersistenceState.chunks.put(chunk.chunkNumber(), chunk);
     }
 
     @Override
-    public void deleteEntriesFrom(long startIndexInclusive) {
+    public synchronized void deleteSnapshotChunks(long snapshotIndex) {
+        if (snapshotPersistenceState != null && snapshotPersistenceState.snapshotIndex == snapshotIndex) {
+            snapshotPersistenceState = null;
+        }
+    }
+
+    @Override
+    public synchronized void deleteEntriesFrom(long startIndexInclusive) {
         raftLog.deleteEntriesFrom(startIndexInclusive);
     }
 
     @Override
-    public void flushLogs() {
+    public synchronized void flushLogs() {
+        if (snapshotPersistenceState != null) {
+            SnapshotEntry entry = snapshotPersistenceState.toSnapshotEntry();
+            if (entry != null) {
+                raftLog.setSnapshot(entry);
+            }
+            snapshotPersistenceState = null;
+        }
     }
 
     @Override
     public void close() {
     }
 
-    public RestoredRaftState toRestoredRaftState() {
+    public synchronized RestoredRaftState toRestoredRaftState() {
         LogEntry[] entries;
         if (raftLog.snapshotIndex() < raftLog.lastLogOrSnapshotIndex()) {
             entries = raftLog.getEntriesBetween(raftLog.snapshotIndex() + 1, raftLog.lastLogOrSnapshotIndex());
@@ -90,7 +115,41 @@ public class InMemoryRaftStateStore implements RaftStateStore {
             entries = new LogEntry[0];
         }
 
-        return new RestoredRaftState(localEndpoint, initialMembers, term, votedFor, raftLog.snapshot(), entries);
+        return new RestoredRaftState(localEndpoint, initialMembers, term, votedFor, raftLog.snapshot(), entries, null);
+    }
+
+    private static class SnapshotPersistenceState {
+
+        final int term;
+        final long snapshotIndex;
+        final int chunkCount;
+        private long groupMembersLogIndex;
+        private Collection<RaftEndpoint> groupMembers;
+        final NavigableMap<Integer, SnapshotChunk> chunks = new TreeMap<>();
+
+        SnapshotPersistenceState(int term, long snapshotIndex, int chunkCount,
+                                 long groupMembersLogIndex, Collection<RaftEndpoint> groupMembers) {
+            this.term = term;
+            this.snapshotIndex = snapshotIndex;
+            this.chunkCount = chunkCount;
+            this.groupMembers = groupMembers;
+            this.groupMembersLogIndex = groupMembersLogIndex;
+        }
+
+        boolean isCompleted() {
+            return chunks.size() == chunkCount;
+        }
+
+        SnapshotEntry toSnapshotEntry() {
+            if (isCompleted()) {
+                ArrayList<SnapshotChunk> snapshotChunks = new ArrayList<>(chunks.values());
+                return new SnapshotEntry(term, snapshotIndex,
+                        snapshotChunks, groupMembersLogIndex, groupMembers);
+            }
+
+            return null;
+        }
+
     }
 
 }

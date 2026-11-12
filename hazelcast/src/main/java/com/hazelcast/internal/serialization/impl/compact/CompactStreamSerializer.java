@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,17 +23,20 @@ import com.hazelcast.core.ManagedContext;
 import com.hazelcast.internal.nio.BufferObjectDataInput;
 import com.hazelcast.internal.nio.BufferObjectDataOutput;
 import com.hazelcast.internal.nio.ClassLoaderUtil;
-import com.hazelcast.internal.serialization.impl.AbstractSerializationService;
+import com.hazelcast.internal.serialization.impl.ExtraReflectiveCompactSerializationRestrictions;
 import com.hazelcast.internal.serialization.impl.InternalGenericRecord;
+import com.hazelcast.internal.serialization.impl.SerializerAdapter;
 import com.hazelcast.internal.serialization.impl.compact.record.JavaRecordSerializer;
 import com.hazelcast.internal.util.TriTuple;
+import com.hazelcast.logging.ILogger;
+import com.hazelcast.logging.Logger;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.FieldKind;
-import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import com.hazelcast.nio.serialization.HazelcastSerializationException;
 import com.hazelcast.nio.serialization.StreamSerializer;
 import com.hazelcast.nio.serialization.compact.CompactSerializer;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -41,6 +44,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
 import static com.hazelcast.internal.serialization.impl.FieldOperations.fieldOperations;
 import static com.hazelcast.internal.serialization.impl.SerializationConstants.TYPE_COMPACT;
@@ -59,30 +63,31 @@ public class CompactStreamSerializer implements StreamSerializer<Object> {
     private final Map<Class, CompactSerializableRegistration> classToRegistrationMap = new ConcurrentHashMap<>();
     private final Map<String, CompactSerializableRegistration> typeNameToRegistrationMap = new ConcurrentHashMap<>();
     private final Map<Class, Schema> classToSchemaMap = new ConcurrentHashMap<>();
-    private final ReflectiveCompactSerializer reflectiveSerializer = new ReflectiveCompactSerializer(this);
     private final JavaRecordSerializer javaRecordSerializer = new JavaRecordSerializer(this);
+    private final ReflectiveCompactSerializer<?> reflectiveSerializer;
     private final SchemaService schemaService;
     private final ManagedContext managedContext;
     private final ClassLoader classLoader;
-    private final AbstractSerializationService serializationService;
+    private final Function<Class<?>, Class<? extends SerializerAdapter>> lookupSerializerType;
+    private final ReflectiveClassFilter classFilter;
+    private final ILogger logger = Logger.getLogger(CompactStreamSerializer.class);
 
-    public CompactStreamSerializer(AbstractSerializationService serializationService,
-                                   CompactSerializationConfig compactSerializationConfig,
-                                   ManagedContext managedContext, SchemaService schemaService,
-                                   ClassLoader classLoader) {
-        this.serializationService = serializationService;
+    public CompactStreamSerializer(Function<Class<?>, Class<? extends SerializerAdapter>> lookupSerializerType,
+                                   CompactSerializationConfig compactSerializationConfig, ManagedContext managedContext,
+                                   SchemaService schemaService, ClassLoader classLoader,
+                                   @Nonnull ExtraReflectiveCompactSerializationRestrictions reflectiveRestrictions) {
+        this.lookupSerializerType = lookupSerializerType;
         this.managedContext = managedContext;
         this.schemaService = schemaService;
         this.classLoader = classLoader;
+
+        this.classFilter = new ReflectiveClassFilter(compactSerializationConfig, reflectiveRestrictions);
+        this.reflectiveSerializer = new ReflectiveCompactSerializer<>(this);
         registerSerializers(compactSerializationConfig);
         registerDeclarativeConfigSerializers(compactSerializationConfig);
         registerDeclarativeConfigClasses(compactSerializationConfig);
     }
 
-    /**
-     * Returns true if the {@code clazz} is registered as compact serializable
-     * through configuration.
-     */
     public boolean isRegisteredAsCompact(Class clazz) {
         return classToRegistrationMap.containsKey(clazz);
     }
@@ -91,8 +96,17 @@ public class CompactStreamSerializer implements StreamSerializer<Object> {
         return classToRegistrationMap.keySet();
     }
 
-    public boolean canBeSerializedAsCompact(Class<?> clazz) {
-        return serializationService.serializerForClass(clazz, false) instanceof CompactStreamSerializerAdapter;
+    public void verifyFieldCanBeSerializedAsCompact(Class<?> clazz, Class<?> fieldClazz) {
+        boolean fieldSerializerIsNotCompact = !CompactStreamSerializerAdapter.class.isAssignableFrom(
+                lookupSerializerType.apply(fieldClazz));
+
+        if (fieldSerializerIsNotCompact || classIsUnregisteredAndRestricted(fieldClazz)) {
+            throw new ReflectiveCompactSerializationUnsupportedException(clazz, fieldClazz);
+        }
+    }
+
+    private boolean classIsUnregisteredAndRestricted(Class<?> clazz) {
+        return !classToRegistrationMap.containsKey(clazz) && classFilter.isRestricted(clazz);
     }
 
     @Override
@@ -110,8 +124,8 @@ public class CompactStreamSerializer implements StreamSerializer<Object> {
     }
 
     void write(BufferObjectDataOutput out, Object o, boolean includeSchemaOnBinary) throws IOException {
-        if (o instanceof CompactGenericRecord) {
-            writeGenericRecord(out, (CompactGenericRecord) o, includeSchemaOnBinary);
+        if (o instanceof CompactGenericRecord compactGenericRecord) {
+            writeGenericRecord(out, compactGenericRecord, includeSchemaOnBinary);
         } else {
             writeObject(out, o, includeSchemaOnBinary);
         }
@@ -130,6 +144,10 @@ public class CompactStreamSerializer implements StreamSerializer<Object> {
             fieldOperations(fieldKind).writeFieldFromRecordToWriter(writer, record, fieldName);
         }
         writer.end();
+    }
+
+    public List<Schema> allSchemas() {
+        return List.copyOf(classToSchemaMap.values());
     }
 
     private void putToSchemaService(boolean includeSchemaOnBinary, Schema schema) {
@@ -176,18 +194,29 @@ public class CompactStreamSerializer implements StreamSerializer<Object> {
 
     Object read(BufferObjectDataInput input, boolean schemaIncludedInBinary) throws IOException {
         Schema schema = getOrReadSchema(input, schemaIncludedInBinary);
+
         CompactSerializableRegistration registration = getOrCreateRegistration(schema.getTypeName());
 
-        if (registration == null) {
-            //we have tried to load class via class loader, it did not work. We are returning a GenericRecord.
+        int initialReadPosition = input.position();
+
+        if (registration == CompactSerializableRegistration.GENERIC_RECORD_REGISTRATION) {
+            // We have tried to load class via class loader, it did not work.
+            // We are returning a GenericRecord.
             return readGenericRecord(input, schema, schemaIncludedInBinary);
         }
 
         DefaultCompactReader reader = new DefaultCompactReader(this, input, schema,
                 registration.getClazz(), schemaIncludedInBinary);
-        Object object = registration.getSerializer().read(reader);
-        return managedContext != null ? managedContext.initialize(object) : object;
 
+        try {
+            Object object = registration.getSerializer().read(reader);
+            return managedContext != null ? managedContext.initialize(object) : object;
+        } catch (ReflectiveCompactSerializationUnsupportedException e) {
+            // Whilst reading the data we encountered a nested unsupported class, in this case instead of
+            // failing the read we rewind the buffer and deserialize to a generic record.
+            input.position(initialReadPosition);
+            return readGenericRecord(input, schema, schemaIncludedInBinary);
+        }
     }
 
     private Schema getOrReadSchema(ObjectDataInput input, boolean schemaIncludedInBinary) throws IOException {
@@ -216,27 +245,58 @@ public class CompactStreamSerializer implements StreamSerializer<Object> {
 
     private CompactSerializableRegistration getOrCreateRegistration(Class clazz) {
         return classToRegistrationMap.computeIfAbsent(clazz, aClass -> {
+            if (classFilter.isRestricted(clazz)) {
+                throw new ReflectiveCompactSerializationUnsupportedException(clazz);
+            }
             CompactSerializer serializer = javaRecordSerializer.isRecord(aClass) ? javaRecordSerializer : reflectiveSerializer;
             return new CompactSerializableRegistration(aClass, aClass.getName(), serializer);
         });
     }
 
     private CompactSerializableRegistration getOrCreateRegistration(String typeName) {
-        return typeNameToRegistrationMap.computeIfAbsent(typeName, s -> {
-            Class<?> clazz;
-            try {
-                //when the registration does not exist, we treat typeName as className to check if there is a class
-                //with the given name in the classpath.
-                clazz = ClassLoaderUtil.loadClass(classLoader, typeName);
-            } catch (Exception e) {
-                return null;
-            }
-            try {
-                return getOrCreateRegistration(clazz);
-            } catch (Exception e) {
-                throw new HazelcastSerializationException("Class " + clazz + " must have an empty constructor", e);
-            }
-        });
+        CompactSerializableRegistration currentRegistration = typeNameToRegistrationMap.get(typeName);
+        if (currentRegistration != null) {
+            return currentRegistration;
+        }
+        // Execute potentially long-lasting operation outside CHM lock in computeIfAbsent.
+        // Some special classloaders (e.g. JetClassLoader) may try to access external resources
+        // and require other threads.
+        // We might try to load the same class multiple times in parallel but this is not a problem.
+        CompactSerializableRegistration newRegistration = getOrCreateRegistration0(typeName);
+
+        // Registration might have been created by a concurrent thread.
+        // If so, use that one instead.
+        return typeNameToRegistrationMap.computeIfAbsent(typeName, k -> newRegistration);
+    }
+
+    private CompactSerializableRegistration getOrCreateRegistration0(String typeName) {
+        Class<?> clazz;
+        try {
+            // When the registration does not exist, we treat typeName as className
+            // to check if there is a class with the given name in the classpath.
+            clazz = ClassLoaderUtil.loadClass(classLoader, typeName);
+        } catch (Exception e) {
+            // There is no such class that has typeName as its name.
+            // We should try to read this as GenericRecord. We are
+            // returning this registration here to remember that we
+            // should read instances of this typeName as GenericRecords,
+            // instead of trying to load a class with that name over
+            // and over.
+            return CompactSerializableRegistration.GENERIC_RECORD_REGISTRATION;
+        }
+
+        try {
+            return getOrCreateRegistration(clazz);
+        } catch (ReflectiveCompactSerializationUnsupportedException e) {
+            // A class for typeName exists but it has been restricted for
+            // use with reflective compact serialization. We will instead
+            // deserialize this data to GenericRecord.
+            logger.warning(
+                    "Class for typeName=" + typeName + " was found but is ineligible for reflective compact serialization. "
+                            + "Data associated to schemas with this typeName will be deserialized to GenericRecord instead. "
+                            + "To allow this class to be used directly please update your configuration.");
+            return CompactSerializableRegistration.GENERIC_RECORD_REGISTRATION;
+        }
     }
 
     private GenericRecord readGenericRecord(BufferObjectDataInput input, Schema schema, boolean schemaIncludedInBinary) {
@@ -285,7 +345,11 @@ public class CompactStreamSerializer implements StreamSerializer<Object> {
     }
 
     private void saveRegistration(CompactSerializableRegistration registration) {
-        Class clazz = registration.getClazz();
+        Class<?> clazz = registration.getClazz();
+        CompactSerializer<?> serializer = registration.getSerializer();
+        if ((serializer == reflectiveSerializer || serializer == javaRecordSerializer) && classFilter.isRestricted(clazz)) {
+            throw new ReflectiveCompactSerializationUnsupportedException(clazz);
+        }
         CompactSerializableRegistration existing = classToRegistrationMap.putIfAbsent(clazz, registration);
         if (existing != null) {
             throw new InvalidConfigurationException("Duplicate serializer registrations "

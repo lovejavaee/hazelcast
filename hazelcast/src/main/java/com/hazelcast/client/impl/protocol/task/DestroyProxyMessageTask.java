@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,12 +22,14 @@ import com.hazelcast.cluster.Member;
 import com.hazelcast.core.HazelcastInstanceNotActiveException;
 import com.hazelcast.instance.impl.Node;
 import com.hazelcast.internal.nio.Connection;
+import com.hazelcast.security.SecurityInterceptorConstants;
 import com.hazelcast.security.permission.ActionConstants;
 import com.hazelcast.spi.impl.operationservice.Operation;
 import com.hazelcast.spi.impl.proxyservice.impl.operations.DistributedObjectDestroyOperation;
 
 import java.security.Permission;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.Map;
 import java.util.function.Supplier;
 import java.util.logging.Level;
@@ -57,8 +59,8 @@ public class DestroyProxyMessageTask extends AbstractMultiTargetMessageTask<Clie
     @Override
     protected Object reduce(Map<Member, Object> map) throws Throwable {
         for (Object result : map.values()) {
-            if (result instanceof Throwable) {
-                handleException((Throwable) result);
+            if (result instanceof Throwable throwable) {
+                handleException(throwable);
             }
         }
         return null;
@@ -66,7 +68,11 @@ public class DestroyProxyMessageTask extends AbstractMultiTargetMessageTask<Clie
 
     @Override
     public Collection<Member> getTargets() {
-        return nodeEngine.getClusterService().getMembers();
+        // prefer sending to other members before ourselves, local invocation may block during execution
+        Member localMember = nodeEngine.getLocalMember();
+        return nodeEngine.getClusterService().getMembers().stream()
+                .sorted(Comparator.comparing(localMember::equals))
+                .toList();
     }
 
     private void handleException(Throwable throwable) {
@@ -102,11 +108,11 @@ public class DestroyProxyMessageTask extends AbstractMultiTargetMessageTask<Clie
 
     @Override
     public String getMethodName() {
-        return null;
+        return SecurityInterceptorConstants.DESTROY;
     }
 
     @Override
     public Object[] getParameters() {
-        return null;
+        return new Object[]{parameters.name};
     }
 }

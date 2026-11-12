@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import com.hazelcast.jet.impl.util.Util;
 import com.hazelcast.spi.impl.NodeEngineImpl;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -75,6 +76,26 @@ public final class TestContextSupport {
         public void init(@Nonnull Context context) throws Exception {
             delegate.init(context);
         }
+
+        @Override
+        public void close(@Nullable Throwable error) throws Exception {
+            delegate.close(error);
+        }
+
+        @Override
+        public boolean isReusable() {
+            return delegate.isReusable();
+        }
+
+        @Override
+        public boolean initIsCooperative() {
+            return delegate.initIsCooperative();
+        }
+
+        @Override
+        public boolean closeIsCooperative() {
+            return delegate.closeIsCooperative();
+        }
     }
 
     private static final class TestProcessorSupplierAdapter implements ProcessorSupplier {
@@ -93,8 +114,7 @@ public final class TestContextSupport {
 
         @Override
         public void init(@Nonnull Context context) throws Exception {
-            if (context instanceof TestProcessorSupplierContext) {
-                TestProcessorSupplierContext c = (TestProcessorSupplierContext) context;
+            if (context instanceof TestProcessorSupplierContext c) {
                 NodeEngineImpl nodeEngine = Util.getNodeEngine(c.hazelcastInstance());
                 context = new ProcCtx(nodeEngine, c.jobId(), c.executionId(), c.jobConfig(),
                         c.logger(), c.vertexName(), 1, 1,
@@ -115,8 +135,7 @@ public final class TestContextSupport {
         @Override
         protected Context initContext(Context context) {
             context = super.initContext(context);
-            if (context instanceof TestProcessorContext) {
-                TestProcessorContext c = (TestProcessorContext) context;
+            if (context instanceof TestProcessorContext c) {
                 NodeEngineImpl nodeEngine = Util.getNodeEngine(c.hazelcastInstance());
                 context = new ProcCtx(nodeEngine, c.jobId(), c.executionId(), c.jobConfig(),
                         c.logger(), c.vertexName(), c.localProcessorIndex(), c.globalProcessorIndex(),

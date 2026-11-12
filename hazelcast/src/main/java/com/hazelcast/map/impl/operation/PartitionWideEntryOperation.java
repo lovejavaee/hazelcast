@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,11 +19,14 @@ package com.hazelcast.map.impl.operation;
 import com.hazelcast.config.InMemoryFormat;
 import com.hazelcast.core.EntryEventType;
 import com.hazelcast.core.ManagedContext;
+import com.hazelcast.internal.namespace.NamespaceUtil;
+import com.hazelcast.spi.impl.NodeEngineThreadLocalContext;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.serialization.SerializationService;
 import com.hazelcast.map.EntryProcessor;
 import com.hazelcast.map.impl.MapDataSerializerHook;
 import com.hazelcast.map.impl.MapEntries;
+import com.hazelcast.map.impl.MapService;
 import com.hazelcast.map.impl.operation.steps.PartitionWideEntryOpSteps;
 import com.hazelcast.map.impl.operation.steps.engine.State;
 import com.hazelcast.map.impl.operation.steps.engine.Step;
@@ -31,15 +34,15 @@ import com.hazelcast.map.impl.recordstore.StaticParams;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.query.Predicate;
-import com.hazelcast.query.impl.Indexes;
+import com.hazelcast.query.impl.IndexRegistry;
 import com.hazelcast.query.impl.QueryableEntry;
 import com.hazelcast.query.impl.predicates.QueryOptimizer;
+import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.operationservice.BackupAwareOperation;
 import com.hazelcast.spi.impl.operationservice.MutatingOperation;
 import com.hazelcast.spi.impl.operationservice.Operation;
 import com.hazelcast.spi.impl.operationservice.PartitionAwareOperation;
 import com.hazelcast.wan.impl.CallerProvenance;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.util.HashSet;
@@ -111,17 +114,31 @@ public class PartitionWideEntryOperation extends MapOperation
 
     @Override
     protected void runInternal() {
-        if (mapContainer.getMapConfig().getInMemoryFormat() == InMemoryFormat.NATIVE) {
+        if (isHDMap()) {
             runForNative();
         } else {
             runWithPartitionScan();
         }
     }
 
+    public boolean isTieredStoreMap() {
+        return mapContainer.getMapConfig()
+                .getTieredStoreConfig().isEnabled();
+    }
+
+    private boolean isHDMap() {
+        return mapContainer.getMapConfig()
+                .getInMemoryFormat() == InMemoryFormat.NATIVE;
+    }
+
     private void runForNative() {
-        if (runWithIndex()) {
+        // try run with partitioned index
+        if (!isTieredStoreMap()
+                && runWithPartitionedIndex()) {
             return;
         }
+
+        // as a fallback scan whole partition
         runWithPartitionScanForNative();
     }
 
@@ -129,7 +146,7 @@ public class PartitionWideEntryOperation extends MapOperation
      * @return {@code true} if index has been used and the EP
      * has been executed on its keys, {@code false} otherwise
      */
-    private boolean runWithIndex() {
+    private boolean runWithPartitionedIndex() {
         // here we try to query the partitioned-index
         Predicate predicate = getPredicate();
         if (predicate == null) {
@@ -137,8 +154,8 @@ public class PartitionWideEntryOperation extends MapOperation
         }
 
         // we use the partitioned-index to operate on the selected keys only
-        Indexes indexes = mapContainer.getIndexes(getPartitionId());
-        Iterable<QueryableEntry> entries = indexes.query(queryOptimizer.optimize(predicate, indexes), 1);
+        IndexRegistry indexRegistry = mapContainer.getOrCreateIndexRegistry(getPartitionId());
+        Iterable<QueryableEntry> entries = indexRegistry.query(queryOptimizer.optimize(predicate, indexRegistry), 1);
         if (entries == null) {
             return false;
         }
@@ -182,7 +199,8 @@ public class PartitionWideEntryOperation extends MapOperation
         recordStore.forEach((key, record) -> {
             Data dataKey = toHeapData(key);
 
-            Data response = operator.operateOnKey(dataKey).getResult();
+            // for native use variant that does not expire entries (see comment below)
+            Data response = operator.operateOnKeyValueDuringScan(dataKey, record.getValue()).getResult();
             if (response != null) {
                 responses.add(dataKey, response);
             }
@@ -241,9 +259,9 @@ public class PartitionWideEntryOperation extends MapOperation
     }
 
     @Override
-    @SuppressFBWarnings(
-            value = {"RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"},
-            justification = "backupProcessor can indeed be null so check is not redundant")
+//    @SuppressFBWarnings(
+//            value = {"RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"},
+//            justification = "backupProcessor can indeed be null so check is not redundant")
     public Operation getBackupOperation() {
         EntryProcessor backupProcessor = entryProcessor.getBackupProcessor();
         if (backupProcessor == null) {
@@ -268,7 +286,22 @@ public class PartitionWideEntryOperation extends MapOperation
     @Override
     protected void readInternal(ObjectDataInput in) throws IOException {
         super.readInternal(in);
+        NodeEngine engine = NodeEngineThreadLocalContext.getNodeEngineThreadLocalContext();
+        String namespace = MapService.lookupNamespace(engine, name);
+        NamespaceUtil.setupNamespace(engine, namespace);
         entryProcessor = in.readObject();
+        afterReadInternal();
+    }
+
+    /**
+     * Handle Namespace cleanup in this method which can be overridden by extending
+     * classes to maintain Namespace awareness for longer - when this method is
+     * overridden, the overriding class <b>must handle Namespace cleanup</b>
+     */
+    protected void afterReadInternal() {
+        NodeEngine engine = NodeEngineThreadLocalContext.getNodeEngineThreadLocalContext();
+        String namespace = MapService.lookupNamespace(engine, name);
+        NamespaceUtil.cleanupNamespace(engine, namespace);
     }
 
     @Override

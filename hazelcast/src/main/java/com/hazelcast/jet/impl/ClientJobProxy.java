@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,9 +42,9 @@ import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.serialization.SerializationService;
 import com.hazelcast.jet.JetException;
 import com.hazelcast.jet.Job;
+import com.hazelcast.jet.JobStateSnapshot;
 import com.hazelcast.jet.JobStatusEvent;
 import com.hazelcast.jet.JobStatusListener;
-import com.hazelcast.jet.JobStateSnapshot;
 import com.hazelcast.jet.config.DeltaJobConfig;
 import com.hazelcast.jet.config.JobConfig;
 import com.hazelcast.jet.core.JobStatus;
@@ -62,7 +62,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.locks.LockSupport;
 
 import static com.hazelcast.jet.impl.JobMetricsUtil.toJobMetrics;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.rethrow;
+import static com.hazelcast.jet.impl.util.JetExceptionUtil.rethrow;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -85,8 +85,8 @@ public class ClientJobProxy extends AbstractJobProxy<HazelcastClientInstanceImpl
             boolean isLightJob,
             @Nonnull Object jobDefinition,
             @Nonnull JobConfig config
-    ) {
-        super(client, jobId, isLightJob, jobDefinition, config);
+            ) {
+        super(client, jobId, isLightJob, jobDefinition, config, null);
     }
 
     @Nonnull
@@ -180,16 +180,7 @@ public class ClientJobProxy extends AbstractJobProxy<HazelcastClientInstanceImpl
     }
 
     @Override
-    public JobStateSnapshot cancelAndExportSnapshot(String name) {
-        return doExportSnapshot(name, true);
-    }
-
-    @Override
-    public JobStateSnapshot exportSnapshot(String name) {
-        return doExportSnapshot(name, false);
-    }
-
-    private JobStateSnapshot doExportSnapshot(String name, boolean cancelJob) {
+    protected JobStateSnapshot doExportSnapshot(String name, boolean cancelJob) {
         checkNotLightJob("export snapshot");
         ClientMessage request = JetExportSnapshotCodec.encodeRequest(getId(), name, cancelJob);
         try {
@@ -220,7 +211,7 @@ public class ClientJobProxy extends AbstractJobProxy<HazelcastClientInstanceImpl
     }
 
     @Override
-    protected JobConfig doUpdateJobConfig(DeltaJobConfig deltaConfig) {
+    protected JobConfig doUpdateJobConfig(@Nonnull DeltaJobConfig deltaConfig) {
         return callAndRetryIfTargetNotFound(() -> {
             Data deltaConfigData = serializationService().toData(deltaConfig);
             ClientMessage request = JetUpdateJobConfigCodec.encodeRequest(getId(), deltaConfigData);
@@ -256,12 +247,16 @@ public class ClientJobProxy extends AbstractJobProxy<HazelcastClientInstanceImpl
 
     @Nonnull
     @Override
-    public UUID addStatusListener(@Nonnull JobStatusListener listener) {
+    protected UUID doAddStatusListener(@Nonnull JobStatusListener listener) {
         requireNonNull(listener, "Listener cannot be null");
-        ClientJobStatusEventHandler handler = new ClientJobStatusEventHandler(listener);
-        handler.registrationId = container().getListenerService().registerListener(
-                createJobStatusListenerCodec(getId()), handler);
-        return handler.registrationId;
+        try {
+            ClientJobStatusEventHandler handler = new ClientJobStatusEventHandler(listener);
+            handler.registrationId = container().getListenerService()
+                    .registerListener(createJobStatusListenerCodec(getId()), handler);
+            return handler.registrationId;
+        } catch (Throwable t) {
+            throw rethrow(t.getCause());
+        }
     }
 
     @Override
@@ -273,7 +268,7 @@ public class ClientJobProxy extends AbstractJobProxy<HazelcastClientInstanceImpl
         return new ListenerMessageCodec() {
             @Override
             public ClientMessage encodeAddRequest(boolean localOnly) {
-                return JetAddJobStatusListenerCodec.encodeRequest(jobId, localOnly);
+                return JetAddJobStatusListenerCodec.encodeRequest(jobId, lightJobCoordinator, localOnly);
             }
 
             @Override

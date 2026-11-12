@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,29 +16,30 @@
 
 package com.hazelcast.jet.sql_nightly;
 
-import com.hazelcast.test.HazelcastParametrizedRunner;
-import com.hazelcast.test.HazelcastSerialParametersRunnerFactory;
 import com.hazelcast.test.annotation.NightlyTest;
 import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
-@RunWith(HazelcastParametrizedRunner.class)
-@Parameterized.UseParametersRunnerFactory(HazelcastSerialParametersRunnerFactory.class)
+// This test is flaky because there is no guarantee on the order of received values
+// when using multiple Kafka partitions.
 @Category(NightlyTest.class)
 public class SqlSTSInnerNonEquiJoinFaultToleranceStressTest extends SqlSTSInnerEquiJoinFaultToleranceStressTest {
 
     @Override
     protected String setupFetchingQuery() {
-        expectedEventsCount = EVENTS_TO_PROCESS - 1; // we do expected fewer items for query below
-        firstItemId = 2;                              // we do expect first item to be [1, value-2]
-        lastItemId = EVENTS_TO_PROCESS;
+        expectedEventsCount = eventsToProcess - 1; // we expect fewer items for query below
+        firstItemId = 2;                           // we expect first item to be [1, value-2]
+        lastItemId = eventsToProcess;
         return "CREATE JOB " + JOB_NAME +
                 " OPTIONS (" +
-                " 'processingGuarantee'='" + processingGuarantee + "', 'snapshotIntervalMillis' = '1000') " +
+                " 'processingGuarantee'='" + processingGuarantee + "', 'snapshotIntervalMillis' = '750') " +
                 " AS SINK INTO " + sinkTopic +
                 " SELECT s1.__key, s2.this FROM s1 JOIN s2 ON s2.__key " +
                 " BETWEEN s1.__key AND s1.__key + 1" +
                 " WHERE s1.__key != s2.__key";
+    }
+
+    @Override
+    protected int getAllowedLag() {
+        return 100;
     }
 }

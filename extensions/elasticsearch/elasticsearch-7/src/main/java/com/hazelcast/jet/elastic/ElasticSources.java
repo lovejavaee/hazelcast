@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,7 +31,9 @@ import javax.annotation.Nonnull;
  * Alternatively you can use {@link ElasticSourceBuilder}
  *
  * @since Jet 4.2
+ * @deprecated <a href="https://www.elastic.co/support/eol"> Elasticsearch 7 is no longer supported</a>
  */
+@Deprecated(forRemoval = true, since = "5.7")
 public final class ElasticSources {
 
     private ElasticSources() {
@@ -78,8 +80,7 @@ public final class ElasticSources {
 
     /**
      * Creates a source which queries local instance of Elasticsearch for all
-     * documents. Uses {@link SearchHit#getSourceAsString()} as mapping
-     * function
+     * documents. Uses provided {@code mapToItemFn} to map results.
      * <p>
      * For example:
      * <pre>{@code

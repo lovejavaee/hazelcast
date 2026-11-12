@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,7 +27,6 @@ import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.DataSerializable;
 import com.hazelcast.query.Predicate;
 import com.hazelcast.query.Predicates;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.SplitBrainTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
@@ -38,9 +37,8 @@ import org.junit.runner.RunWith;
 import java.io.IOException;
 import java.util.Collection;
 
-import static org.hamcrest.Matchers.empty;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @RunWith(HazelcastSerialClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
@@ -82,23 +80,15 @@ public class IndexSplitBrainTest extends SplitBrainTestSupport {
         final IMap<String, ValueObject> map1 = instances[0].getMap(mapName);
         final IMap<String, ValueObject> map2 = instances[1].getMap(mapName);
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertNotNull("Entry should exist in map1 after merge", map1.get(key));
-            }
-        }, 15);
+        assertTrueEventually(() -> assertNotNull("Entry should exist in map1 after merge", map1.get(key)), 15);
         map1.remove(key);
-        assertTrueAllTheTime(new AssertTask() {
-            @Override
-            public void run() {
-                Predicate predicate = Predicates.equal("id", value.getId());
-                Collection<ValueObject> values = map1.values(predicate);
-                assertThat(values, empty());
+        assertTrueAllTheTime(() -> {
+            Predicate predicate = Predicates.equal("id", value.getId());
+            Collection<ValueObject> values = map1.values(predicate);
+            assertThat(values).isEmpty();
 
-                values = map2.values(predicate);
-                assertThat(values, empty());
-            }
+            values = map2.values(predicate);
+            assertThat(values).isEmpty();
         }, 5);
     }
 
@@ -125,10 +115,12 @@ public class IndexSplitBrainTest extends SplitBrainTestSupport {
             return this.id;
         }
 
+        @Override
         public void writeData(ObjectDataOutput out) throws IOException {
             out.writeString(this.id);
         }
 
+        @Override
         public void readData(ObjectDataInput in) throws IOException {
             this.id = in.readString();
         }

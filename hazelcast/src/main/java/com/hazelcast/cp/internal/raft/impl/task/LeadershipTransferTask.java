@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -86,12 +86,12 @@ public class LeadershipTransferTask implements Runnable {
         }
 
         if (retryCount > 0) {
-            logger.fine("Retrying leadership transfer to " + leadershipTransferState.endpoint());
+            logger.fine("Retrying leadership transfer to %s", leadershipTransferState.endpoint());
         } else {
             logger.info("Transferring leadership to " + leadershipTransferState.endpoint());
         }
 
-        leaderState.getFollowerState(targetEndpoint).appendRequestAckReceived();
+        leaderState.getFollowerState(targetEndpoint).resetRequestBackoff();
         raftNode.sendAppendRequest(targetEndpoint);
 
         LogEntry entry = state.log().lastLogOrSnapshotEntry();

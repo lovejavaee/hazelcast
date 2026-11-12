@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -72,7 +72,7 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 public class TransactionImpl implements Transaction {
 
     private static final Address[] EMPTY_ADDRESSES = new Address[0];
-    private static final ThreadLocal<Boolean> TRANSACTION_EXISTS = new ThreadLocal<Boolean>();
+    private static final ThreadLocal<Boolean> TRANSACTION_EXISTS = new ThreadLocal<>();
 
     private final ExceptionHandler rollbackExceptionHandler;
     private final ExceptionHandler rollbackTxExceptionHandler;
@@ -159,6 +159,7 @@ public class TransactionImpl implements Transaction {
         return txOwnerUuid;
     }
 
+    @Override
     public boolean isOriginatedFromClient() {
         return originatedFromClient;
     }
@@ -178,12 +179,12 @@ public class TransactionImpl implements Transaction {
     }
 
     @Override
-    public void add(TransactionLogRecord record) {
+    public void add(TransactionLogRecord transactionLogRecord) {
         if (state != Transaction.State.ACTIVE) {
             throw new TransactionNotActiveException("Transaction is not active!");
         }
         checkThread();
-        transactionLog.add(record);
+        transactionLog.add(transactionLogRecord);
     }
 
     @Override
@@ -239,7 +240,7 @@ public class TransactionImpl implements Transaction {
         try {
             createBackupLogs();
             state = PREPARING;
-            List<Future> futures = transactionLog.prepare(nodeEngine);
+            List<Future<Object>> futures = transactionLog.prepare(nodeEngine);
             waitUntilAllRespondedWithDeadline(futures, timeoutMillis, MILLISECONDS, RETHROW_TRANSACTION_EXCEPTION);
             state = PREPARED;
             replicateTxnLog();
@@ -291,7 +292,7 @@ public class TransactionImpl implements Transaction {
             checkTimeout();
             try {
                 state = COMMITTING;
-                List<Future> futures = transactionLog.commit(nodeEngine);
+                List<Future<Object>> futures = transactionLog.commit(nodeEngine);
                 waitWithDeadline(futures, Long.MAX_VALUE, MILLISECONDS, RETHROW_TRANSACTION_EXCEPTION);
                 state = COMMITTED;
                 transactionManagerService.commitCount.inc();
@@ -325,7 +326,7 @@ public class TransactionImpl implements Transaction {
             try {
                 //TODO: Do we need both a purge and rollback?
                 rollbackBackupLogs();
-                List<Future> futures = transactionLog.rollback(nodeEngine);
+                List<Future<Object>> futures = transactionLog.rollback(nodeEngine);
                 waitWithDeadline(futures, Long.MAX_VALUE, MILLISECONDS, rollbackExceptionHandler);
                 purgeBackupLogs();
             } catch (Throwable e) {
@@ -346,7 +347,7 @@ public class TransactionImpl implements Transaction {
 
         OperationService operationService = nodeEngine.getOperationService();
         ClusterService clusterService = nodeEngine.getClusterService();
-        List<Future> futures = new ArrayList<Future>(backupAddresses.length);
+        List<Future> futures = new ArrayList<>(backupAddresses.length);
         for (Address backupAddress : backupAddresses) {
             if (clusterService.getMember(backupAddress) != null) {
                 Operation op = createReplicateTxBackupLogOperation();
@@ -385,7 +386,7 @@ public class TransactionImpl implements Transaction {
     private void forceCreateBackupLogs() {
         backupLogsCreated = true;
         OperationService operationService = nodeEngine.getOperationService();
-        List<Future> futures = new ArrayList<Future>(backupAddresses.length);
+        List<Future> futures = new ArrayList<>(backupAddresses.length);
         for (Address backupAddress : backupAddresses) {
             if (nodeEngine.getClusterService().getMember(backupAddress) != null) {
                 final CreateTxBackupLogOperation op = createCreateTxBackupLogOperation();
@@ -404,7 +405,7 @@ public class TransactionImpl implements Transaction {
 
         OperationService operationService = nodeEngine.getOperationService();
         ClusterService clusterService = nodeEngine.getClusterService();
-        List<Future> futures = new ArrayList<Future>(backupAddresses.length);
+        List<Future> futures = new ArrayList<>(backupAddresses.length);
         for (Address backupAddress : backupAddresses) {
             if (clusterService.getMember(backupAddress) != null) {
                 Future f = operationService.invokeOnTarget(SERVICE_NAME, createRollbackTxBackupLogOperation(), backupAddress);
@@ -472,25 +473,22 @@ public class TransactionImpl implements Transaction {
     }
 
     static ExceptionHandler createReplicationTxExceptionHandler(final ILogger logger) {
-        return new ExceptionHandler() {
-            @Override
-            public void handleException(Throwable throwable) {
-                if (throwable instanceof TimeoutException) {
-                    throw new TransactionTimedOutException(throwable);
-                }
-                if (throwable instanceof MemberLeftException) {
-                    logger.warning("Member left while replicating tx begin: " + throwable);
+        return throwable -> {
+            if (throwable instanceof TimeoutException) {
+                throw new TransactionTimedOutException(throwable);
+            }
+            if (throwable instanceof MemberLeftException) {
+                logger.warning("Member left while replicating tx begin: " + throwable);
+                return;
+            }
+            if (throwable instanceof ExecutionException) {
+                Throwable cause = throwable.getCause();
+                if (cause instanceof TargetNotMemberException || cause instanceof HazelcastInstanceNotActiveException) {
+                    logger.warning("Member left while replicating tx begin: " + cause);
                     return;
                 }
-                if (throwable instanceof ExecutionException) {
-                    Throwable cause = throwable.getCause();
-                    if (cause instanceof TargetNotMemberException || cause instanceof HazelcastInstanceNotActiveException) {
-                        logger.warning("Member left while replicating tx begin: " + cause);
-                        return;
-                    }
-                }
-                throw rethrow(throwable);
             }
+            throw rethrow(throwable);
         };
     }
 }

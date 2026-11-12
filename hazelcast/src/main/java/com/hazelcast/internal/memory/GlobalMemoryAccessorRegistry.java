@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.internal.memory;
 
 import com.hazelcast.internal.memory.impl.AlignmentAwareMemoryAccessor;
 import com.hazelcast.internal.memory.impl.AlignmentUtil;
+import com.hazelcast.internal.memory.impl.DiagnosticStandardMemoryAccessor;
 import com.hazelcast.internal.memory.impl.StandardMemoryAccessor;
 
 import java.util.EnumMap;
@@ -57,13 +58,23 @@ public final class GlobalMemoryAccessorRegistry {
     public static final boolean AMEM_AVAILABLE;
 
     private static final Map<GlobalMemoryAccessorType, GlobalMemoryAccessor> STORAGE =
-            new EnumMap<GlobalMemoryAccessorType, GlobalMemoryAccessor>(GlobalMemoryAccessorType.class);
+            new EnumMap<>(GlobalMemoryAccessorType.class);
+
+    private static final boolean ASSERTIONS_ENABLED = GlobalMemoryAccessorRegistry.class.desiredAssertionStatus();
 
     static {
         final boolean unalignedAccessAllowed = AlignmentUtil.isUnalignedAccessAllowed();
 
         if (StandardMemoryAccessor.isAvailable()) {
-            STORAGE.put(STANDARD, StandardMemoryAccessor.INSTANCE);
+            if (ASSERTIONS_ENABLED) {
+                // Ensure that no unaligned access is performed via AMEM.
+                // Most CPUs allow unaligned non-atomic access so we cannot rely on CPU traps in most test setups.
+                // Note: this does not give full coverage that the code never performs unexpected
+                // unaligned access using other means.
+                STORAGE.put(STANDARD, DiagnosticStandardMemoryAccessor.INSTANCE);
+            } else {
+                STORAGE.put(STANDARD, StandardMemoryAccessor.INSTANCE);
+            }
             if (unalignedAccessAllowed) {
                 STORAGE.put(PLATFORM_AWARE, StandardMemoryAccessor.INSTANCE);
             }

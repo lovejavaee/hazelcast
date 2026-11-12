@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,9 @@
 
 package com.hazelcast.dataconnection.impl;
 
+import com.hazelcast.client.impl.protocol.util.PropertiesUtil;
 import com.hazelcast.config.DataConnectionConfig;
+import com.hazelcast.config.DataConnectionConfigValidator;
 import com.hazelcast.core.HazelcastException;
 import com.hazelcast.dataconnection.DataConnection;
 import com.hazelcast.dataconnection.DataConnectionRegistration;
@@ -28,7 +30,6 @@ import javax.annotation.Nonnull;
 import java.lang.reflect.Constructor;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
@@ -45,12 +46,9 @@ public class DataConnectionServiceImpl implements InternalDataConnectionService 
     private final Map<Class<? extends DataConnection>, String> dataConnectionClassToType = new HashMap<>();
 
     private final Map<String, DataConnectionEntry> dataConnections = new ConcurrentHashMap<>();
-
-    private final ClassLoader classLoader;
     private final ILogger logger;
 
     public DataConnectionServiceImpl(Node node, ClassLoader classLoader) {
-        this.classLoader = classLoader;
         this.logger = node.getLogger(getClass());
         processDataConnectionRegistrations(classLoader);
 
@@ -66,7 +64,7 @@ public class DataConnectionServiceImpl implements InternalDataConnectionService 
                     DataConnectionRegistration.class.getName(),
                     classLoader
             ).forEachRemaining(registration -> {
-                typeToDataConnectionClass.put(registration.type().toLowerCase(Locale.ROOT), registration.clazz());
+                typeToDataConnectionClass.put(registration.type(), registration.clazz());
                 dataConnectionClassToType.put(registration.clazz(), registration.type());
             });
         } catch (Exception e) {
@@ -80,6 +78,8 @@ public class DataConnectionServiceImpl implements InternalDataConnectionService 
     }
 
     private void put(DataConnectionConfig config, DataConnectionSource source) {
+        DataConnectionConfigValidator.validate(config);
+        normalizeTypeName(config);
         dataConnections.compute(config.getName(),
                 (key, current) -> {
                     if (current != null) {
@@ -90,7 +90,8 @@ public class DataConnectionServiceImpl implements InternalDataConnectionService 
                             return current;
                         }
                         // close the old DataConnection
-                        logger.fine("Asynchronously closing the old data connection: " + config.getName());
+                        logger.fine("Asynchronously closing the old data connection: %s", config.getName());
+                        //noinspection resource
                         ForkJoinPool.commonPool().execute(() -> {
                             try {
                                 current.instance.release();
@@ -102,6 +103,37 @@ public class DataConnectionServiceImpl implements InternalDataConnectionService 
                     }
                     return new DataConnectionEntry(createDataConnectionInstance(config), source);
                 });
+    }
+
+    /**
+     *  In handling types (e.g. type -> class mapping) we don't care about cases - we use lower cases.
+     *  <p>
+     *  But we want to present Data Connections to the user in a consistent way, meaning that we should store "official"
+     *  name of the Data Connection instead of user-provided to use always the same style.
+     */
+    private String normalizeTypeName(DataConnectionConfig config) {
+        try {
+            String type = normalizedTypeName(config.getType());
+            config.setType(type);
+            return type;
+        } catch (HazelcastException e) {
+            throw new HazelcastException("Data connection '" + config.getName() + "' misconfigured: "
+                    + "unknown type '" + config.getType() + "'");
+        }
+    }
+
+    @Override
+    public String normalizedTypeName(String type) {
+        // exact match case
+        if (typeToDataConnectionClass.containsKey(type)) {
+            return type;
+        }
+        for (String possibleType : dataConnectionClassToType.values()) {
+            if (type.equalsIgnoreCase(possibleType)) {
+                return possibleType;
+            }
+        }
+        throw new HazelcastException("Data connection type '" + type + "' is not known");
     }
 
     @Override
@@ -123,8 +155,7 @@ public class DataConnectionServiceImpl implements InternalDataConnectionService 
 
     // package-private for testing purposes
     DataConnectionConfig toConfig(String name, String type, boolean shared, Map<String, String> options) {
-        Properties properties = new Properties();
-        properties.putAll(options);
+        Properties properties = PropertiesUtil.fromMap(options);
         return new DataConnectionConfig(name)
                 .setType(type)
                 .setShared(shared)
@@ -132,14 +163,10 @@ public class DataConnectionServiceImpl implements InternalDataConnectionService 
     }
 
     private DataConnection createDataConnectionInstance(DataConnectionConfig config) {
-        logger.finest("Creating '" + config.getName() + "' data connection");
+        logger.finest("Creating '%s' data connection", config.getName());
         String type = config.getType();
         try {
-            Class<? extends DataConnection> dataConnectionClass = typeToDataConnectionClass.get(type.toLowerCase(Locale.ROOT));
-            if (dataConnectionClass == null) {
-                throw new HazelcastException("Data connection '" + config.getName() + "' misconfigured: "
-                        + "unknown type '" + type + "'");
-            }
+            Class<? extends DataConnection> dataConnectionClass = typeToDataConnectionClass.get(normalizeTypeName(config));
             Constructor<? extends DataConnection> constructor = dataConnectionClass.getConstructor(DataConnectionConfig.class);
             return constructor.newInstance(config);
         } catch (ClassCastException e) {
@@ -166,7 +193,8 @@ public class DataConnectionServiceImpl implements InternalDataConnectionService 
 
     @Override
     public Class<? extends DataConnection> classForDataConnectionType(String type) {
-        Class<? extends DataConnection> dataConnectionClass = typeToDataConnectionClass.get(type);
+        String caseInsensitiveType = normalizedTypeName(type);
+        Class<? extends DataConnection> dataConnectionClass = typeToDataConnectionClass.get(caseInsensitiveType);
         if (dataConnectionClass == null) {
             throw new HazelcastException("Data connection type '" + type + "' is not known");
         }
@@ -194,7 +222,7 @@ public class DataConnectionServiceImpl implements InternalDataConnectionService 
     @Override
     public void removeDataConnection(String name) {
         dataConnections.computeIfPresent(name, (k, v) -> {
-            if (CONFIG.equals(v.source)) {
+            if (CONFIG == v.source) {
                 throw new HazelcastException("Data connection '" + name + "' is configured via Config "
                         + "and can't be removed");
             }
@@ -205,24 +233,24 @@ public class DataConnectionServiceImpl implements InternalDataConnectionService 
 
     public List<DataConnection> getConfigCreatedDataConnections() {
         return dataConnections.values()
-                              .stream()
-                              .filter(dl -> dl.source == CONFIG)
-                              .map(dl -> dl.instance)
-                              .collect(Collectors.toList());
+                .stream()
+                .filter(dl -> dl.source == CONFIG)
+                .map(dl -> dl.instance)
+                .collect(Collectors.toList());
     }
 
     public List<DataConnection> getSqlCreatedDataConnections() {
         return dataConnections.values()
-                              .stream()
-                              .filter(dl -> dl.source == SQL)
-                              .map(dl -> dl.instance)
-                              .collect(Collectors.toList());
+                .stream()
+                .filter(dl -> dl.source == SQL)
+                .map(dl -> dl.instance)
+                .collect(Collectors.toList());
     }
 
     @Override
     public void shutdown() {
         for (Map.Entry<String, DataConnectionEntry> entry : dataConnections.entrySet()) {
-            logger.finest("Closing '" + entry.getKey() + "' data connection");
+            logger.finest("Closing '%s' data connection", entry.getKey());
             DataConnectionEntry dataConnection = entry.getValue();
             try {
                 dataConnection.instance.destroy();

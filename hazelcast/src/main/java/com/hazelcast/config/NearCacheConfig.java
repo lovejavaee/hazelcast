@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,12 @@
 
 package com.hazelcast.config;
 
+import com.hazelcast.internal.cluster.Versions;
 import com.hazelcast.internal.config.ConfigDataSerializerHook;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
+import com.hazelcast.nio.serialization.impl.Versioned;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -33,7 +35,7 @@ import static com.hazelcast.internal.util.Preconditions.isNotNull;
  * Contains the configuration for a Near Cache.
  */
 @SuppressWarnings("checkstyle:methodcount")
-public class NearCacheConfig implements IdentifiedDataSerializable, Serializable, NamedConfig {
+public class NearCacheConfig implements IdentifiedDataSerializable, Serializable, NamedConfig, Versioned {
 
     /**
      * Default value for the in-memory format.
@@ -123,6 +125,7 @@ public class NearCacheConfig implements IdentifiedDataSerializable, Serializable
      *
      * @return the name of the Near Cache
      */
+    @Override
     public String getName() {
         return name;
     }
@@ -133,6 +136,7 @@ public class NearCacheConfig implements IdentifiedDataSerializable, Serializable
      * @param name the name of the Near Cache
      * @return this Near Cache config instance
      */
+    @Override
     public NearCacheConfig setName(String name) {
         this.name = isNotNull(name, "name");
         return this;
@@ -184,7 +188,7 @@ public class NearCacheConfig implements IdentifiedDataSerializable, Serializable
 
     /**
      * Checks if the Near Cache key is stored in serialized format or by-reference.
-     *
+     * <p>
      * <b>NOTE:</b> When the in-memory-format is {@code NATIVE}, this method will always return {@code true}.
      *
      * @return {@code true} if the key is stored in serialized format or in-memory-format is {@code NATIVE},
@@ -403,6 +407,10 @@ public class NearCacheConfig implements IdentifiedDataSerializable, Serializable
         out.writeInt(localUpdatePolicy.ordinal());
         out.writeObject(evictionConfig);
         out.writeObject(preloaderConfig);
+        // RU_COMPAT_5_6
+        if (out.getVersion().isGreaterOrEqual(Versions.V5_7)) {
+            out.writeBoolean(isSerializeKeys());
+        }
     }
 
     @Override
@@ -416,21 +424,26 @@ public class NearCacheConfig implements IdentifiedDataSerializable, Serializable
         localUpdatePolicy = LocalUpdatePolicy.values()[in.readInt()];
         evictionConfig = in.readObject();
         preloaderConfig = in.readObject();
+        // RU_COMPAT_5_6
+        if (in.getVersion().isGreaterOrEqual(Versions.V5_7)) {
+            serializeKeys = in.readBoolean();
+        }
     }
 
     @Override
     public String toString() {
         return "NearCacheConfig{"
-                + "name=" + name
-                + ", inMemoryFormat=" + inMemoryFormat
-                + ", invalidateOnChange=" + invalidateOnChange
-                + ", timeToLiveSeconds=" + timeToLiveSeconds
-                + ", maxIdleSeconds=" + maxIdleSeconds
-                + ", evictionConfig=" + evictionConfig
-                + ", cacheLocalEntries=" + cacheLocalEntries
-                + ", localUpdatePolicy=" + localUpdatePolicy
-                + ", preloaderConfig=" + preloaderConfig
-                + '}';
+               + "name=" + name
+               + ", inMemoryFormat=" + inMemoryFormat
+               + ", invalidateOnChange=" + invalidateOnChange
+               + ", timeToLiveSeconds=" + timeToLiveSeconds
+               + ", maxIdleSeconds=" + maxIdleSeconds
+               + ", evictionConfig=" + evictionConfig
+               + ", cacheLocalEntries=" + cacheLocalEntries
+               + ", localUpdatePolicy=" + localUpdatePolicy
+               + ", preloaderConfig=" + preloaderConfig
+               + ", serializeKeys=" + serializeKeys
+               + '}';
     }
 
     @Override
@@ -445,7 +458,7 @@ public class NearCacheConfig implements IdentifiedDataSerializable, Serializable
 
         NearCacheConfig that = (NearCacheConfig) o;
 
-        if (serializeKeys != that.serializeKeys) {
+        if (isSerializeKeys() != that.isSerializeKeys()) {
             return false;
         }
         if (invalidateOnChange != that.invalidateOnChange) {
@@ -480,7 +493,7 @@ public class NearCacheConfig implements IdentifiedDataSerializable, Serializable
     public int hashCode() {
         int result = name.hashCode();
         result = 31 * result + inMemoryFormat.hashCode();
-        result = 31 * result + (serializeKeys ? 1 : 0);
+        result = 31 * result + (isSerializeKeys() ? 1 : 0);
         result = 31 * result + (invalidateOnChange ? 1 : 0);
         result = 31 * result + timeToLiveSeconds;
         result = 31 * result + maxIdleSeconds;

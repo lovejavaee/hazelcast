@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import com.hazelcast.jet.core.Inbox;
 import com.hazelcast.jet.core.Processor;
 import com.hazelcast.jet.core.ProcessorMetaSupplier;
 import com.hazelcast.jet.function.TriFunction;
+import com.hazelcast.jet.function.TriPredicate;
 import com.hazelcast.jet.impl.JetEvent;
 import com.hazelcast.jet.impl.processor.ProcessorWrapper;
 import com.hazelcast.jet.impl.util.WrappingProcessorMetaSupplier;
@@ -54,6 +55,7 @@ public class FunctionAdapter {
         return keyFn;
     }
 
+    @SuppressWarnings("unused")
     @Nonnull
     <T> ToLongFunctionEx<?> adaptTimestampFn() {
         return t -> Long.MIN_VALUE;
@@ -82,6 +84,13 @@ public class FunctionAdapter {
             @Nonnull TriFunction<? super S, ? super K, ? super T, ? extends R> mapFn
     ) {
         return mapFn;
+    }
+
+    @Nonnull
+    <S, K, T> TriPredicate<? super S, ? super K, ?> adaptDeleteStatePredicate(
+            @Nonnull TriPredicate<? super S, ? super K, ? super T> deleteStatePredicate
+    ) {
+        return deleteStatePredicate;
     }
 
     @Nonnull
@@ -242,7 +251,7 @@ public class FunctionAdapter {
         @Nonnull @Override
         public Iterator<Object> iterator() {
             Iterator<Object> iterator = wrapped.iterator();
-            return new Iterator<Object>() {
+            return new Iterator<>() {
                 @Override
                 public boolean hasNext() {
                     return iterator.hasNext();
@@ -326,6 +335,14 @@ class JetEventFunctionAdapter extends FunctionAdapter {
     }
 
     @Nonnull
+    <S, K, T> TriPredicate<? super S, ? super K, ? super JetEvent<T>> adaptDeleteStatePredicate(
+            @Nonnull TriPredicate<? super S, ? super K, ? super T> deleteStatePredicate
+    ) {
+        return (state, key, e) -> deleteStatePredicate.test(state, key, e.payload());
+    }
+
+    @Nonnull
+    @Override
     <S, K, R> TriFunction<? super S, ? super K, ? super Long, ? extends JetEvent<R>> adaptOnEvictFn(
             @Nonnull TriFunction<? super S, ? super K, ? super Long, ? extends R> onEvictFn
     ) {
@@ -341,6 +358,7 @@ class JetEventFunctionAdapter extends FunctionAdapter {
     }
 
     @Nonnull
+    @Override
     <S, K, R> TriFunction<? super S, ? super K, ? super Long, ? extends Traverser<JetEvent<R>>> adaptOnEvictFlatMapFn(
             @Nonnull TriFunction<? super S, ? super K, ? super Long, ? extends Traverser<R>> onEvictFn
     ) {
@@ -434,12 +452,12 @@ class JetEventFunctionAdapter extends FunctionAdapter {
     <A, R> AggregateOperation<A, ? extends R> adaptAggregateOperation(
             @Nonnull AggregateOperation<A, ? extends R> aggrOp
     ) {
-        if (aggrOp instanceof AggregateOperation1) {
-            return adaptAggregateOperation1((AggregateOperation1) aggrOp);
-        } else if (aggrOp instanceof AggregateOperation2) {
-            return adaptAggregateOperation2((AggregateOperation2) aggrOp);
-        } else if (aggrOp instanceof AggregateOperation3) {
-            return adaptAggregateOperation3((AggregateOperation3) aggrOp);
+        if (aggrOp instanceof AggregateOperation1 operation) {
+            return adaptAggregateOperation1(operation);
+        } else if (aggrOp instanceof AggregateOperation2 operation) {
+            return adaptAggregateOperation2(operation);
+        } else if (aggrOp instanceof AggregateOperation3 operation) {
+            return adaptAggregateOperation3(operation);
         } else {
             BiConsumerEx[] adaptedAccFns = new BiConsumerEx[aggrOp.arity()];
             Arrays.setAll(adaptedAccFns, i -> adaptAccumulateFn((BiConsumerEx) aggrOp.accumulateFn(i)));

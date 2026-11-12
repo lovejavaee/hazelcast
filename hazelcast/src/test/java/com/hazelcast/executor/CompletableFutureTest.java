@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,12 +23,9 @@ import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import org.hamcrest.Matchers;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import java.util.concurrent.Callable;
@@ -42,9 +39,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 
 import static com.hazelcast.test.Accessors.getNode;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
 @RunWith(HazelcastParallelClassRunner.class)
@@ -62,8 +59,6 @@ public class CompletableFutureTest extends HazelcastTestSupport {
     private AtomicReference<Object> reference1;
     private AtomicReference<Object> reference2;
 
-    @Rule
-    public ExpectedException expected = ExpectedException.none();
 
     @Before
     public void setUp() {
@@ -72,8 +67,8 @@ public class CompletableFutureTest extends HazelcastTestSupport {
         startLogicLatch = new CountDownLatch(1);
         executedLogic = new CountDownLatch(1);
         inExecutionLatch = new CountDownLatch(1);
-        reference1 = new AtomicReference<Object>();
-        reference2 = new AtomicReference<Object>();
+        reference1 = new AtomicReference<>();
+        reference2 = new AtomicReference<>();
     }
 
     @Test
@@ -153,21 +148,19 @@ public class CompletableFutureTest extends HazelcastTestSupport {
     }
 
     @Test(timeout = 60000)
-    public void get_taskThrowsException() throws Exception {
+    public void get_taskThrowsException() {
         InternalCompletableFuture<String> f = submitAwaitingTaskNoCallbacks(THROW_TEST_EXCEPTION);
         submitReleasingTask(100);
 
-        expected.expect(ExecutionException.class);
-        f.get();
+        assertThrows(ExecutionException.class, f::get);
     }
 
     @Test(timeout = 60000)
-    public void getWithTimeout_taskThrowsException() throws Exception {
+    public void getWithTimeout_taskThrowsException() {
         InternalCompletableFuture<String> f = submitAwaitingTaskNoCallbacks(THROW_TEST_EXCEPTION);
         submitReleasingTask(200);
 
-        expected.expect(ExecutionException.class);
-        f.get(30000, TimeUnit.MILLISECONDS);
+        assertThrows(ExecutionException.class, () -> f.get(30000, TimeUnit.MILLISECONDS));
     }
 
     @Test(timeout = 60000)
@@ -180,11 +173,10 @@ public class CompletableFutureTest extends HazelcastTestSupport {
     }
 
     @Test(timeout = 60000)
-    public void getWithTimeout_timesOut() throws Exception {
+    public void getWithTimeout_timesOut() {
         InternalCompletableFuture<String> f = submitAwaitingTaskNoCallbacks(NO_EXCEPTION);
 
-        expected.expect(TimeoutException.class);
-        f.get(1, TimeUnit.MILLISECONDS);
+        assertThrows(TimeoutException.class, () -> f.get(1, TimeUnit.MILLISECONDS));
     }
 
     @Test
@@ -229,7 +221,7 @@ public class CompletableFutureTest extends HazelcastTestSupport {
     }
 
     @Test(timeout = 60000)
-    public void cancelAndGet_taskCancelled_withoutInterruption_logicExecuted() throws Exception {
+    public void cancelAndGet_taskCancelled_withoutInterruption_logicExecuted() {
         InternalCompletableFuture<String> f = submitAwaitingTaskNoCallbacks(NO_EXCEPTION);
         assertTaskInExecution();
 
@@ -241,12 +233,11 @@ public class CompletableFutureTest extends HazelcastTestSupport {
         assertTrue("Task cancellation should succeed", cancelResult);
         assertTrue("Task should be done", f.isDone());
         assertTrue("Task should be cancelled", f.isCancelled());
-        expected.expect(CancellationException.class);
-        f.get();
+        assertThrows(CancellationException.class, f::get);
     }
 
     @Test(timeout = 60000)
-    public void cancelAndGet_taskCancelled_withInterruption_noLogicExecuted() throws Exception {
+    public void cancelAndGet_taskCancelled_withInterruption_noLogicExecuted() {
         InternalCompletableFuture<String> f = submitAwaitingTaskNoCallbacks(NO_EXCEPTION);
         assertTaskInExecution();
 
@@ -257,15 +248,13 @@ public class CompletableFutureTest extends HazelcastTestSupport {
         assertTrue("Task cancellation should succeed", cancelResult);
         assertTrue("Task should be done", f.isDone());
         assertTrue("Task should be cancelled", f.isCancelled());
-        expected.expect(CancellationException.class);
-        f.get();
+        assertThrows(CancellationException.class, f::get);
     }
 
 
     private static void assertTestExceptionThrown(AtomicReference<?>... refs) {
         for (AtomicReference<?> ref : refs) {
-            assertThat("TEST_EXCEPTION expected", ref.get(),
-                    Matchers.sameInstance(THROW_TEST_EXCEPTION));
+            assertThat(ref.get()).as("TEST_EXCEPTION expected").isSameAs(THROW_TEST_EXCEPTION);
         }
     }
 
@@ -321,7 +310,7 @@ public class CompletableFutureTest extends HazelcastTestSupport {
         assertEquals(1, executedLogic.getCount());
     }
 
-    private void assertTaskFinishedEventually(final CompletableFuture future) {
+    private void assertTaskFinishedEventually(final CompletableFuture<String> future) {
         assertTrueEventually(() -> assertTrue(future.isDone()));
     }
 
@@ -330,7 +319,7 @@ public class CompletableFutureTest extends HazelcastTestSupport {
     }
 
     private BiConsumer<String, Throwable> storeTaskResponseToReference(final AtomicReference<Object> ref) {
-        return new BiConsumer<String, Throwable>() {
+        return new BiConsumer<>() {
             @Override
             public void accept(String s, Throwable throwable) {
                 if (throwable == null) {

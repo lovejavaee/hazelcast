@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,13 +22,13 @@ import com.hazelcast.cp.internal.RaftService;
 import com.hazelcast.cp.internal.RaftServiceDataSerializerHook;
 import com.hazelcast.cp.internal.RaftSystemOperation;
 import com.hazelcast.cp.internal.raft.impl.RaftNode;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.spi.impl.operationservice.Operation;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collection;
 
 /**
@@ -81,21 +81,13 @@ public class TerminateRaftNodesOp extends Operation implements IdentifiedDataSer
     @Override
     protected void writeInternal(ObjectDataOutput out) throws IOException {
         super.writeInternal(out);
-        out.writeInt(groupIds.size());
-        for (CPGroupId groupId : groupIds) {
-            out.writeObject(groupId);
-        }
+        SerializationUtil.writeCollection(groupIds, out);
     }
 
     @Override
     protected void readInternal(ObjectDataInput in) throws IOException {
         super.readInternal(in);
-        int count = in.readInt();
-        groupIds = new ArrayList<>();
-        for (int i = 0; i < count; i++) {
-            CPGroupId groupId = in.readObject();
-            groupIds.add(groupId);
-        }
+        groupIds = SerializationUtil.readCollection(in);
     }
 
     @Override

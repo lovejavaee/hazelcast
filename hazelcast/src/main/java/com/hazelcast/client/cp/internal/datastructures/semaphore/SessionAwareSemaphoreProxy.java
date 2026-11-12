@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,8 @@
 
 package com.hazelcast.client.cp.internal.datastructures.semaphore;
 
+import com.hazelcast.client.cp.internal.datastructures.CPClientProxy;
 import com.hazelcast.client.cp.internal.session.ClientProxySessionManager;
-import com.hazelcast.client.impl.clientside.HazelcastClientInstanceImpl;
 import com.hazelcast.client.impl.protocol.ClientMessage;
 import com.hazelcast.client.impl.protocol.codec.CPGroupDestroyCPObjectCodec;
 import com.hazelcast.client.impl.protocol.codec.SemaphoreAcquireCodec;
@@ -27,8 +27,6 @@ import com.hazelcast.client.impl.protocol.codec.SemaphoreDrainCodec;
 import com.hazelcast.client.impl.protocol.codec.SemaphoreInitCodec;
 import com.hazelcast.client.impl.protocol.codec.SemaphoreReleaseCodec;
 import com.hazelcast.client.impl.spi.ClientContext;
-import com.hazelcast.client.impl.spi.ClientProxy;
-import com.hazelcast.client.impl.spi.impl.ClientInvocation;
 import com.hazelcast.cp.CPGroupId;
 import com.hazelcast.cp.ISemaphore;
 import com.hazelcast.cp.internal.RaftGroupId;
@@ -41,7 +39,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import static com.hazelcast.cp.internal.datastructures.semaphore.proxy.SessionAwareSemaphoreProxy.DRAIN_SESSION_ACQ_COUNT;
-import static com.hazelcast.cp.internal.session.AbstractProxySessionManager.NO_SESSION_ID;
+import static com.hazelcast.cp.internal.session.ProxySessionManager.NO_SESSION_ID;
 import static com.hazelcast.internal.util.Preconditions.checkNotNegative;
 import static com.hazelcast.internal.util.Preconditions.checkPositive;
 import static com.hazelcast.internal.util.ThreadUtil.getThreadId;
@@ -51,17 +49,13 @@ import static java.lang.Math.max;
 /**
  * Client-side session-aware proxy of Raft-based {@link ISemaphore}
  */
-public class SessionAwareSemaphoreProxy extends ClientProxy implements ISemaphore {
+public class SessionAwareSemaphoreProxy extends CPClientProxy implements ISemaphore {
 
     private final ClientProxySessionManager sessionManager;
-    private final RaftGroupId groupId;
-    private final String objectName;
 
     public SessionAwareSemaphoreProxy(ClientContext context, RaftGroupId groupId, String proxyName, String objectName) {
-        super(SemaphoreService.SERVICE_NAME, proxyName, context);
-        this.sessionManager = getClient().getProxySessionManager();
-        this.groupId = groupId;
-        this.objectName = objectName;
+        super(SemaphoreService.SERVICE_NAME, proxyName, context, groupId, objectName);
+        this.sessionManager = (ClientProxySessionManager) getClient().getProxySessionManager();
     }
 
     @Override
@@ -69,8 +63,7 @@ public class SessionAwareSemaphoreProxy extends ClientProxy implements ISemaphor
         checkNotNegative(permits, "Permits must be non-negative!");
 
         ClientMessage request = SemaphoreInitCodec.encodeRequest(groupId, objectName, permits);
-        HazelcastClientInstanceImpl client = getClient();
-        ClientMessage response = new ClientInvocation(client, request, objectName).invoke().joinInternal();
+        ClientMessage response = invokeClientRequest(request, objectName).joinInternal();
         return SemaphoreInitCodec.decodeResponse(response);
     }
 
@@ -90,8 +83,7 @@ public class SessionAwareSemaphoreProxy extends ClientProxy implements ISemaphor
             try {
                 ClientMessage request = SemaphoreAcquireCodec.encodeRequest(groupId, objectName, sessionId, threadId,
                         invocationUid, permits, -1);
-                HazelcastClientInstanceImpl client = getClient();
-                new ClientInvocation(client, request, objectName).invoke().joinInternal();
+                invokeClientRequest(request, objectName).joinInternal();
                 return;
             } catch (SessionExpiredException e) {
                 sessionManager.invalidateSession(this.groupId, sessionId);
@@ -134,8 +126,7 @@ public class SessionAwareSemaphoreProxy extends ClientProxy implements ISemaphor
             try {
                 ClientMessage request = SemaphoreAcquireCodec.encodeRequest(groupId, objectName, sessionId, threadId,
                         invocationUid, permits, timeoutMs);
-                HazelcastClientInstanceImpl client = getClient();
-                ClientMessage response = new ClientInvocation(client, request, objectName).invoke().joinInternal();
+                ClientMessage response = invokeClientRequest(request, objectName).joinInternal();
                 boolean acquired = SemaphoreAcquireCodec.decodeResponse(response);
                 if (!acquired) {
                     sessionManager.releaseSession(this.groupId, sessionId, permits);
@@ -175,8 +166,7 @@ public class SessionAwareSemaphoreProxy extends ClientProxy implements ISemaphor
         try {
             ClientMessage request = SemaphoreReleaseCodec.encodeRequest(groupId, objectName, sessionId, threadId, invocationUid,
                     permits);
-            HazelcastClientInstanceImpl client = getClient();
-            new ClientInvocation(client, request, objectName).invoke().joinInternal();
+            invokeClientRequest(request, objectName).joinInternal();
         } catch (SessionExpiredException e) {
             sessionManager.invalidateSession(this.groupId, sessionId);
             throw newIllegalStateException(e);
@@ -188,8 +178,7 @@ public class SessionAwareSemaphoreProxy extends ClientProxy implements ISemaphor
     @Override
     public int availablePermits() {
         ClientMessage request = SemaphoreAvailablePermitsCodec.encodeRequest(groupId, objectName);
-        HazelcastClientInstanceImpl client = getClient();
-        ClientMessage response = new ClientInvocation(client, request, objectName).invoke().joinInternal();
+        ClientMessage response = invokeClientRequest(request, objectName).joinInternal();
         return SemaphoreAvailablePermitsCodec.decodeResponse(response);
     }
 
@@ -203,8 +192,7 @@ public class SessionAwareSemaphoreProxy extends ClientProxy implements ISemaphor
             try {
                 ClientMessage request = SemaphoreDrainCodec.encodeRequest(groupId, objectName, sessionId, threadId,
                         invocationUid);
-                HazelcastClientInstanceImpl client = getClient();
-                ClientMessage response = new ClientInvocation(client, request, objectName).invoke().joinInternal();
+                ClientMessage response = invokeClientRequest(request, objectName).joinInternal();
                 int count = SemaphoreDrainCodec.decodeResponse(response);
                 sessionManager.releaseSession(groupId, sessionId, DRAIN_SESSION_ACQ_COUNT - count);
                 return count;
@@ -243,7 +231,7 @@ public class SessionAwareSemaphoreProxy extends ClientProxy implements ISemaphor
     @Override
     public void onDestroy() {
         ClientMessage request = CPGroupDestroyCPObjectCodec.encodeRequest(groupId, getServiceName(), objectName);
-        new ClientInvocation(getClient(), request, name).invoke().joinInternal();
+        invokeClientRequest(request, name).joinInternal();
     }
 
     public CPGroupId getGroupId() {
@@ -258,7 +246,7 @@ public class SessionAwareSemaphoreProxy extends ClientProxy implements ISemaphor
         try {
             ClientMessage request = SemaphoreChangeCodec.encodeRequest(groupId, objectName, sessionId, threadId,
                     invocationUid, delta);
-            new ClientInvocation(getClient(), request, objectName).invoke().joinInternal();
+            invokeClientRequest(request, objectName).joinInternal();
         } catch (SessionExpiredException e) {
             sessionManager.invalidateSession(this.groupId, sessionId);
             throw newIllegalStateException(e);

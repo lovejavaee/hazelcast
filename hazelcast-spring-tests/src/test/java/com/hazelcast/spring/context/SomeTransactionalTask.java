@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,8 +24,9 @@ import java.util.concurrent.Callable;
 @SpringAware
 public class SomeTransactionalTask implements Callable<Void>, Serializable {
 
+    @Override
     @Transactional
-    public Void call() throws Exception {
+    public Void call() {
         return null;
     }
 }

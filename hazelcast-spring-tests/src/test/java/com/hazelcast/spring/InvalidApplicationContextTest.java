@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,25 +16,28 @@
 
 package com.hazelcast.spring;
 
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.BeanDefinitionStoreException;
 import org.springframework.context.support.ClassPathXmlApplicationContext;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.Assert.assertThrows;
+
+@ExtendWith({SpringExtension.class, CustomSpringExtension.class})
 public class InvalidApplicationContextTest {
-
-    @Rule
-    public ExpectedException expectedException = ExpectedException.none();
 
     @Test
     public void shouldFailWhenLoadBalancerContainsClassNameAndImplementationAttribute() {
-        expectedException.expect(BeanDefinitionStoreException.class);
-        expectedException.expectMessage("Unexpected exception parsing XML document from class path resource [com/hazelcast/spring/"
-                + "customLoadBalancer-invalidApplicationContext.xml]; nested exception is "
-                + "java.lang.IllegalArgumentException: Exactly one of 'class-name' or 'implementation' attributes is "
-                + "required to create LoadBalancer!");
+        String expectedMessage = "Unexpected exception parsing XML document from class path resource [com/hazelcast/spring/customLoadBalancer-invalidApplicationContext.xml]";
 
-        new ClassPathXmlApplicationContext("com\\hazelcast\\spring\\customLoadBalancer-invalidApplicationContext.xml");
+        String rootExpectedMessage = "Exactly one of 'class-name' or 'implementation' attributes is required to create LoadBalancer!";
+        BeanDefinitionStoreException exception = assertThrows(BeanDefinitionStoreException.class,
+                () -> new ClassPathXmlApplicationContext("com\\hazelcast\\spring\\customLoadBalancer-invalidApplicationContext.xml")
+        );
+        assertThat(exception)
+                .hasMessageContaining(expectedMessage)
+                .hasRootCauseMessage(rootExpectedMessage);
     }
 }

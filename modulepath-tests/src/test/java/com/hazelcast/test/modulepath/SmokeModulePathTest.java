@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,29 +16,27 @@
 
 package com.hazelcast.test.modulepath;
 
-import static java.lang.String.format;
-import static org.hamcrest.CoreMatchers.hasItems;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
-
-import java.util.Set;
-import java.util.stream.Collectors;
-
+import com.hazelcast.client.HazelcastClient;
+import com.hazelcast.cluster.Member;
+import com.hazelcast.core.Hazelcast;
+import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.instance.impl.HazelcastInstanceFactory;
+import com.hazelcast.internal.util.ModularJavaUtils;
 import org.junit.After;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
-import com.hazelcast.client.HazelcastClient;
-import com.hazelcast.config.Config;
-import com.hazelcast.config.NetworkConfig;
-import com.hazelcast.core.Hazelcast;
-import com.hazelcast.core.HazelcastInstance;
-import com.hazelcast.cluster.Member;
-import com.hazelcast.instance.impl.HazelcastInstanceFactory;
-import com.hazelcast.internal.util.ModularJavaUtils;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import static com.hazelcast.test.modulepath.TestUtils.createClientConfigWithTcpJoin;
+import static com.hazelcast.test.modulepath.TestUtils.createConfigWithTcpJoin;
+import static java.lang.String.format;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * Basic test which checks if correct Hazelcast modules are on the modulepath. It also checks that Hazelcast members and clients
@@ -71,7 +69,7 @@ public class SmokeModulePathTest {
     public void testModuleNames() {
         Set<String> hazelcastModuleNames = ModuleLayer.boot().modules().stream().map(Module::getName)
                 .filter(s -> s.contains("hazelcast")).collect(Collectors.toSet());
-        assertThat(hazelcastModuleNames, hasItems("com.hazelcast.core", "com.hazelcast.tests"));
+        assertThat(hazelcastModuleNames).contains("com.hazelcast.core", "com.hazelcast.test.modulepath");
     }
 
     /**
@@ -88,18 +86,11 @@ public class SmokeModulePathTest {
      */
     @Test
     public void testCluster() {
-        Config config = new Config();
-
-        NetworkConfig networkConfig = config.getNetworkConfig();
-        networkConfig.getInterfaces().addInterface("127.0.0.1");
-        networkConfig.getJoin().getMulticastConfig().setEnabled(false);
-        networkConfig.getJoin().getTcpIpConfig().setEnabled(true).addMember("127.0.0.1");
-
-        HazelcastInstance hz1 = Hazelcast.newHazelcastInstance(config);
-        HazelcastInstance hz2 = Hazelcast.newHazelcastInstance(config);
+        HazelcastInstance hz1 = Hazelcast.newHazelcastInstance(createConfigWithTcpJoin(9808, 9808));
+        HazelcastInstance hz2 = Hazelcast.newHazelcastInstance(createConfigWithTcpJoin(9809, 9808));
         hz1.getMap("test").put("a", "b");
         assertClusterSize(2, hz1, hz2);
-        HazelcastInstance client = HazelcastClient.newHazelcastClient();
+        HazelcastInstance client = HazelcastClient.newHazelcastClient(createClientConfigWithTcpJoin(9808));
         assertEquals("b", client.getMap("test").get("a"));
     }
 

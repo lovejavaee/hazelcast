@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import com.hazelcast.jet.Traverser;
 import com.hazelcast.jet.Traversers;
 import com.hazelcast.jet.aggregate.AggregateOperation1;
 import com.hazelcast.jet.config.JetConfig;
+import com.hazelcast.jet.core.Edge.RoutingPolicy;
 import com.hazelcast.jet.core.Processor;
 import com.hazelcast.jet.core.ProcessorMetaSupplier;
 import com.hazelcast.jet.core.ProcessorSupplier;
@@ -1131,6 +1132,24 @@ public interface GeneralStage<T> extends Stage {
      *     keeps both vertices and applies partitioned rebalancing before the first
      *     one.
      * </li></ol>
+     * <p>
+     * Partitioning applies only to the connection between this stage and next stage.
+     * It is not guaranteed to be propagated further. The exact behavior depends
+     * on what stages are added but unless you enable
+     * {@link Pipeline#setPreserveOrder order preservation} the items may become
+     * unordered and repartitioned again. For example:
+     * <pre>{@code
+     * stage.rebalance(i -> i % 10)
+     *     // guaranteed order and partitioning by `% 10`
+     *     .map(i -> i + 1)
+     *     // partitioning not guaranteed, can be different than in previous step
+     *     // but will remain on the same member
+     *     .mapUsingImap(int2intMap, identity(), Tuple2::tuple2);
+     * }</pre>
+     * You can check if that happens by observing edge type in the produced DAG:
+     * {@link RoutingPolicy#ISOLATED isolated} edge guarantees propagation of partitioning,
+     * default {@link RoutingPolicy#UNICAST unicast} edge allows random repartitioning
+     * if local parallelism of the next stage is grater than 1.
      *
      * @param keyFn the partitioning key function. It must be stateless and
      *     {@linkplain Processor#isCooperative() cooperative}.

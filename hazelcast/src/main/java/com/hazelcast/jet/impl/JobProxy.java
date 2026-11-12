@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,8 +20,8 @@ import com.hazelcast.cluster.Address;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.serialization.SerializationService;
 import com.hazelcast.jet.Job;
-import com.hazelcast.jet.JobStatusListener;
 import com.hazelcast.jet.JobStateSnapshot;
+import com.hazelcast.jet.JobStatusListener;
 import com.hazelcast.jet.config.DeltaJobConfig;
 import com.hazelcast.jet.config.JobConfig;
 import com.hazelcast.jet.core.DAG;
@@ -29,6 +29,7 @@ import com.hazelcast.jet.core.JobStatus;
 import com.hazelcast.jet.core.JobSuspensionCause;
 import com.hazelcast.jet.core.metrics.JobMetrics;
 import com.hazelcast.jet.impl.metrics.RawJobMetrics;
+import com.hazelcast.jet.impl.operation.AddJobStatusListenerOperation;
 import com.hazelcast.jet.impl.operation.GetJobConfigOperation;
 import com.hazelcast.jet.impl.operation.GetJobMetricsOperation;
 import com.hazelcast.jet.impl.operation.GetJobStatusOperation;
@@ -37,22 +38,25 @@ import com.hazelcast.jet.impl.operation.GetJobSuspensionCauseOperation;
 import com.hazelcast.jet.impl.operation.IsJobUserCancelledOperation;
 import com.hazelcast.jet.impl.operation.JoinSubmittedJobOperation;
 import com.hazelcast.jet.impl.operation.ResumeJobOperation;
-import com.hazelcast.jet.impl.operation.UpdateJobConfigOperation;
 import com.hazelcast.jet.impl.operation.SubmitJobOperation;
 import com.hazelcast.jet.impl.operation.TerminateJobOperation;
+import com.hazelcast.jet.impl.operation.UpdateJobConfigOperation;
 import com.hazelcast.logging.LoggingService;
 import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.NodeEngineImpl;
+import com.hazelcast.spi.impl.eventservice.impl.Registration;
 import com.hazelcast.spi.impl.operationservice.Operation;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import javax.security.auth.Subject;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 import static com.hazelcast.internal.cluster.Versions.V5_3;
 import static com.hazelcast.jet.impl.JobMetricsUtil.toJobMetrics;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.rethrow;
+import static com.hazelcast.jet.impl.util.JetExceptionUtil.rethrow;
 
 /**
  * {@link Job} proxy on member.
@@ -62,17 +66,17 @@ public class JobProxy extends AbstractJobProxy<NodeEngineImpl, Address> {
         super(nodeEngine, jobId, coordinator);
     }
 
-    public JobProxy(
-            NodeEngineImpl engine,
-            long jobId,
-            boolean isLightJob,
-            @Nonnull Object jobDefinition,
-            @Nonnull JobConfig config
-    ) {
-        super(engine, jobId, isLightJob, jobDefinition, config);
+    public JobProxy(NodeEngineImpl nodeEngine,
+                    long jobId,
+                    boolean isLightJob,
+                    Object jobDefinition,
+                    JobConfig config,
+                    @Nullable Subject subject) {
+        super(nodeEngine, jobId, isLightJob, jobDefinition, config, subject);
     }
 
-    @Nonnull @Override
+    @Nonnull
+    @Override
     protected JobStatus getStatus0() {
         assert !isLightJob();
         try {
@@ -92,7 +96,8 @@ public class JobProxy extends AbstractJobProxy<NodeEngineImpl, Address> {
         }
     }
 
-    @Nonnull @Override
+    @Nonnull
+    @Override
     public JobSuspensionCause getSuspensionCause() {
         checkNotLightJob("suspensionCause");
         try {
@@ -102,7 +107,8 @@ public class JobProxy extends AbstractJobProxy<NodeEngineImpl, Address> {
         }
     }
 
-    @Nonnull @Override
+    @Nonnull
+    @Override
     public JobMetrics getMetrics() {
         checkNotLightJob("metrics");
         try {
@@ -124,16 +130,22 @@ public class JobProxy extends AbstractJobProxy<NodeEngineImpl, Address> {
 
     @Override
     protected CompletableFuture<Void> invokeSubmitJob(Object jobDefinition, JobConfig config) {
+        boolean serialize = true;
         if (isLightJob()) {
-            if (jobDefinition instanceof DAG) {
-                ((DAG) jobDefinition).lock();
+            if (jobDefinition instanceof DAG dag) {
+                dag.lock();
+                serialize = dag.vertices().stream().anyMatch(v -> !v.getMetaSupplier().isReusable());
             }
             config.lock();
-            return invokeOp(new SubmitJobOperation(getId(), jobDefinition, config, null, null, isLightJob(), null));
         }
-        Data configData = serializationService().toData(config);
-        Data jobDefinitionData = serializationService().toData(jobDefinition);
-        return invokeOp(new SubmitJobOperation(getId(), null, null, jobDefinitionData, configData, isLightJob(), null));
+        if (serialize) {
+            Data configData = serializationService().toData(config);
+            Data jobDefinitionData = serializationService().toData(jobDefinition);
+            return invokeOp(new SubmitJobOperation(
+                    getId(), null, null, jobDefinitionData, configData, isLightJob(), subject));
+        }
+        return invokeOp(new SubmitJobOperation(
+                getId(), jobDefinition, config, null, null, isLightJob(), subject));
     }
 
     @Override
@@ -157,16 +169,7 @@ public class JobProxy extends AbstractJobProxy<NodeEngineImpl, Address> {
     }
 
     @Override
-    public JobStateSnapshot cancelAndExportSnapshot(String name) {
-        return doExportSnapshot(name, true);
-    }
-
-    @Override
-    public JobStateSnapshot exportSnapshot(String name) {
-        return doExportSnapshot(name, false);
-    }
-
-    private JobStateSnapshot doExportSnapshot(String name, boolean cancelJob) {
+    protected JobStateSnapshot doExportSnapshot(String name, boolean cancelJob) {
         checkNotLightJob("export snapshot");
         JetServiceBackend jetServiceBackend = container().getService(JetServiceBackend.SERVICE_NAME);
         try {
@@ -197,7 +200,7 @@ public class JobProxy extends AbstractJobProxy<NodeEngineImpl, Address> {
     }
 
     @Override
-    protected JobConfig doUpdateJobConfig(DeltaJobConfig deltaConfig) {
+    protected JobConfig doUpdateJobConfig(@Nonnull DeltaJobConfig deltaConfig) {
         try {
             return this.<JobConfig>invokeOp(new UpdateJobConfigOperation(getId(), deltaConfig)).get();
         } catch (Throwable t) {
@@ -227,7 +230,8 @@ public class JobProxy extends AbstractJobProxy<NodeEngineImpl, Address> {
                 .invoke();
     }
 
-    @Nonnull @Override
+    @Nonnull
+    @Override
     protected Address masterId() {
         Address masterAddress = container().getMasterAddress();
         if (masterAddress == null) {
@@ -237,10 +241,15 @@ public class JobProxy extends AbstractJobProxy<NodeEngineImpl, Address> {
     }
 
     @Override
-    public UUID addStatusListener(@Nonnull JobStatusListener listener) {
+    protected UUID doAddStatusListener(@Nonnull JobStatusListener listener) {
         checkJobStatusListenerSupported(container());
-        JobEventService jobEventService = container().getService(JobEventService.SERVICE_NAME);
-        return jobEventService.addEventListener(getId(), listener);
+        try {
+            JobEventService jobEventService = container().getService(JobEventService.SERVICE_NAME);
+            Registration registration = jobEventService.prepareRegistration(getId(), listener, false);
+            return this.<UUID>invokeOp(new AddJobStatusListenerOperation(getId(), isLightJob(), registration)).get();
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
     }
 
     @Override
@@ -251,6 +260,7 @@ public class JobProxy extends AbstractJobProxy<NodeEngineImpl, Address> {
     }
 
     public static void checkJobStatusListenerSupported(NodeEngine nodeEngine) {
+        // RU_COMPAT 5.2
         if (nodeEngine.getClusterService().getClusterVersion().isLessThan(V5_3)) {
             throw new UnsupportedOperationException("Job status listener is not supported.");
         }

@@ -1,6 +1,6 @@
 /*
  * Original work Copyright 2015 Real Logic Ltd.
- * Modified work Copyright (c) 2015-2023, Hazelcast, Inc. All Rights Reserved.
+ * Modified work Copyright (c) 2015-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,9 +18,9 @@
 package com.hazelcast.internal.util.collection;
 
 import com.hazelcast.internal.util.QuickMath;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.AbstractCollection;
+import java.util.AbstractMap;
 import java.util.AbstractSet;
 import java.util.Arrays;
 import java.util.Collection;
@@ -41,7 +41,7 @@ import static com.hazelcast.internal.util.collection.Hashing.intHash;
  *
  * @param <V> values stored in the {@link java.util.Map}
  */
-public class Int2ObjectHashMap<V> implements Map<Integer, V> {
+public class Int2ObjectHashMap<V> extends AbstractMap<Integer, V> {
 
     /** The default load factor for constructors not explicitly supplying it. */
     public static final double DEFAULT_LOAD_FACTOR = 0.6;
@@ -117,11 +117,6 @@ public class Int2ObjectHashMap<V> implements Map<Integer, V> {
     @Override
     public int size() {
         return size;
-    }
-
-    @Override
-    public boolean isEmpty() {
-        return 0 == size;
     }
 
     @Override
@@ -277,13 +272,6 @@ public class Int2ObjectHashMap<V> implements Map<Integer, V> {
     public void compact() {
         final int idealCapacity = (int) Math.round(size() * (1.0d / loadFactor));
         rehash(QuickMath.nextPowerOfTwo(idealCapacity));
-    }
-
-    @Override
-    public void putAll(final Map<? extends Integer, ? extends V> map) {
-        for (final Entry<? extends Integer, ? extends V> entry : map.entrySet()) {
-            put(entry.getKey(), entry.getValue());
-        }
     }
 
     @Override
@@ -444,7 +432,7 @@ public class Int2ObjectHashMap<V> implements Map<Integer, V> {
 
         @Override
         public ValueIterator<V> iterator() {
-            return new ValueIterator<V>();
+            return new ValueIterator<>();
         }
 
         @Override
@@ -531,9 +519,6 @@ public class Int2ObjectHashMap<V> implements Map<Integer, V> {
         }
 
         @Override
-        public abstract T next();
-
-        @Override
         public void remove() {
             if (isPositionValid) {
                 final int position = getPosition();
@@ -572,8 +557,8 @@ public class Int2ObjectHashMap<V> implements Map<Integer, V> {
     }
 
     @SuppressWarnings("unchecked")
-    @SuppressFBWarnings(value = "PZ_DONT_REUSE_ENTRY_OBJECTS_IN_ITERATORS",
-            justification = "deliberate, documented choice")
+//    @SuppressFBWarnings(value = "PZ_DONT_REUSE_ENTRY_OBJECTS_IN_ITERATORS",
+//            justification = "deliberate, documented choice")
     private class EntryIterator extends AbstractIterator<Entry<Integer, V>> implements Entry<Integer, V> {
 
         @Override

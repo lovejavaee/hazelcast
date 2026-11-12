@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,7 +69,7 @@ import java.util.concurrent.CountDownLatch;
 public abstract class AbstractContainerCollector<C> {
 
     private final ConcurrentMap<Integer, Collection<C>> containersByPartitionId
-            = new ConcurrentHashMap<Integer, Collection<C>>();
+            = new ConcurrentHashMap<>();
 
     private final OperationExecutor operationExecutor;
     private final IPartitionService partitionService;
@@ -146,6 +146,8 @@ public abstract class AbstractContainerCollector<C> {
      */
     protected abstract MergePolicyConfig getMergePolicyConfig(C container);
 
+    protected abstract String getUserNamespaceContainer(C container);
+
     /**
      * Destroys the owned data in the container.
      * <p>
@@ -213,7 +215,7 @@ public abstract class AbstractContainerCollector<C> {
      */
     private final class CollectContainerRunnable implements PartitionSpecificRunnable {
 
-        private final Collection<C> containers = new LinkedList<C>();
+        private final Collection<C> containers = new LinkedList<>();
 
         private final int partitionId;
 
@@ -247,7 +249,8 @@ public abstract class AbstractContainerCollector<C> {
             // just collect owned partitions
             if (partitionService.isPartitionOwner(partitionId)) {
                 MergePolicyConfig mergePolicyconfig = getMergePolicyConfig(container);
-                SplitBrainMergePolicy mergePolicy = mergePolicyProvider.getMergePolicy(mergePolicyconfig.getPolicy());
+                String namespace = getUserNamespaceContainer(container);
+                SplitBrainMergePolicy mergePolicy = mergePolicyProvider.getMergePolicy(mergePolicyconfig.getPolicy(), namespace);
                 if (isMergeable(container) && !(mergePolicy instanceof DiscardMergePolicy)) {
                     containers.add(container);
                 } else {

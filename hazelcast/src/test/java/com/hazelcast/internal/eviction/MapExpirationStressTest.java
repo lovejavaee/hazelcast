@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -130,7 +130,7 @@ public class MapExpirationStressTest extends HazelcastTestSupport {
     }
 
     protected void doOp(IMap map) {
-        int op = random.nextInt(7);
+        int op = random.nextInt(8);
         int key = random.nextInt(KEY_RANGE);
         int val = random.nextInt(KEY_RANGE);
         switch (op) {
@@ -154,6 +154,9 @@ public class MapExpirationStressTest extends HazelcastTestSupport {
                 break;
             case 6:
                 map.values(Predicates.alwaysTrue());
+                break;
+            case 7:
+                map.containsValue("whatever");
                 break;
             default:
                 map.get(key);

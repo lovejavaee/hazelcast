@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 package com.hazelcast.map.impl.event;
 
 import com.hazelcast.cluster.Address;
-import com.hazelcast.core.EntryEvent;
 import com.hazelcast.core.EntryEventType;
 import com.hazelcast.internal.serialization.impl.HeapData;
 import com.hazelcast.map.impl.EventListenerFilter;
@@ -98,7 +97,7 @@ public class EntryEventDataCacheTest {
     }
 
     @Test
-    public void getOrCreateEventDataIncludingValues_whenAlreadyCached() throws Exception {
+    public void getOrCreateEventDataIncludingValues_whenAlreadyCached() {
         // when: creating EntryEventData including values with same arguments
         EntryEventData eed = instance.getOrCreateEventData("test", ADDRESS, new HeapData(), new Object(),
                 new Object(), new Object(), EntryEventType.ADDED.getType(), true);
@@ -111,7 +110,7 @@ public class EntryEventDataCacheTest {
     }
 
     @Test
-    public void getOrCreateEventDataExcludingValues_whenAlreadyCached() throws Exception {
+    public void getOrCreateEventDataExcludingValues_whenAlreadyCached() {
         // when: creating EntryEventData including values with same arguments
         EntryEventData eed = instance.getOrCreateEventData("test", ADDRESS, new HeapData(), new Object(),
                 new Object(), new Object(), EntryEventType.ADDED.getType(), false);
@@ -124,14 +123,14 @@ public class EntryEventDataCacheTest {
     }
 
     @Test
-    public void isEmpty_whenNoEntryEventDataHaveBeenCreated() throws Exception {
+    public void isEmpty_whenNoEntryEventDataHaveBeenCreated() {
         // when: no EntryEventData have been getOrCreate'd
         // then: the cache is empty
         assertTrue(instance.isEmpty());
     }
 
     @Test
-    public void isEmpty_whenEntryEventDataHaveBeenCreated() throws Exception {
+    public void isEmpty_whenEntryEventDataHaveBeenCreated() {
         // when: EntryEventData have been getOrCreate'd
         instance.getOrCreateEventData("test", ADDRESS, new HeapData(), new Object(),
                 new Object(), new Object(), EntryEventType.ADDED.getType(), false);
@@ -141,7 +140,7 @@ public class EntryEventDataCacheTest {
     }
 
     @Test
-    public void eventDataIncludingValues_whenValueIsCached() throws Exception {
+    public void eventDataIncludingValues_whenValueIsCached() {
         // when: EntryEventData including values have been created
         EntryEventData eed = instance.getOrCreateEventData("test", ADDRESS, new HeapData(), new Object(),
                 new Object(), new Object(), EntryEventType.ADDED.getType(), true);
@@ -152,7 +151,7 @@ public class EntryEventDataCacheTest {
     }
 
     @Test
-    public void eventDataIncludingValues_whenNoValuesCached() throws Exception {
+    public void eventDataIncludingValues_whenNoValuesCached() {
         // when: EntryEventData including values have been created
 
         // then: the cache is empty & eventDataIncludingValues returns null or empty collection
@@ -161,7 +160,7 @@ public class EntryEventDataCacheTest {
     }
 
     @Test
-    public void eventDataIncludingValues_whenDataExcludingValuesAreCached() throws Exception {
+    public void eventDataIncludingValues_whenDataExcludingValuesAreCached() {
         // when: EntryEventData excluding values have been created
         EntryEventData eed = instance.getOrCreateEventData("test", ADDRESS, new HeapData(), new Object(),
                 new Object(), new Object(), EntryEventType.ADDED.getType(), false);
@@ -171,7 +170,7 @@ public class EntryEventDataCacheTest {
     }
 
     @Test
-    public void eventDataExcludingValues_whenValueIsCached() throws Exception {
+    public void eventDataExcludingValues_whenValueIsCached() {
         // when: EntryEventData excluding values have been created
         EntryEventData eed = instance.getOrCreateEventData("test", ADDRESS, new HeapData(), new Object(),
                 new Object(), new Object(), EntryEventType.ADDED.getType(), false);
@@ -182,7 +181,7 @@ public class EntryEventDataCacheTest {
     }
 
     @Test
-    public void eventDataExcludingValues_whenNoValuesCached() throws Exception {
+    public void eventDataExcludingValues_whenNoValuesCached() {
         // when: no EntryEventData values have been created
 
         // then: the cache is empty & eventDataIncludingValues returns null or empty collection
@@ -191,7 +190,7 @@ public class EntryEventDataCacheTest {
     }
 
     @Test
-    public void eventDataExcludingValues_whenDataIncludingValuesAreCached() throws Exception {
+    public void eventDataExcludingValues_whenDataIncludingValuesAreCached() {
         // when: no EntryEventData values have been created
         EntryEventData eed = instance.getOrCreateEventData("test", ADDRESS, new HeapData(), new Object(),
                 new Object(), new Object(), EntryEventType.ADDED.getType(), true);
@@ -201,7 +200,7 @@ public class EntryEventDataCacheTest {
     }
 
     @Test
-    public void filteringStrategy_rejects_invalidation_events() throws Exception {
+    public void filteringStrategy_rejects_invalidation_events() {
         EventListenerFilter filter = createInvalidationEventRejectingFilter();
         int matched = filteringStrategy.doFilter(filter, null, null, null, INVALIDATION, "mapName");
 
@@ -209,11 +208,8 @@ public class EntryEventDataCacheTest {
     }
 
     private static EventListenerFilter createInvalidationEventRejectingFilter() {
-        ListenerAdapter listenerAdapter = createListenerAdapter(new EntryAddedListener() {
-            @Override
-            public void entryAdded(EntryEvent event) {
+        ListenerAdapter<Object> listenerAdapter = createListenerAdapter((EntryAddedListener<Object, Object>) event -> {
 
-            }
         });
 
         int flags = setAndGetListenerFlags(listenerAdapter);

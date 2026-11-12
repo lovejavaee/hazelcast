@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,7 +40,6 @@ import com.hazelcast.internal.cluster.ClusterService;
 import com.hazelcast.internal.cluster.impl.AddressCheckerImpl;
 import com.hazelcast.internal.nio.Connection;
 import com.hazelcast.internal.nio.ConnectionListener;
-import com.hazelcast.internal.nio.ConnectionType;
 import com.hazelcast.internal.partition.IPartitionService;
 import com.hazelcast.internal.server.ServerConnection;
 import com.hazelcast.internal.services.CoreService;
@@ -63,6 +62,7 @@ import com.hazelcast.spi.impl.operationservice.OperationService;
 import com.hazelcast.spi.impl.operationservice.impl.OperationServiceImpl;
 import com.hazelcast.spi.impl.proxyservice.ProxyService;
 import com.hazelcast.spi.properties.ClusterProperty;
+import com.hazelcast.spi.properties.HazelcastProperty;
 import com.hazelcast.sql.impl.client.SqlAbstractMessageTask;
 import com.hazelcast.transaction.TransactionManagerService;
 
@@ -78,11 +78,13 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Future;
-import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.LongConsumer;
 import java.util.stream.Collectors;
 
 import static com.hazelcast.instance.EndpointQualifier.CLIENT;
+import static com.hazelcast.internal.nio.ConnectionType.MC_CL_CLIENT;
+import static com.hazelcast.internal.nio.ConnectionType.MC_JAVA_CLIENT;
 import static com.hazelcast.internal.util.MapUtil.createHashMap;
 import static com.hazelcast.internal.util.SetUtil.createHashSet;
 import static com.hazelcast.internal.util.ThreadUtil.createThreadPoolName;
@@ -90,9 +92,25 @@ import static com.hazelcast.internal.util.ThreadUtil.createThreadPoolName;
 /**
  * Class that requests, listeners from client handled in node side.
  */
-@SuppressWarnings("checkstyle:classdataabstractioncoupling")
+@SuppressWarnings({"checkstyle:classdataabstractioncoupling", "ClassFanOutComplexity", "MethodCount"})
 public class ClientEngineImpl implements ClientEngine, CoreService,
         ManagedService, EventPublishingService<ClientEvent, ClientListener> {
+
+    /**
+     * A private property to let users control the connection behavior of the client.
+     * <p>
+     * When enabled (true), the member will skip trying to check the target cluster name matches the name
+     * specified in the client. Default is false.
+     * <p>
+     * This property is handy for users who are looking for behaviour similar to Hazelcast 4.0.
+     * {@code true} means cluster name is not considered during authentication.
+     * <p>
+     * <b>NOTE:</b> This property does not skip cluster name checks performed in the DefaultLoginModule,
+     * so authentication for clients can still fail if security is enabled, no credentials are provided,
+     * and the client cluster name does not match the cluster's own name.
+     */
+    public static final HazelcastProperty SKIP_CLUSTER_NAME_CHECK_DURING_CONNECTION =
+            new HazelcastProperty("hazelcast.client.internal.skip.cluster.namecheck.during.connection", false);
 
     /**
      * Service name to be used in requests.
@@ -102,8 +120,10 @@ public class ClientEngineImpl implements ClientEngine, CoreService,
     private static final int BLOCKING_THREADS_PER_CORE = 20;
     private static final int THREADS_PER_CORE = 1;
     private static final int QUERY_THREADS_PER_CORE = 1;
-    private final Node node;
-    private final NodeEngineImpl nodeEngine;
+    private static final Set<String> EXEMPT_CONNECTION_TYPES = Set.of(MC_JAVA_CLIENT, MC_CL_CLIENT);
+
+    protected final Node node;
+    protected final NodeEngineImpl nodeEngine;
     private final Executor executor;
     private final Executor blockingExecutor;
     private final Executor queryExecutor;
@@ -119,10 +139,11 @@ public class ClientEngineImpl implements ClientEngine, CoreService,
     private final ClusterViewListenerService clusterListenerService;
     private final boolean advancedNetworkConfigEnabled;
     private final ClientLifecycleMonitor lifecycleMonitor;
-    private final Map<UUID, Consumer<Long>> backupListeners = new ConcurrentHashMap<>();
+    private final Map<UUID, LongConsumer> backupListeners = new ConcurrentHashMap<>();
     private final AddressChecker addressChecker;
     private final IOBufferAllocator responseBufAllocator = new ConcurrentIOBufferAllocator(4096, true);
     private final boolean tpcEnabled;
+    private final CPGroupViewListenerService cpGroupViewListenerService;
 
     // not final for the testing purposes
     private ClientEndpointStatisticsManager endpointStatisticsManager;
@@ -146,12 +167,13 @@ public class ClientEngineImpl implements ClientEngine, CoreService,
         this.endpointStatisticsManager = PhoneHome.isPhoneHomeEnabled(node)
                 ? new ClientEndpointStatisticsManagerImpl() : new NoOpClientEndpointStatisticsManager();
         this.tpcEnabled = nodeEngine.getTpcServerBootstrap().isEnabled();
+        this.cpGroupViewListenerService = createCpGroupViewListenerService();
     }
 
     private ClientExceptionFactory initClientExceptionFactory() {
         ClassLoader configClassLoader = nodeEngine.getConfigClassLoader();
         boolean jcacheAvailable = JCacheDetector.isJCacheAvailable(configClassLoader);
-        return new ClientExceptionFactory(jcacheAvailable, configClassLoader);
+        return new ClientExceptionFactory(jcacheAvailable, configClassLoader, node.getLoggingService());
     }
 
     private Executor newClientExecutor() {
@@ -167,7 +189,7 @@ public class ClientEngineImpl implements ClientEngine, CoreService,
         if (threadCount <= 0) {
             threadCount = coreSize * threadsPerCore;
         }
-        logger.finest("Creating new client executor with threadCount=" + threadCount);
+        logger.finest("Creating new client executor with threadCount=%s", threadCount);
 
         //if user code deployment enabled, don't use the unblockable thread factory since operations can do blocking tasks
         // to load classes from other members
@@ -182,7 +204,8 @@ public class ClientEngineImpl implements ClientEngine, CoreService,
         String hzName = nodeEngine.getHazelcastInstance().getName();
         String internalName = name.substring("hz:".length());
         String threadNamePrefix = createThreadPoolName(hzName, internalName);
-        UnblockablePoolExecutorThreadFactory factory = new UnblockablePoolExecutorThreadFactory(threadNamePrefix, classLoader);
+        UnblockablePoolExecutorThreadFactory factory = new UnblockablePoolExecutorThreadFactory(threadNamePrefix,
+                classLoader, nodeEngine);
         return executionService.register(ExecutionService.CLIENT_EXECUTOR,
                 threadCount, coreSize * EXECUTOR_QUEUE_CAPACITY_PER_CORE, factory);
     }
@@ -195,7 +218,7 @@ public class ClientEngineImpl implements ClientEngine, CoreService,
         if (threadCount <= 0) {
             threadCount = coreSize * QUERY_THREADS_PER_CORE;
         }
-        logger.finest("Creating new client query executor with threadCount=" + threadCount);
+        logger.finest("Creating new client query executor with threadCount=%s", threadCount);
 
         return executionService.register(ExecutionService.CLIENT_QUERY_EXECUTOR,
                 threadCount, coreSize * EXECUTOR_QUEUE_CAPACITY_PER_CORE,
@@ -211,7 +234,7 @@ public class ClientEngineImpl implements ClientEngine, CoreService,
             threadCount = coreSize * BLOCKING_THREADS_PER_CORE;
         }
 
-        logger.finest("Creating new client executor for blocking tasks with threadCount=" + threadCount);
+        logger.finest("Creating new client executor for blocking tasks with threadCount=%s", threadCount);
 
         return executionService.register(ExecutionService.CLIENT_BLOCKING_EXECUTOR,
                 threadCount, coreSize * EXECUTOR_QUEUE_CAPACITY_PER_CORE,
@@ -224,20 +247,20 @@ public class ClientEngineImpl implements ClientEngine, CoreService,
     }
 
     //PETER:
+    @Override
     public void accept(ClientMessage clientMessage) {
         Connection connection = clientMessage.getConnection();
         MessageTask messageTask = messageTaskFactory.create(clientMessage, connection);
 
-        if (tpcEnabled && messageTask instanceof AbstractMessageTask) {
-            AbstractMessageTask abstractMessageTask = (AbstractMessageTask) messageTask;
+        if (tpcEnabled && messageTask instanceof AbstractMessageTask abstractMessageTask) {
             abstractMessageTask.setAsyncSocket(clientMessage.getAsyncSocket());
             abstractMessageTask.setResponseBufAllocator(responseBufAllocator);
         }
         OperationServiceImpl operationService = nodeEngine.getOperationService();
         if (isUrgent(messageTask)) {
             operationService.execute((UrgentMessageTask) messageTask);
-        } else if (messageTask instanceof AbstractPartitionMessageTask) {
-            operationService.execute((AbstractPartitionMessageTask) messageTask);
+        } else if (messageTask instanceof AbstractPartitionMessageTask task) {
+            operationService.execute(task);
         } else if (isQuery(messageTask)) {
             queryExecutor.execute(messageTask);
         } else if (messageTask instanceof TransactionalMessageTask) {
@@ -319,9 +342,15 @@ public class ClientEngineImpl implements ClientEngine, CoreService,
 
         ServerConnection conn = endpoint.getConnection();
         InetSocketAddress socketAddress = conn.getRemoteSocketAddress();
+        Address address = new Address(socketAddress);
+
+        if (MC_CL_CLIENT.equals(endpoint.getClientType()) && !addressChecker.isTrusted(address)) {
+            return false;
+        }
+
         //socket address can be null if connection closed before bind
         if (socketAddress != null) {
-            conn.setRemoteAddress(new Address(socketAddress));
+            conn.setRemoteAddress(address);
         }
 
         if (endpointManager.registerEndpoint(endpoint)) {
@@ -421,13 +450,18 @@ public class ClientEngineImpl implements ClientEngine, CoreService,
     }
 
     @Override
-    public ClusterViewListenerService getClusterListenerService() {
+    public ClusterViewListenerService getClusterViewListenerService() {
         return clusterListenerService;
     }
 
     @Override
+    public CPGroupViewListenerService getCPGroupViewListenerService() {
+        return cpGroupViewListenerService;
+    }
+
+    @Override
     public boolean isClientAllowed(Client client) {
-        return ConnectionType.MC_JAVA_CLIENT.equals(client.getClientType()) || clientSelector.select(client);
+        return EXEMPT_CONNECTION_TYPES.contains(client.getClientType()) || clientSelector.select(client);
     }
 
     private final class ConnectionListenerImpl implements ConnectionListener {
@@ -446,9 +480,9 @@ public class ClientEngineImpl implements ClientEngine, CoreService,
             if (!connection.isClient() || !nodeEngine.isRunning()) {
                 return;
             }
-            final ClientEndpointImpl endpoint = (ClientEndpointImpl) endpointManager.getEndpoint(connection);
+            final ClientEndpoint endpoint = endpointManager.getEndpoint(connection);
             if (endpoint == null) {
-                logger.finest("connectionRemoved: No endpoint for connection:" + connection);
+                logger.finest("connectionRemoved: No endpoint for connection:%s", connection);
                 return;
             }
             UUID clientUuid = endpoint.getUuid();
@@ -525,24 +559,24 @@ public class ClientEngineImpl implements ClientEngine, CoreService,
     }
 
     @Override
-    public void addBackupListener(UUID clientUuid, Consumer<Long> backupListener) {
+    public void addBackupListener(UUID clientUuid, LongConsumer backupListener) {
         backupListeners.put(clientUuid, backupListener);
     }
 
     @Override
     public void dispatchBackupEvent(UUID clientUUID, long clientCorrelationId) {
-        Consumer<Long> backupListener = backupListeners.get(clientUUID);
+        LongConsumer backupListener = backupListeners.get(clientUUID);
         if (backupListener != null) {
             backupListener.accept(clientCorrelationId);
         }
     }
 
     @Override
-    public boolean deregisterBackupListener(UUID clientUUID, Consumer<Long> backupListener) {
+    public boolean deregisterBackupListener(UUID clientUUID, LongConsumer backupListener) {
         return backupListeners.remove(clientUUID, backupListener);
     }
 
-    public Map<UUID, Consumer<Long>> getBackupListeners() {
+    public Map<UUID, LongConsumer> getBackupListeners() {
         return backupListeners;
     }
 
@@ -554,5 +588,9 @@ public class ClientEngineImpl implements ClientEngine, CoreService,
     public void setEndpointStatisticsManager(ClientEndpointStatisticsManager endpointStatisticsManager) {
         // this should only be used in tests
         this.endpointStatisticsManager = endpointStatisticsManager;
+    }
+
+    protected CPGroupViewListenerService createCpGroupViewListenerService() {
+        return new NoOpCPGroupViewListenerService();
     }
 }

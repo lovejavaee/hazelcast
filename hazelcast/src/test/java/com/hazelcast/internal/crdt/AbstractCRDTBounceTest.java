@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
  * Base test class for testing CRDT thread safety and replication behaviour.
- * The test will spawn up to {@value CONCURRENCY} threads that will perform
+ * The test will spawn up to {@value #CONCURRENCY} threads that will perform
  * mutation on the provided hazelcast instance and it will additionally
  * "bounce" the hazelcast instances. This means that it rotates through the
  * instance collection, shutting down members and replacing them with new
@@ -68,7 +68,7 @@ public abstract class AbstractCRDTBounceTest extends HazelcastTestSupport {
     @Before
     public void setup() {
         TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory();
-        instances = new AtomicReferenceArray<HazelcastInstance>(NODE_COUNT);
+        instances = new AtomicReferenceArray<>(NODE_COUNT);
         for (int i = 0; i < NODE_COUNT; i++) {
             instances.set(i, factory.newHazelcastInstance(getConfig()));
         }
@@ -172,27 +172,24 @@ public abstract class AbstractCRDTBounceTest extends HazelcastTestSupport {
     private Future startBouncing(final AtomicReferenceArray<HazelcastInstance> instances,
                                  final AtomicBoolean stop,
                                  final TestHazelcastInstanceFactory factory) {
-        return spawn(new Runnable() {
-            @Override
-            public void run() {
-                int i = 0;
-                while (!stop.get()) {
-                    i = (i + 1) % instances.length();
-                    try {
-                        TimeUnit.SECONDS.sleep(2);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        return;
-                    }
-                    instances.get(i).shutdown();
-                    try {
-                        TimeUnit.SECONDS.sleep(2);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        return;
-                    }
-                    instances.set(i, factory.newHazelcastInstance(getConfig()));
+        return spawn((Runnable) () -> {
+            int i = 0;
+            while (!stop.get()) {
+                i = (i + 1) % instances.length();
+                try {
+                    TimeUnit.SECONDS.sleep(2);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
                 }
+                instances.get(i).shutdown();
+                try {
+                    TimeUnit.SECONDS.sleep(2);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                instances.set(i, factory.newHazelcastInstance(getConfig()));
             }
         });
     }

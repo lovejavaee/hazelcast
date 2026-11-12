@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ final class TransactionContextImpl implements TransactionContext {
     private final NodeEngineImpl nodeEngine;
     private final TransactionImpl transaction;
     private final Map<TransactionalObjectKey, TransactionalObject> txnObjectMap
-            = new HashMap<TransactionalObjectKey, TransactionalObject>(2);
+            = new HashMap<>(2);
 
     TransactionContextImpl(@Nonnull TransactionManagerServiceImpl transactionManagerService,
                            @Nonnull NodeEngineImpl nodeEngine,
@@ -138,11 +138,7 @@ final class TransactionContextImpl implements TransactionContext {
             return false;
         }
 
-        if (serviceName.equals(MultiMapService.SERVICE_NAME)) {
-            return false;
-        }
-
-        return true;
+        return !serviceName.equals(MultiMapService.SERVICE_NAME);
     }
 
     private TransactionalService getTransactionalService(String serviceName) {

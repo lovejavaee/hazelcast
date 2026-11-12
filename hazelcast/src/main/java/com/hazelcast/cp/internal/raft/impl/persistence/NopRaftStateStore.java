@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,9 +18,10 @@ package com.hazelcast.cp.internal.raft.impl.persistence;
 
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
 import com.hazelcast.cp.internal.raft.impl.log.LogEntry;
-import com.hazelcast.cp.internal.raft.impl.log.SnapshotEntry;
+import com.hazelcast.cp.internal.raft.impl.log.SnapshotChunk;
 
 import javax.annotation.Nonnull;
+import java.io.IOException;
 import java.util.Collection;
 
 /**
@@ -56,7 +57,13 @@ public final class NopRaftStateStore implements RaftStateStore {
     }
 
     @Override
-    public void persistSnapshot(@Nonnull SnapshotEntry entry) {
+    public void persistSnapshotChunk(@Nonnull SnapshotChunk snapshotChunk) throws IOException {
+
+    }
+
+    @Override
+    public void deleteSnapshotChunks(long snapshotIndex) throws IOException {
+
     }
 
     @Override

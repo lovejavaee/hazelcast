@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,10 +22,12 @@ import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Duration;
@@ -137,7 +139,7 @@ public class JobUploadStatus {
         Path jarPath = jobMetaDataParameterObject.getJarPath();
 
         // Append data to file
-        try (FileOutputStream outputStream = new FileOutputStream(jarPath.toFile(), true)) {
+        try (OutputStream outputStream = Files.newOutputStream(jarPath, StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
             outputStream.write(parameterObject.getPartData(), 0, parameterObject.getPartSize());
         }
 
@@ -159,8 +161,7 @@ public class JobUploadStatus {
     }
 
     void createNewTemporaryFile() throws IOException {
-        // Create a new temporary file
-        Path jarPath = Files.createTempFile(jobMetaDataParameterObject.getFileName(), ".jar"); //NOSONAR
+        Path jarPath = createJarPath();
 
         // Make it accessible only by the owner
         File jarFile = jarPath.toFile();
@@ -179,6 +180,20 @@ public class JobUploadStatus {
 
         // Keep the temporary file's path in the metadata object
         jobMetaDataParameterObject.setJarPath(jarPath);
+    }
+
+    @SuppressWarnings("java:S5443")
+    Path createJarPath() throws IOException {
+        Path jarPath;
+        if (jobMetaDataParameterObject.getUploadDirectoryPath() != null) {
+            Path path = Paths.get(jobMetaDataParameterObject.getUploadDirectoryPath());
+            // Create a new temporary file in the given directory
+            jarPath = Files.createTempFile(path, jobMetaDataParameterObject.getFileName(), ".jar");
+        } else {
+            // Create a new temporary file in the default temporary file directory
+            jarPath = Files.createTempFile(jobMetaDataParameterObject.getFileName(), ".jar");
+        }
+        return jarPath;
     }
 
     private static void validateReceivedParameters(JobMultiPartParameterObject parameterObject) {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import org.elasticsearch.client.RestHighLevelClient;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
+import java.io.Serial;
 import java.io.Serializable;
 
 import static com.hazelcast.jet.elastic.impl.RetryUtils.withRetry;
@@ -60,9 +61,12 @@ import static java.util.Objects.requireNonNull;
  *
  * @param <T>
  * @since Jet 4.2
+ * @deprecated <a href="https://www.elastic.co/support/eol"> Elasticsearch 7 is no longer supported</a>
  */
+@Deprecated(forRemoval = true, since = "5.7")
 public final class ElasticSinkBuilder<T> implements Serializable {
 
+    @Serial
     private static final long serialVersionUID = 1L;
 
     private static final String DEFAULT_NAME = "elasticSink";
@@ -174,13 +178,13 @@ public final class ElasticSinkBuilder<T> implements Serializable {
     /**
      * Number of retries the connector will do in addition to Elastic client
      * retries
-     *
+     * <p>
      * Elastic client tries to connect to a node only once for each request.
      * When a request fails the node is marked dead and is not retried again
      * for the request. This causes problems with single node clusters or in a
      * situation where whole cluster becomes unavailable at the same time (e.g.
      * due to a network issue).
-     *
+     * <p>
      * The initial delay is 2s, increasing by factor of 2 with each retry (4s,
      * 8s, 16s, ..).
      *
@@ -241,7 +245,7 @@ public final class ElasticSinkBuilder<T> implements Serializable {
             bulkRequest.add(request);
         }
 
-        void flush() throws IOException {
+        void flush() {
             if (!bulkRequest.requests().isEmpty()) {
                 withRetry(
                         () -> {
@@ -250,7 +254,7 @@ public final class ElasticSinkBuilder<T> implements Serializable {
                                 throw new JetException(response.buildFailureMessage());
                             }
                             if (logger.isFineEnabled()) {
-                                logger.fine("BulkRequest with " + bulkRequest.requests().size() + " requests succeeded");
+                                logger.fine("BulkRequest with %s requests succeeded", bulkRequest.requests().size());
                             }
                             return response;
                         },

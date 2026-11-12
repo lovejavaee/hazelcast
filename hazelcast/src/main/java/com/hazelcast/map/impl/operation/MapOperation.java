@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.map.impl.operation;
 
 import com.hazelcast.config.MapConfig;
 import com.hazelcast.config.MapStoreConfig;
+import com.hazelcast.internal.namespace.NamespaceUtil;
 import com.hazelcast.internal.nearcache.impl.invalidation.Invalidator;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.services.ObjectNamespace;
@@ -35,8 +36,8 @@ import com.hazelcast.map.impl.mapstore.MapDataStore;
 import com.hazelcast.map.impl.mapstore.MapDataStores;
 import com.hazelcast.map.impl.mapstore.writebehind.TxnReservedCapacityCounter;
 import com.hazelcast.map.impl.nearcache.MapNearCacheManager;
+import com.hazelcast.map.impl.operation.steps.IMapStepAwareOperation;
 import com.hazelcast.map.impl.operation.steps.engine.State;
-import com.hazelcast.map.impl.operation.steps.engine.StepAwareOperation;
 import com.hazelcast.map.impl.operation.steps.engine.StepRunner;
 import com.hazelcast.map.impl.record.Record;
 import com.hazelcast.map.impl.recordstore.RecordStore;
@@ -44,17 +45,22 @@ import com.hazelcast.map.impl.recordstore.expiry.ExpiryMetadata;
 import com.hazelcast.map.impl.wan.WanMapEntryView;
 import com.hazelcast.memory.NativeOutOfMemoryError;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
+import com.hazelcast.spi.impl.NodeEngine;
+import com.hazelcast.spi.impl.NodeEngineThreadLocalContext;
 import com.hazelcast.spi.impl.operationservice.AbstractNamedOperation;
 import com.hazelcast.spi.impl.operationservice.BackupOperation;
 import com.hazelcast.spi.impl.operationservice.BlockingOperation;
 import com.hazelcast.spi.impl.operationservice.CallStatus;
 import com.hazelcast.spi.impl.operationservice.Offload;
+import com.hazelcast.spi.impl.operationservice.Operation;
 import com.hazelcast.spi.tenantcontrol.TenantControl;
 import com.hazelcast.wan.impl.CallerProvenance;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 import java.util.logging.Level;
 
 import static com.hazelcast.config.InMemoryFormat.NATIVE;
@@ -71,7 +77,7 @@ import static com.hazelcast.spi.impl.operationservice.CallStatus.WAIT;
 @SuppressWarnings("checkstyle:methodcount")
 public abstract class MapOperation extends AbstractNamedOperation
         implements IdentifiedDataSerializable, ServiceNamespaceAware,
-        StepAwareOperation<State> {
+        IMapStepAwareOperation {
 
     private static final boolean ASSERTION_ENABLED = MapOperation.class.desiredAssertionStatus();
 
@@ -80,13 +86,15 @@ public abstract class MapOperation extends AbstractNamedOperation
     protected transient MapContainer mapContainer;
     protected transient MapServiceContext mapServiceContext;
     protected transient MapEventPublisher mapEventPublisher;
+    protected transient Consumer backupOpAfterRun;
 
     protected transient boolean createRecordStoreOnDemand = true;
     protected transient boolean disposeDeferredBlocks = true;
+    protected transient boolean mapStoreOffloadEnabled;
+    protected transient boolean tieredStoreOffloadEnabled;
 
-    private transient boolean mapStoreOffloadEnabled;
     private transient boolean canPublishWanEvent;
-    private transient boolean operationCreatedOnPartitionThread = ThreadUtil.isRunningOnPartitionThread();
+    private transient @Nullable String namespace;
 
     public MapOperation() {
     }
@@ -95,7 +103,13 @@ public abstract class MapOperation extends AbstractNamedOperation
         this.name = name;
     }
 
+    public MapOperation(MapContainer mapContainer) {
+        super(mapContainer.getName());
+        this.mapContainer = mapContainer;
+    }
+
     @Override
+    @SuppressWarnings("checkstyle:CyclomaticComplexity")
     public final void beforeRun() throws Exception {
         super.beforeRun();
 
@@ -103,16 +117,9 @@ public abstract class MapOperation extends AbstractNamedOperation
         mapServiceContext = mapService.getMapServiceContext();
         mapEventPublisher = mapServiceContext.getMapEventPublisher();
 
-        try {
-            recordStore = getRecordStoreOrNull();
-            if (recordStore == null) {
-                mapContainer = mapServiceContext.getMapContainer(name);
-            } else {
-                mapContainer = recordStore.getMapContainer();
-            }
-        } catch (Throwable t) {
-            disposeDeferredBlocks();
-            throw rethrow(t, Exception.class);
+        if (!checkMapExists()) {
+            // no such map exists
+            return;
         }
 
         canPublishWanEvent = canPublishWanEvent(mapContainer);
@@ -120,19 +127,64 @@ public abstract class MapOperation extends AbstractNamedOperation
         MapConfig mapConfig = mapContainer.getMapConfig();
         MapStoreConfig mapStoreConfig = mapConfig.getMapStoreConfig();
 
-        boolean hasUserConfiguredOffload = mapServiceContext.isForceOffloadEnabled()
-                || (mapStoreConfig.isOffload()
-                && recordStore != null
-                && recordStore.getMapDataStore() != MapDataStores.EMPTY_MAP_DATA_STORE);
+        boolean metWithCommonOffloadConditions = recordStore != null && getStartingStep() != null;
+        // check if mapStoreOffloadEnabled is true for this operation
+        mapStoreOffloadEnabled = metWithCommonOffloadConditions
+                && (mapServiceContext.isForceOffloadEnabled()
+                    || (mapStoreConfig != null && mapStoreConfig.isOffload() && hasMapStoreImplementation()));
 
-        // check mapStoreOffloadEnabled is true for current operation
-        mapStoreOffloadEnabled = recordStore != null && hasUserConfiguredOffload
-                && getStartingStep() != null
-                && !mapConfig.getTieredStoreConfig().isEnabled();
+        // check if tieredStoreOffloadEnabled for this operation
+        tieredStoreOffloadEnabled = metWithCommonOffloadConditions
+                && (mapServiceContext.isForceOffloadEnabled() || supportsSteppedRun());
 
         assertNativeMapOnPartitionThread();
 
+        // Setup Namespace awareness
+        namespace = mapConfig.getUserCodeNamespace();
+        getNodeEngine().getNamespaceService().setupNamespace(namespace);
+
         innerBeforeRun();
+    }
+
+    public boolean checkMapExists() {
+        try {
+            recordStore = getRecordStoreOrNull();
+            mapContainer = mapContainer == null ? getMapContainerOrNull() : mapContainer;
+            if (mapContainer == null) {
+                logNoSuchMapExists();
+                return false;
+            }
+        } catch (Throwable t) {
+            disposeDeferredBlocks();
+            throw rethrow(t);
+        }
+        return true;
+    }
+
+    private void logNoSuchMapExists() {
+        ILogger logger = logger();
+        if (logger.isFinestEnabled()) {
+            logger.finest("No such map exists [mapName=%s, operation=%s]",
+                    name, getClass().getName());
+        }
+    }
+
+    private MapContainer getMapContainerOrNull() {
+        if (recordStore == null) {
+            return createRecordStoreOnDemand
+                    ? mapServiceContext.getMapContainer(name)
+                    : mapServiceContext.getExistingMapContainer(name);
+        }
+
+        return recordStore.getMapContainer();
+    }
+
+    protected boolean hasMapStoreImplementation() {
+        return recordStore.getMapDataStore() != MapDataStores.EMPTY_MAP_DATA_STORE;
+    }
+
+    public boolean supportsSteppedRun() {
+        return recordStore.getStorage().supportsSteppedRun();
     }
 
     @Nullable
@@ -141,7 +193,10 @@ public abstract class MapOperation extends AbstractNamedOperation
     }
 
     protected void innerBeforeRun() throws Exception {
-        if (recordStore != null) {
+        // when tieredStoreAndPartitionCompactorEnabled is true,
+        // StepSupplier calls beforeOperation and afterOperation
+        if (recordStore != null
+                && !tieredStoreOffloadEnabled) {
             recordStore.beforeOperation();
         }
         // Concrete classes can override this method.
@@ -158,14 +213,13 @@ public abstract class MapOperation extends AbstractNamedOperation
 
     @Override
     public CallStatus call() throws Exception {
-        if (this instanceof BlockingOperation) {
-            BlockingOperation blockingOperation = (BlockingOperation) this;
+        if (this instanceof BlockingOperation blockingOperation) {
             if (blockingOperation.shouldWait()) {
                 return WAIT;
             }
         }
 
-        if (isMapStoreOffloadEnabled()) {
+        if (isMapStoreOffloadEnabled() || tieredStoreOffloadEnabled) {
             assert recordStore != null;
             return offloadOperation();
         }
@@ -178,11 +232,22 @@ public abstract class MapOperation extends AbstractNamedOperation
         // This is for nested calls from partition thread. When we see
         // nested call we directly run the call without offloading.
         if (mapStoreOffloadEnabled
-                && operationCreatedOnPartitionThread
+                && ThreadUtil.isRunningOnPartitionThread()
                 && isStepRunnerCurrentlyExecutingOnPartitionThread()) {
             return false;
         }
         return mapStoreOffloadEnabled;
+    }
+
+    public final boolean isTieredStoreOffloadEnabled() {
+        // This is for nested calls from partition thread. When we see
+        // nested call we directly run the call without offloading.
+        if (tieredStoreOffloadEnabled
+                && ThreadUtil.isRunningOnPartitionThread()
+                && isStepRunnerCurrentlyExecutingOnPartitionThread()) {
+            return false;
+        }
+        return tieredStoreOffloadEnabled;
     }
 
     protected Offload offloadOperation() {
@@ -195,7 +260,13 @@ public abstract class MapOperation extends AbstractNamedOperation
                 .setPartitionId(getPartitionId())
                 .setCallerAddress(getCallerAddress())
                 .setCallerProvenance(getCallerProvenance())
-                .setDisableWanReplicationEvent(disableWanReplicationEvent());
+                .setDisableWanReplicationEvent(disableWanReplicationEvent())
+                .setBackupOpAfterRun(backupOpAfterRun);
+    }
+
+    @Override
+    public void setBackupOpAfterRun(Consumer<Operation> backupOpAfterRun) {
+        this.backupOpAfterRun = backupOpAfterRun;
     }
 
     protected void runInternal() {
@@ -218,9 +289,13 @@ public abstract class MapOperation extends AbstractNamedOperation
 
     @Override
     public final void afterRun() throws Exception {
-        if (mapStoreOffloadEnabled) {
+        if (mapStoreOffloadEnabled
+                || tieredStoreOffloadEnabled) {
             return;
         }
+        // Cleanup Namespace awareness
+        getNodeEngine().getNamespaceService().cleanupNamespace(namespace);
+
         afterRunInternal();
         disposeDeferredBlocks();
         super.afterRun();
@@ -233,7 +308,10 @@ public abstract class MapOperation extends AbstractNamedOperation
 
     @Override
     public void afterRunFinal() {
-        if (recordStore != null) {
+        // when tieredStoreAndPartitionCompactorEnabled is
+        // true, we handle afterOperation in StepSupplier
+        if (!tieredStoreOffloadEnabled
+                && recordStore != null) {
             recordStore.afterOperation();
         }
     }
@@ -300,11 +378,11 @@ public abstract class MapOperation extends AbstractNamedOperation
     }
 
     private boolean canPublishWanEvent(MapContainer mapContainer) {
-        boolean canPublishWanEvent = mapContainer.isWanReplicationEnabled()
+        boolean canPublishWanEvent = mapContainer.getWanContext().isWanReplicationEnabled()
                 && !disableWanReplicationEvent();
 
         if (canPublishWanEvent) {
-            mapContainer.getWanReplicationDelegate().doPrepublicationChecks();
+            mapContainer.getWanContext().getWanReplicationDelegate().doPrepublicationChecks();
         }
         return canPublishWanEvent;
     }
@@ -356,7 +434,6 @@ public abstract class MapOperation extends AbstractNamedOperation
      */
     protected final void invalidateAllKeysInNearCaches() {
         if (mapContainer.hasInvalidationListener()) {
-
             int partitionId = getPartitionId();
             Invalidator invalidator = getNearCacheInvalidator();
 
@@ -390,8 +467,7 @@ public abstract class MapOperation extends AbstractNamedOperation
     public ObjectNamespace getServiceNamespace() {
         MapContainer container = mapContainer;
         if (container == null) {
-            MapService service = getService();
-            container = service.getMapServiceContext().getMapContainer(name);
+            return MapService.getObjectNamespace(name);
         }
         return container.getObjectNamespace();
     }
@@ -408,6 +484,10 @@ public abstract class MapOperation extends AbstractNamedOperation
 
     public final void publishWanUpdate(Data dataKey, Object value) {
         publishWanUpdateInternal(dataKey, value, false);
+    }
+
+    final boolean isWanPublishingEnabled() {
+        return canPublishWanEvent;
     }
 
     private void publishWanUpdateInternal(Data dataKey, Object value, boolean hasLoadProvenance) {
@@ -469,5 +549,16 @@ public abstract class MapOperation extends AbstractNamedOperation
 
     public MapContainer getMapContainer() {
         return mapContainer;
+    }
+
+    /**
+     * Utility method for executing code within the context of the Namespace associated
+     * with IMaps - if one does not exist, this code is executed as if it were called
+     * directly in place of this method.
+     */
+    protected <T> T callWithNamespaceAwareness(Callable<T> callable) {
+        NodeEngine engine = NodeEngineThreadLocalContext.getNodeEngineThreadLocalContext();
+        String namespace = MapService.lookupNamespace(engine, name);
+        return NamespaceUtil.callWithNamespace(engine, namespace, callable);
     }
 }

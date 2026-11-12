@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -370,7 +370,7 @@ public class TransactionalMapProxy
                 predicate, IterationType.KEY, true, tx.isOriginatedFromClient());
 
         Extractors extractors = mapServiceContext.getExtractors(name);
-        Set<Object> returningKeySet = new HashSet<Object>(queryResultSet);
+        Set<Object> returningKeySet = new HashSet<>(queryResultSet);
         CachedQueryEntry cachedQueryEntry = new CachedQueryEntry();
         for (Map.Entry<Data, TxnValueWrapper> entry : txMap.entrySet()) {
             if (entry.getValue().type == Type.REMOVED) {
@@ -424,8 +424,8 @@ public class TransactionalMapProxy
         CachedQueryEntry cachedQueryEntry = new CachedQueryEntry();
         // iterate over the txMap and see if the values are updated or removed
         for (Map.Entry<Data, TxnValueWrapper> entry : txMap.entrySet()) {
-            boolean isRemoved = Type.REMOVED.equals(entry.getValue().type);
-            boolean isUpdated = Type.UPDATED.equals(entry.getValue().type);
+            boolean isRemoved = Type.REMOVED == entry.getValue().type;
+            boolean isUpdated = Type.UPDATED == entry.getValue().type;
 
             if (isRemoved) {
                 keyWontBeIncluded.add(entry.getKey());

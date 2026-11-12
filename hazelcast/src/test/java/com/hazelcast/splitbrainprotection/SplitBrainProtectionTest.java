@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,6 @@ import com.hazelcast.map.IMap;
 import com.hazelcast.spi.properties.ClusterProperty;
 import com.hazelcast.splitbrainprotection.impl.ProbabilisticSplitBrainProtectionFunction;
 import com.hazelcast.splitbrainprotection.impl.RecentlyActiveSplitBrainProtectionFunction;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
@@ -79,12 +78,7 @@ public class SplitBrainProtectionTest extends HazelcastTestSupport {
         SplitBrainProtectionConfig splitBrainProtectionConfig1 = new SplitBrainProtectionConfig()
                 .setName(splitBrainProtectionName1)
                 .setEnabled(true)
-                .setFunctionImplementation(new SplitBrainProtectionFunction() {
-                    @Override
-                    public boolean apply(Collection<Member> members) {
-                        return true;
-                    }
-                });
+                .setFunctionImplementation(members -> true);
 
         SplitBrainProtectionConfig splitBrainProtectionConfig2 = new SplitBrainProtectionConfig()
                 .setName(splitBrainProtectionName2)
@@ -98,12 +92,9 @@ public class SplitBrainProtectionTest extends HazelcastTestSupport {
         HazelcastInstance hazelcastInstance = createHazelcastInstance(config);
         final SplitBrainProtection splitBrainProtection1 = hazelcastInstance.getSplitBrainProtectionService().getSplitBrainProtection(splitBrainProtectionName1);
         final SplitBrainProtection splitBrainProtection2 = hazelcastInstance.getSplitBrainProtectionService().getSplitBrainProtection(splitBrainProtectionName2);
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertTrue(splitBrainProtection1.hasMinimumSize());
-                assertFalse(splitBrainProtection2.hasMinimumSize());
-            }
+        assertTrueEventually(() -> {
+            assertTrue(splitBrainProtection1.hasMinimumSize());
+            assertFalse(splitBrainProtection2.hasMinimumSize());
         });
     }
 
@@ -124,12 +115,7 @@ public class SplitBrainProtectionTest extends HazelcastTestSupport {
 
         final SplitBrainProtection splitBrainProtection = instance.getSplitBrainProtectionService().getSplitBrainProtection(splitBrainProtectionName);
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertTrue(splitBrainProtection.hasMinimumSize());
-            }
-        });
+        assertTrueEventually(() -> assertTrue(splitBrainProtection.hasMinimumSize()));
     }
 
     @Test
@@ -149,12 +135,7 @@ public class SplitBrainProtectionTest extends HazelcastTestSupport {
 
         final SplitBrainProtection splitBrainProtection = instance.getSplitBrainProtectionService().getSplitBrainProtection(splitBrainProtectionName);
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertTrue(splitBrainProtection.hasMinimumSize());
-            }
-        });
+        assertTrueEventually(() -> assertTrue(splitBrainProtection.hasMinimumSize()));
     }
 
     @Test(expected = SplitBrainProtectionException.class)
@@ -168,12 +149,7 @@ public class SplitBrainProtectionTest extends HazelcastTestSupport {
         SplitBrainProtectionConfig splitBrainProtectionConfig = new SplitBrainProtectionConfig()
                 .setName(splitBrainProtectionName)
                 .setEnabled(true)
-                .setFunctionImplementation(new SplitBrainProtectionFunction() {
-                    @Override
-                    public boolean apply(Collection<Member> members) {
-                        return false;
-                    }
-                });
+                .setFunctionImplementation(members -> false);
 
         Config config = new Config()
                 .addSplitBrainProtectionConfig(splitBrainProtectionConfig)
@@ -195,12 +171,7 @@ public class SplitBrainProtectionTest extends HazelcastTestSupport {
         SplitBrainProtectionConfig splitBrainProtectionConfig = new SplitBrainProtectionConfig()
                 .setName(splitBrainProtectionName)
                 .setEnabled(true)
-                .setFunctionImplementation(new SplitBrainProtectionFunction() {
-                    @Override
-                    public boolean apply(Collection<Member> members) {
-                        return false;
-                    }
-                });
+                .setFunctionImplementation(members -> false);
 
         Config config = new Config()
                 .addSplitBrainProtectionConfig(splitBrainProtectionConfig)
@@ -228,12 +199,7 @@ public class SplitBrainProtectionTest extends HazelcastTestSupport {
         SplitBrainProtectionConfig splitBrainProtectionConfig = new SplitBrainProtectionConfig()
                 .setName(splitBrainProtectionName)
                 .setEnabled(true)
-                .setFunctionImplementation(new SplitBrainProtectionFunction() {
-                    @Override
-                    public boolean apply(Collection<Member> members) {
-                        return false;
-                    }
-                });
+                .setFunctionImplementation(members -> false);
 
         Config config = new Config()
                 .addMapConfig(mapConfig)
@@ -286,19 +252,9 @@ public class SplitBrainProtectionTest extends HazelcastTestSupport {
                 .setSplitBrainProtectionName(threeNodeSplitBrainProtection);
 
         SplitBrainProtectionConfig fourNodeSplitBrainProtectionConfig = new SplitBrainProtectionConfig(fourNodeSplitBrainProtection, true)
-                .setFunctionImplementation(new SplitBrainProtectionFunction() {
-                    @Override
-                    public boolean apply(Collection<Member> members) {
-                        return members.size() == 4;
-                    }
-                });
+                .setFunctionImplementation(members -> members.size() == 4);
         SplitBrainProtectionConfig threeNodeSplitBrainProtectionConfig = new SplitBrainProtectionConfig(threeNodeSplitBrainProtection, true)
-                .setFunctionImplementation(new SplitBrainProtectionFunction() {
-                    @Override
-                    public boolean apply(Collection<Member> members) {
-                        return members.size() == 3;
-                    }
-                });
+                .setFunctionImplementation(members -> members.size() == 3);
 
         Config config = new Config()
                 .addMapConfig(fourNodeMapConfig)
@@ -329,12 +285,7 @@ public class SplitBrainProtectionTest extends HazelcastTestSupport {
         String splitBrainProtectionName = randomString();
 
         SplitBrainProtectionConfig splitBrainProtectionConfig = new SplitBrainProtectionConfig(splitBrainProtectionName, true)
-                .setFunctionImplementation(new SplitBrainProtectionFunction() {
-                    @Override
-                    public boolean apply(Collection<Member> members) {
-                        return members.size() == 3;
-                    }
-                });
+                .setFunctionImplementation(members -> members.size() == 3);
 
         MapConfig mapConfig = new MapConfig("splitBrainProtectionMap")
                 .setSplitBrainProtectionName(splitBrainProtectionName);
@@ -351,7 +302,7 @@ public class SplitBrainProtectionTest extends HazelcastTestSupport {
         IMap<Object, Object> splitBrainProtectionMap = hz.getMap("splitBrainProtectionMap");
         splitBrainProtectionMap.put(generateKeyOwnedBy(hz), "bar");
 
-        IQueue queue = hz.getQueue("noSplitBrainProtectionQueue");
+        IQueue<String> queue = hz.getQueue("noSplitBrainProtectionQueue");
         queue.offer("item");
     }
 
@@ -442,17 +393,6 @@ public class SplitBrainProtectionTest extends HazelcastTestSupport {
 
         @Override
         public boolean apply(Collection<Member> members) {
-            return false;
-        }
-    }
-
-    private static class RecordingSplitBrainProtectionFunction implements SplitBrainProtectionFunction {
-
-        private volatile boolean wasCalled;
-
-        @Override
-        public boolean apply(Collection<Member> members) {
-            wasCalled = true;
             return false;
         }
     }

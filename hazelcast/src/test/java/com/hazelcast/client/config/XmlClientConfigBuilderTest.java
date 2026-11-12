@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,13 @@ package com.hazelcast.client.config;
 
 import com.hazelcast.client.util.RandomLB;
 import com.hazelcast.client.util.RoundRobinLB;
+import com.hazelcast.config.ClassFilter;
 import com.hazelcast.config.CredentialsFactoryConfig;
 import com.hazelcast.config.EvictionPolicy;
 import com.hazelcast.config.InMemoryFormat;
 import com.hazelcast.config.InstanceTrackingConfig;
 import com.hazelcast.config.InvalidConfigurationException;
+import com.hazelcast.config.JavaSerializationFilterConfig;
 import com.hazelcast.config.NearCacheConfig;
 import com.hazelcast.config.PersistentMemoryConfig;
 import com.hazelcast.config.PersistentMemoryDirectoryConfig;
@@ -129,7 +131,7 @@ public class XmlClientConfigBuilderTest extends AbstractClientConfigBuilderTest 
 
         File file = File.createTempFile("foo", ".xml");
         file.deleteOnExit();
-        PrintWriter writer = new PrintWriter(file, "UTF-8");
+        PrintWriter writer = new PrintWriter(file, StandardCharsets.UTF_8);
         writer.println(xml);
         writer.close();
 
@@ -142,14 +144,14 @@ public class XmlClientConfigBuilderTest extends AbstractClientConfigBuilderTest 
 
     @Override
     @Test(expected = HazelcastException.class)
-    public void loadingThroughSystemProperty_nonExistingClasspathResource() throws IOException {
+    public void loadingThroughSystemProperty_nonExistingClasspathResource() {
         System.setProperty("hazelcast.client.config", "classpath:idontexist.xml");
         new XmlClientConfigBuilder();
     }
 
     @Override
     @Test
-    public void loadingThroughSystemProperty_existingClasspathResource() throws IOException {
+    public void loadingThroughSystemProperty_existingClasspathResource() {
         System.setProperty("hazelcast.client.config", "classpath:test-hazelcast-client.xml");
 
         XmlClientConfigBuilder configBuilder = new XmlClientConfigBuilder();
@@ -389,8 +391,8 @@ public class XmlClientConfigBuilderTest extends AbstractClientConfigBuilderTest 
     @Test
     public void testLoadBalancerCustom() {
         String xml = HAZELCAST_CLIENT_START_TAG
-                     + "<load-balancer type=\"custom\">com.hazelcast.client.test.CustomLoadBalancer</load-balancer>"
-                     + HAZELCAST_CLIENT_END_TAG;
+                + "<load-balancer type=\"custom\">com.hazelcast.client.test.CustomLoadBalancer</load-balancer>"
+                + HAZELCAST_CLIENT_END_TAG;
 
         ClientConfig config = buildConfig(xml);
 
@@ -525,8 +527,8 @@ public class XmlClientConfigBuilderTest extends AbstractClientConfigBuilderTest 
         ClientConfig xmlConfig = buildConfig(xml);
 
         List<PersistentMemoryDirectoryConfig> directoryConfigs = xmlConfig.getNativeMemoryConfig()
-                                                                          .getPersistentMemoryConfig()
-                                                                          .getDirectoryConfigs();
+                .getPersistentMemoryConfig()
+                .getDirectoryConfigs();
         assertEquals(2, directoryConfigs.size());
         PersistentMemoryDirectoryConfig dir0Config = directoryConfigs.get(0);
         PersistentMemoryDirectoryConfig dir1Config = directoryConfigs.get(1);
@@ -864,6 +866,67 @@ public class XmlClientConfigBuilderTest extends AbstractClientConfigBuilderTest 
                 .hasMessageContaining("Cannot load");
     }
 
+    @Override
+    public void testCompactSerialization_zeroConfigRestrictions() {
+        String xml = HAZELCAST_CLIENT_START_TAG + """
+                <serialization>
+                    <compact-serialization>
+                        <zero-config-filter>
+                            <whitelist>
+                                <class>com.acme.MyClass</class>
+                                <package>com.acme.package</package>
+                                <prefix>com.acme.prefix.</prefix>
+                            </whitelist>
+                            <blacklist>
+                                <class>com.acme.MyClass2</class>
+                                <package>com.acme.package2</package>
+                                <prefix>com.acme.prefix2.</prefix>
+                            </blacklist>
+                        </zero-config-filter>
+                    </compact-serialization>
+                </serialization>
+                """ + HAZELCAST_CLIENT_END_TAG;
+
+        SerializationConfig config = buildConfig(xml).getSerializationConfig();
+        CompactTestUtil.verifySerializationServiceBuilds(config);
+        ClassFilter expectedWhitelist = new ClassFilter().addClasses("com.acme.MyClass").addPackages("com.acme.package")
+                                                         .addPrefixes("com.acme.prefix.");
+        ClassFilter expectedBlacklist = new ClassFilter().addClasses("com.acme.MyClass2").addPackages("com.acme.package2")
+                                                         .addPrefixes("com.acme.prefix2.");
+        CompactTestUtil.assertZeroConfigFilter(config,
+                new JavaSerializationFilterConfig().setWhitelist(expectedWhitelist).setBlacklist(expectedBlacklist));
+    }
+
+    @Override
+    public void testCompactSerialization_zeroConfigDefaultsDisabled() {
+        String xml = HAZELCAST_CLIENT_START_TAG + """
+                <serialization>
+                    <compact-serialization>
+                        <zero-config-filter defaults-disabled="true"/>
+                    </compact-serialization>
+                </serialization>
+                """ + HAZELCAST_CLIENT_END_TAG;
+
+        SerializationConfig config = buildConfig(xml).getSerializationConfig();
+        CompactTestUtil.verifySerializationServiceBuilds(config);
+        CompactTestUtil.assertZeroConfigFilter(config, new JavaSerializationFilterConfig().setDefaultsDisabled(true));
+    }
+
+    @Override
+    public void testDefaultRoutingStrategyIsPicked_whenNoRoutingStrategyIsSetToMultiMemberRoutingConfig() {
+        String xml = HAZELCAST_CLIENT_START_TAG
+                + "     <network>\n"
+                + "         <cluster-routing mode=\"MULTI_MEMBER\" />\n"
+                + "     </network>\n"
+                + HAZELCAST_CLIENT_END_TAG;
+
+        ClientConfig clientConfig = buildConfig(xml);
+
+        assertEquals(RoutingMode.MULTI_MEMBER, clientConfig.getNetworkConfig().getClusterRoutingConfig().getRoutingMode());
+        assertEquals(ClusterRoutingConfig.DEFAULT_ROUTING_STRATEGY,
+                clientConfig.getNetworkConfig().getClusterRoutingConfig().getRoutingStrategy());
+    }
+
     static ClientConfig buildConfig(String xml, Properties properties) {
         ByteArrayInputStream bis = new ByteArrayInputStream(xml.getBytes());
         XmlClientConfigBuilder configBuilder = new XmlClientConfigBuilder(bis);
@@ -894,7 +957,7 @@ public class XmlClientConfigBuilderTest extends AbstractClientConfigBuilderTest 
         try {
             validator.validate(source);
         } catch (SAXException ex) {
-            fail(xmlFileName + " is not valid because: " + ex.toString());
+            fail(xmlFileName + " is not valid because: " + ex);
         }
     }
 }

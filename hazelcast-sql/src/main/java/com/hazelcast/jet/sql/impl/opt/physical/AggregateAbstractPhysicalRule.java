@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -86,11 +86,12 @@ public abstract class AggregateAbstractPhysicalRule extends RelRule<Config> {
                     if (distinct) {
                         int countIndex = aggregateCallArguments.get(0);
                         aggregationProviders.add(new AggregateCountSupplier(true, true));
-                        // getMaybeSerialized is safe for COUNT because the aggregation only looks whether it is null or not
-                        valueProviders.add(new RowGetMaybeSerializedFn(countIndex));
+                        // must deserialize value to check uniqueness, items received from other members may be HeapData
+                        valueProviders.add(new RowGetFn(countIndex));
                     } else if (aggregateCallArguments.size() == 1) {
                         int countIndex = aggregateCallArguments.get(0);
                         aggregationProviders.add(new AggregateCountSupplier(true, false));
+                        // getMaybeSerialized is safe for COUNT because the aggregation only looks whether it is null or not
                         valueProviders.add(new RowGetMaybeSerializedFn(countIndex));
                     } else {
                         aggregationProviders.add(new AggregateCountSupplier(false, false));
@@ -122,7 +123,7 @@ public abstract class AggregateAbstractPhysicalRule extends RelRule<Config> {
                 case JSON_ARRAYAGG:
                     int arrayAggIndex = aggregateCallArguments.get(0);
                     List<RelFieldCollation> colls = aggregateCall.getCollation().getFieldCollations();
-                    if (colls.size() > 0) {
+                    if (!colls.isEmpty()) {
                         ExpressionUtil.SqlRowComparator comparator = new ExpressionUtil.SqlRowComparator(convertCollation(colls));
                         HazelcastJsonArrayAggFunction agg = (HazelcastJsonArrayAggFunction) aggregateCall.getAggregation();
                         aggregationProviders.add(new AggregateArrayAggSupplier(comparator, agg.isAbsentOnNull(), arrayAggIndex));
@@ -518,6 +519,8 @@ public abstract class AggregateAbstractPhysicalRule extends RelRule<Config> {
             FunctionEx<List<SqlAggregation>, JetSqlRow> {
         public static final AggregateFinishFunction INSTANCE = new AggregateFinishFunction();
 
+        private static final long serialVersionUID = 1L;
+
         private AggregateFinishFunction() {
         }
 
@@ -553,6 +556,8 @@ public abstract class AggregateAbstractPhysicalRule extends RelRule<Config> {
             FunctionEx<List<SqlAggregation>, JetSqlRow> {
         public static final AggregateExportFunction INSTANCE = new AggregateExportFunction();
 
+        private static final long serialVersionUID = 1L;
+
         private AggregateExportFunction() {
         }
 
@@ -581,6 +586,9 @@ public abstract class AggregateAbstractPhysicalRule extends RelRule<Config> {
     }
 
     public static class RowGetMaybeSerializedFn implements IdentifiedDataSerializable, FunctionEx<JetSqlRow, Object> {
+
+        private static final long serialVersionUID = 1L;
+
         private Integer groupIndex;
 
         public RowGetMaybeSerializedFn() {
@@ -617,6 +625,8 @@ public abstract class AggregateAbstractPhysicalRule extends RelRule<Config> {
     }
 
     public static class RowIdentityFn implements IdentifiedDataSerializable, FunctionEx<JetSqlRow, Object> {
+        private static final long serialVersionUID = 1L;
+
         public RowIdentityFn() {
         }
 
@@ -645,6 +655,8 @@ public abstract class AggregateAbstractPhysicalRule extends RelRule<Config> {
     }
 
     public static class RowGetFn implements IdentifiedDataSerializable, FunctionEx<JetSqlRow, Object> {
+
+        private static final long serialVersionUID = 1L;
         private int index;
 
         public RowGetFn() {
@@ -682,6 +694,8 @@ public abstract class AggregateAbstractPhysicalRule extends RelRule<Config> {
 
     public static final class NullFunction implements IdentifiedDataSerializable, FunctionEx<JetSqlRow, Object> {
         public static final NullFunction INSTANCE = new NullFunction();
+
+        private static final long serialVersionUID = 1L;
 
         private NullFunction() {
         }

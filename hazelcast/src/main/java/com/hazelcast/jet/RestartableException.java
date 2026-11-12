@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,13 +21,15 @@ import com.hazelcast.jet.core.Processor;
 import com.hazelcast.jet.core.ProcessorMetaSupplier;
 import com.hazelcast.jet.core.ProcessorSupplier;
 
+import java.io.Serial;
+
 /**
  * Exception to throw from job-executing methods to indicate a failure that can
  * be resolved by restarting the job.
  * <p>
  * It is handled when thrown from:<ul>
  *     <li>{@link Processor} methods
- *     <li>lambda functions: key & timestamp extractors, map functions...
+ *     <li>lambda functions: key &amp; timestamp extractors, map functions...
  *     <li>sources/sinks
  *     <li>{@code init()} method in {@link Processor}, {@link
  *          ProcessorSupplier} and {@link ProcessorMetaSupplier} (but not their
@@ -42,6 +44,7 @@ import com.hazelcast.jet.core.ProcessorSupplier;
  */
 public class RestartableException extends JetException {
 
+    @Serial
     private static final long serialVersionUID = 1L;
 
     public RestartableException() {

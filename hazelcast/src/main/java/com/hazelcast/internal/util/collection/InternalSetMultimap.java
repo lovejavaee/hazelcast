@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,10 +28,10 @@ import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 /**
  * Simplistic implementation of MultiMap.
  * It's not thread-safe, concurrent access has to be externally synchronized.
- *
+ * <p>
  * It does not allow duplicates: The same value can be associated with the same key once only. Duplicates are
  * eliminated.
- *
+ * <p>
  * The name has a prefix Internal- to avoid confusion with {@link MultiMap}
  *
  * @param <K>
@@ -41,32 +41,22 @@ public class InternalSetMultimap<K, V> {
     private final Map<K, Set<V>> backingMap;
 
     public InternalSetMultimap() {
-        this.backingMap = new HashMap<K, Set<V>>();
+        this.backingMap = new HashMap<>();
     }
 
     /**
      * Associate value to a given key. It has no effect if the value is already associated with the key.
-     *
-     * @param key
-     * @param value
      */
     public void put(K key, V value) {
         checkNotNull(key, "Key cannot be null");
         checkNotNull(value, "Value cannot be null");
 
-        Set<V> values = backingMap.get(key);
-        if (values == null) {
-            values = new HashSet<V>();
-            backingMap.put(key, values);
-        }
+        Set<V> values = backingMap.computeIfAbsent(key, x -> new HashSet<>());
         values.add(value);
     }
 
     /**
      * Return Set of values associated with a given key
-     *
-     * @param key
-     * @return
      */
     public Set<V> get(K key) {
         checkNotNull(key, "Key cannot be null");

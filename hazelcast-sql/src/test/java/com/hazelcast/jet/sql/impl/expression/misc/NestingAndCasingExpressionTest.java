@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,8 +38,8 @@ import java.util.Set;
 import java.util.StringJoiner;
 
 import static com.hazelcast.internal.util.StringUtil.lowerCaseInternal;
-import static junit.framework.TestCase.assertFalse;
-import static junit.framework.TestCase.fail;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.fail;
 
 /**
  * Ensure that a nested function call derives the argument types as expected. This might not be the case if the
@@ -544,6 +544,12 @@ public class NestingAndCasingExpressionTest extends ExpressionTestSupport {
     @Test
     public void test_MAX() {
         check(sql("MAX(?) || MAX(?)"), 1L, 1L);
+    }
+
+    @Test
+    public void test_MOD() {
+        check(sql("MOD(?, 2) || MOD(?, 2)"), 1L, 1L);
+        check(sql("MOD(2, ?) || MOD(2, ?)"), 1L, 1L);
     }
 
     @Test

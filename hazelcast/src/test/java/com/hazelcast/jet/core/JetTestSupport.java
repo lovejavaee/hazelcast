@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.jet.core;
 
 import com.hazelcast.client.config.ClientConfig;
+import com.hazelcast.client.config.RoutingMode;
 import com.hazelcast.client.test.TestHazelcastFactory;
 import com.hazelcast.cluster.Address;
 import com.hazelcast.cluster.Member;
@@ -24,8 +25,10 @@ import com.hazelcast.collection.IList;
 import com.hazelcast.config.Config;
 import com.hazelcast.core.DistributedObject;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.dataconnection.impl.InternalDataConnectionService;
 import com.hazelcast.instance.impl.HazelcastInstanceImpl;
-import com.hazelcast.instance.impl.Node;
+import com.hazelcast.internal.cluster.MemberInfo;
+import com.hazelcast.internal.cluster.impl.MembersView;
 import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.internal.serialization.impl.DefaultSerializationServiceBuilder;
 import com.hazelcast.jet.JetService;
@@ -34,10 +37,10 @@ import com.hazelcast.jet.function.RunnableEx;
 import com.hazelcast.jet.impl.JetServiceBackend;
 import com.hazelcast.jet.impl.JobClassLoaderService;
 import com.hazelcast.jet.impl.JobExecutionRecord;
-import com.hazelcast.jet.impl.JobExecutionService;
 import com.hazelcast.jet.impl.JobRepository;
-import com.hazelcast.jet.impl.execution.ExecutionContext;
+import com.hazelcast.jet.impl.execution.init.ExecutionPlanBuilder;
 import com.hazelcast.jet.impl.pipeline.transform.BatchSourceTransform;
+import com.hazelcast.jet.impl.util.Util;
 import com.hazelcast.jet.pipeline.BatchSource;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
@@ -46,8 +49,11 @@ import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.test.Accessors;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.OverridePropertyRule;
+import com.hazelcast.version.Version;
 import org.junit.After;
 import org.junit.ClassRule;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.util.SetSystemProperty;
 import org.junit.rules.Timeout;
 
 import javax.annotation.Nonnull;
@@ -67,28 +73,34 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 import static com.hazelcast.jet.Util.idToString;
 import static com.hazelcast.jet.core.JobStatus.RUNNING;
 import static com.hazelcast.jet.impl.JetServiceBackend.SERVICE_NAME;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.rethrow;
+import static com.hazelcast.jet.impl.util.JetExceptionUtil.rethrow;
+import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static java.util.stream.Collectors.joining;
-import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toMap;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+@SetSystemProperty(key = "hz.jet.enabled", value = "true")
+@org.junit.jupiter.api.Timeout(value = 15, unit = TimeUnit.MINUTES)
 public abstract class JetTestSupport extends HazelcastTestSupport {
 
     public static final InternalSerializationService TEST_SS = new DefaultSerializationServiceBuilder().build();
 
     /**
      * This is needed to finish tests which got stuck in @Before, @BeforeClass, @After or @AfterClass method.
+     * Note that this rule applies to entire test execution (all methods with all parameters),
+     * not only to individual methods contrary to what might be expected from {@link Timeout} javadoc.
+     * This is caused by ordering of standard rules with respect to our custom rules.
      */
     @ClassRule
     public static Timeout globalTimeout = Timeout.seconds(15 * 60);
@@ -102,6 +114,7 @@ public abstract class JetTestSupport extends HazelcastTestSupport {
     private TestHazelcastFactory instanceFactory;
 
     @After
+    @AfterEach
     public void shutdownFactory() throws Exception {
         if (instanceFactory != null) {
             Map<Long, String> leakedClassloaders = shutdownJobsAndGetLeakedClassLoaders();
@@ -137,18 +150,20 @@ public abstract class JetTestSupport extends HazelcastTestSupport {
                     ditchJob(job, instances.toArray(new HazelcastInstance[0]));
                 }
 
-                JobClassLoaderService jobClassLoaderService = ((HazelcastInstanceImpl) instance).node
-                        .getNodeEngine()
-                        .<JetServiceBackend>getService(SERVICE_NAME)
-                        .getJobClassLoaderService();
+                if (instance instanceof HazelcastInstanceImpl hazelcastInstanceImpl) {
+                    JobClassLoaderService jobClassLoaderService = hazelcastInstanceImpl.node
+                            .getNodeEngine()
+                            .<JetServiceBackend>getService(SERVICE_NAME)
+                            .getJobClassLoaderService();
 
-                Map<Long, ?> classLoaders = jobClassLoaderService.getClassLoaders();
-                // The classloader cleanup is done asynchronously in some cases, wait up to 10s
-                for (int i = 0; i < 100 && !classLoaders.isEmpty(); i++) {
-                    sleepMillis(100);
-                }
-                for (Entry<Long, ?> entry : classLoaders.entrySet()) {
-                    leakedClassloaders.put(entry.getKey(), entry.toString());
+                    Map<Long, ?> classLoaders = jobClassLoaderService.getClassLoaders();
+                    // The classloader cleanup is done asynchronously in some cases, wait up to 10s
+                    for (int i = 0; i < 100 && !classLoaders.isEmpty(); i++) {
+                        sleepMillis(100);
+                    }
+                    for (Entry<Long, ?> entry : classLoaders.entrySet()) {
+                        leakedClassloaders.put(entry.getKey(), entry.toString());
+                    }
                 }
             }
         }
@@ -164,15 +179,15 @@ public abstract class JetTestSupport extends HazelcastTestSupport {
     }
 
     /**
-     * Returns config to configure a non-smart client that connects to the
+     * Returns config to configure a SINGLE_MEMBER routing client that connects to the
      * given instance only.
      */
-    protected ClientConfig configForNonSmartClientConnectingTo(HazelcastInstance targetInstance) {
+    protected ClientConfig configForSingleMemberClientConnectingTo(HazelcastInstance targetInstance) {
         ClientConfig clientConfig = new ClientConfig();
         Member coordinator = targetInstance.getCluster().getLocalMember();
         clientConfig.getNetworkConfig()
                 .addAddress(coordinator.getAddress().getHost() + ':' + coordinator.getAddress().getPort())
-                .setSmartRouting(false);
+                .getClusterRoutingConfig().setRoutingMode(RoutingMode.SINGLE_MEMBER);
         return clientConfig;
     }
 
@@ -185,13 +200,6 @@ public abstract class JetTestSupport extends HazelcastTestSupport {
             instanceFactory = new TestHazelcastFactory();
         }
         return instanceFactory.newHazelcastInstance(config);
-    }
-
-    protected HazelcastInstance createHazelcastInstance(Config config, Address[] blockedAddress) {
-        if (instanceFactory == null) {
-            instanceFactory = new TestHazelcastFactory();
-        }
-        return instanceFactory.newHazelcastInstance(config, blockedAddress);
     }
 
     protected HazelcastInstance[] createHazelcastInstances(int nodeCount) {
@@ -213,14 +221,8 @@ public abstract class JetTestSupport extends HazelcastTestSupport {
         return instance.getList(randomName());
     }
 
-    protected static void fillListWithInts(IList<Integer> list, int count) {
-        for (int i = 0; i < count; i++) {
-            list.add(i);
-        }
-    }
-
     protected static void appendToFile(File file, String... lines) throws IOException {
-        try (PrintWriter writer = new PrintWriter(new FileOutputStream(file, true))) {
+        try (var writer = new PrintWriter(new FileOutputStream(file, true))) {
             for (String payload : lines) {
                 writer.write(payload + '\n');
             }
@@ -232,10 +234,6 @@ public abstract class JetTestSupport extends HazelcastTestSupport {
         File file = directory.toFile();
         file.deleteOnExit();
         return file;
-    }
-
-    public static void assertJobStatusEventually(Job job, @Nonnull JobStatus expected) {
-        assertJobStatusEventually(job, expected, ASSERT_TRUE_EVENTUALLY_TIMEOUT);
     }
 
     public static Config smallInstanceWithResourceUploadConfig() {
@@ -250,94 +248,44 @@ public abstract class JetTestSupport extends HazelcastTestSupport {
         return config;
     }
 
-    /**
-     * Asserts that a job status is eventually RUNNING. When it's running,
-     * checks that the execution ID is different from the given {@code
-     * ignoredExecutionId}, if not, tries again.
-     * <p>
-     * This is useful when checking that the job is running after a restart:
-     * <pre>{@code
-     *     job.restart();
-     *     // This is racy, we might see the previous execution running.
-     *     // Subsequent steps can fail because the job is restarting.
-     *     assertJobStatusEventually(job, RUNNING);
-     * }</pre>
-     * <p>
-     * This method allows an equivalent code:
-     * <pre>{@code
-     *     long oldExecutionId = assertJobRunningEventually(instance, job, null);
-     *     // now we're sure the job is safe to restart - restart fails if the job isn't running
-     *     job.restart();
-     *     assertJobRunningEventually(instance, job, oldExecutionId);
-     *     // now we're sure that a new execution is running
-     * }</pre>
-     *
-     * @param ignoredExecutionId If job is running and has this execution ID,
-     *                           wait longer. If null, no execution ID is ignored.
-     * @return the execution ID of the new execution or 0 if {@code
-     * ignoredExecutionId == null}
-     */
-    public static long assertJobRunningEventually(HazelcastInstance instance, Job job, Long ignoredExecutionId) {
-        Long executionId;
-        JobExecutionService service = getJetServiceBackend(instance).getJobExecutionService();
-        long nullSince = Long.MIN_VALUE;
-        do {
-            assertJobStatusEventually(job, RUNNING);
-            // executionId can be null if the execution just terminated
-            executionId = service.getExecutionIdForJobId(job.getId());
-            if (executionId == null) {
-                if (nullSince == Long.MIN_VALUE) {
-                    nullSince = System.nanoTime();
-                } else {
-                    if (NANOSECONDS.toSeconds(System.nanoTime() - nullSince) > 10) {
-                        // Because we check the execution ID, make sure the execution is running on
-                        // the given instance. E.g. a job with a non-distributed source and no
-                        // distributed edge will complete on all but one members immediately.
-                        throw new RuntimeException("The executionId is null for 10 secs - is the job running on all members?");
-                    }
-                }
-            } else {
-                nullSince = Long.MIN_VALUE;
-            }
-        } while (executionId == null || executionId.equals(ignoredExecutionId));
-        return executionId;
-    }
-
-    public static void assertJobStatusEventually(Job job, JobStatus expected, int timeoutSeconds) {
-        assertNotNull(job);
-        assertTrueEventually(() ->
-                assertEquals("jobId=" + idToString(job.getId()), expected, job.getStatus()), timeoutSeconds);
-    }
-
     public static JetServiceBackend getJetServiceBackend(HazelcastInstance instance) {
-        return getNodeEngineImpl(instance).getService(SERVICE_NAME);
+        return Accessors.getNodeEngineImpl(instance).getService(SERVICE_NAME);
     }
 
-    public static Address getAddress(HazelcastInstance instance) {
-        return Accessors.getAddress(instance);
+    public static InternalDataConnectionService getDataConnectionService(HazelcastInstance instance) {
+        return Accessors.getNodeEngineImpl(instance).getDataConnectionService();
     }
 
-    public static Node getNode(HazelcastInstance instance) {
-        return Accessors.getNode(instance);
+    public static Map<Address, int[]> getPartitionAssignment(HazelcastInstance instance) {
+        NodeEngineImpl nodeEngine = Accessors.getNodeEngineImpl(instance);
+        MembersView membersView = Util.getMembersView(nodeEngine);
+        Version coordinatorVersion = nodeEngine.getLocalMember().getVersion().asVersion();
+        List<MemberInfo> members = membersView.getMembers().stream()
+                .filter(m -> m.getVersion().asVersion().equals(coordinatorVersion) && !m.isLiteMember())
+                .collect(Collectors.toList());
+        return ExecutionPlanBuilder.getPartitionAssignment(nodeEngine, members, false, null, null, null)
+                .entrySet()
+                .stream()
+                .collect(toMap(en -> en.getKey().getAddress(), Map.Entry::getValue));
     }
 
-    public static NodeEngineImpl getNodeEngineImpl(HazelcastInstance instance) {
-        return Accessors.getNodeEngineImpl(instance);
-    }
-
-    public Address nextAddress() {
-        return instanceFactory.nextAddress();
-    }
-
-    protected void terminateInstance(HazelcastInstance instance) {
-        instanceFactory.terminate(instance);
+    public Address getAddressForPartitionId(HazelcastInstance instance, int partitionId) {
+        Map<Address, int[]> partitionAssignment = getPartitionAssignment(instance);
+        for (Entry<Address, int[]> entry : partitionAssignment.entrySet()) {
+            for (int pId : entry.getValue()) {
+                if (pId == partitionId) {
+                    return entry.getKey();
+                }
+            }
+        }
+        throw new AssertionError("Partition " + partitionId + " is not present in cluster.");
     }
 
     /**
      * Runs the given Runnable in a new thread, if you're not interested in the
      * execution failure, any errors are logged at WARN level.
      */
-    public Future spawnSafe(RunnableEx r) {
+    public Future<?> spawnSafe(RunnableEx r) {
         return spawn(() -> {
             try {
                 r.runEx();
@@ -355,20 +303,35 @@ public abstract class JetTestSupport extends HazelcastTestSupport {
         return new Watermark(timestamp, key);
     }
 
-    public void waitForFirstSnapshot(JobRepository jr, long jobId, int timeoutSeconds, boolean allowEmptySnapshot) {
+    public static void waitForFirstSnapshot(HazelcastInstance instance, Job job) {
+        JobRepository jobRepository = new JobRepository(instance);
+        waitForFirstSnapshot(jobRepository, job.getId(), 60, false);
+    }
+
+    public static void waitForFirstSnapshot(JobRepository jr, long jobId, int timeoutSeconds, boolean allowEmptySnapshot) {
         long[] snapshotId = {-1};
         assertTrueEventually(() -> {
             JobExecutionRecord record = jr.getJobExecutionRecord(jobId);
             assertNotNull("null JobExecutionRecord", record);
             assertTrue("No snapshot produced",
                     record.dataMapIndex() >= 0 && record.snapshotId() >= 0);
-            assertTrue("stats are 0", allowEmptySnapshot || record.snapshotStats().numBytes() > 0);
+            assertTrue("stats are 0",
+                    allowEmptySnapshot || requireNonNull(record.snapshotStats()).numBytes() > 0);
             snapshotId[0] = record.snapshotId();
         }, timeoutSeconds);
         SUPPORT_LOGGER.info("First snapshot found (id=" + snapshotId[0] + ")");
     }
 
-    public void waitForNextSnapshot(JobRepository jr, long jobId, int timeoutSeconds, boolean allowEmptySnapshot) {
+    public static void waitForNextSnapshot(HazelcastInstance instance, Job job) {
+        JobRepository jobRepository = new JobRepository(instance);
+        waitForNextSnapshot(jobRepository, job);
+    }
+
+    public static void waitForNextSnapshot(JobRepository repo, Job job) {
+        waitForNextSnapshot(repo, job.getId(), 30, false);
+    }
+
+    public static void waitForNextSnapshot(JobRepository jr, long jobId, int timeoutSeconds, boolean allowEmptySnapshot) {
         long originalSnapshotId = jr.getJobExecutionRecord(jobId).snapshotId();
         // wait until there is at least one more snapshot
         long[] snapshotId = {-1};
@@ -379,7 +342,8 @@ public abstract class JetTestSupport extends HazelcastTestSupport {
             snapshotId[0] = record.snapshotId();
             assertTrue("No more snapshots produced in " + timeoutSeconds + " seconds",
                     snapshotId[0] > originalSnapshotId);
-            assertTrue("stats are 0", allowEmptySnapshot || record.snapshotStats().numBytes() > 0);
+            assertTrue("stats are 0",
+                    allowEmptySnapshot || requireNonNull(record.snapshotStats()).numBytes() > 0);
         }, timeoutSeconds);
         SUPPORT_LOGGER.info("Next snapshot found after " + NANOSECONDS.toMillis(System.nanoTime() - start) + " ms (id="
                 + snapshotId[0] + ", previous id=" + originalSnapshotId + ")");
@@ -402,7 +366,7 @@ public abstract class JetTestSupport extends HazelcastTestSupport {
     }
 
     /**
-     * Give this method a job and it will ensure it's no longer running. It
+     * Give this method a job, and it will ensure it's no longer running. It
      * will ignore if it's not running. If the cancellation fails, it will
      * retry.
      */
@@ -476,7 +440,7 @@ public abstract class JetTestSupport extends HazelcastTestSupport {
 
             sleepMillis(500);
             SUPPORT_LOGGER.warning("Failed to cancel the job and it is " + status + ", retrying. Failure: "
-                                   + cancellationFailure, cancellationFailure);
+                    + cancellationFailure, cancellationFailure);
         }
         // if we got here, 10 attempts to cancel the job have failed. Cluster is in bad shape probably, shut it down
         try {
@@ -507,46 +471,10 @@ public abstract class JetTestSupport extends HazelcastTestSupport {
     public static Job awaitSingleRunningJob(HazelcastInstance hz) {
         AtomicReference<Job> job = new AtomicReference<>();
         assertTrueEventually(() -> {
-            List<Job> jobs = hz.getJet().getJobs().stream().filter(j -> j.getStatus() == RUNNING).collect(toList());
+            List<Job> jobs = hz.getJet().getJobs().stream().filter(j -> j.getStatus() == RUNNING).toList();
             assertEquals(1, jobs.size());
             job.set(jobs.get(0));
         });
         return job.get();
-    }
-
-    /**
-     * Asserts that the {@code job} has an {@link ExecutionContext} on the
-     * given {@code instance}.
-     */
-    public static void assertJobExecuting(Job job, HazelcastInstance instance) {
-        ExecutionContext execCtx = getJetServiceBackend(instance).getJobExecutionService().getExecutionContext(job.getId());
-        assertNotNull("Job should be executing on member " + instance + ", but is not", execCtx);
-    }
-
-    /**
-     * Returns the count of {@link ExecutionContext} that are running on given {@code instance}.
-     */
-    public static int getExecutionContextCount(HazelcastInstance instance) {
-        return getJetServiceBackend(instance).getJobExecutionService().getExecutionContexts().size();
-    }
-
-    /**
-     * Asserts that the {@code job} is already visible by {@linkplain JetService#getJob} methods.
-     * @param client Hazelcast Instance used to query the cluster
-     * @param jobToCheck job to be checked for visibility
-     * @param jobName job name, for better assertion message
-     */
-    public static void assertJobVisible(HazelcastInstance client, Job jobToCheck, String jobName) {
-        assertTrueEventually(jobName + " not found",
-                () -> assertNotNull(client.getJet().getJob(jobToCheck.getId())));
-    }
-
-    /**
-     * Asserts that the {@code job} does not have an {@link ExecutionContext}
-     * on the given {@code instance}.
-     */
-    public static void assertJobNotExecuting(Job job, HazelcastInstance instance) {
-        ExecutionContext execCtx = getJetServiceBackend(instance).getJobExecutionService().getExecutionContext(job.getId());
-        assertNull("Job should not be executing on member " + instance + ", but is", execCtx);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,10 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
+import java.util.function.BiConsumer;
+import java.util.function.Function;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
@@ -68,4 +72,36 @@ public class LocalIndexStatsImplTest {
         assertNotNull(stats.toString());
     }
 
+    @Test
+    public void testPartitionsIndexedIsTransferredFromOnDemandIndexStats() {
+        testFieldTransferredFromOnDemandIndexStats(42L, OnDemandIndexStats::setPartitionsIndexed,
+                LocalIndexStatsImpl::getPartitionsIndexed);
+    }
+
+    @Test
+    public void testIndexNotReadyQueryCountIsTransferredFromOnDemandIndexStats() {
+        testFieldTransferredFromOnDemandIndexStats(4230L, OnDemandIndexStats::setIndexNotReadyQueryCount,
+                LocalIndexStatsImpl::getIndexNotReadyQueryCount);
+    }
+
+    @Test
+    public void testPartitionUpdatesStartedIsTransferredFromOnDemandIndexStats() {
+        testFieldTransferredFromOnDemandIndexStats(4230L, OnDemandIndexStats::setPartitionUpdatesStarted,
+                LocalIndexStatsImpl::getPartitionUpdatesStarted);
+    }
+
+    @Test
+    public void testPartitionUpdatesFinishedIsTransferredFromOnDemandIndexStats() {
+        testFieldTransferredFromOnDemandIndexStats(4231L, OnDemandIndexStats::setPartitionUpdatesFinished,
+                LocalIndexStatsImpl::getPartitionUpdatesFinished);
+    }
+
+    void testFieldTransferredFromOnDemandIndexStats(long value, BiConsumer<OnDemandIndexStats, Long> setter,
+                                                    Function<LocalIndexStatsImpl, Long> getter) {
+        OnDemandIndexStats source = new OnDemandIndexStats();
+        setter.accept(source, value);
+        LocalIndexStatsImpl dest = new LocalIndexStatsImpl();
+        dest.setAllFrom(source);
+        assertThat(getter.apply(dest)).isEqualTo(value);
+    }
 }

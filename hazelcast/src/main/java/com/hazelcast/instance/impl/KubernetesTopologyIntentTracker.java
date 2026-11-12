@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,12 +20,15 @@ import com.hazelcast.cluster.ClusterState;
 import com.hazelcast.config.InvalidConfigurationException;
 import com.hazelcast.internal.cluster.impl.ClusterServiceImpl;
 import com.hazelcast.internal.partition.impl.InternalPartitionServiceImpl;
+import com.hazelcast.internal.partition.operation.SafeStateCheckOperation;
 import com.hazelcast.internal.util.BiTuple;
 import com.hazelcast.internal.util.ExceptionUtil;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.spi.utils.RetryUtils;
 
 import javax.annotation.Nullable;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -41,7 +44,7 @@ import static java.lang.Thread.sleep;
  * according to intent of topology changes detected in kubernetes environment.
  * <br/>
  * Example flow of change in detected intent and associated {@code currentClusterSpecSize} on a cluster's master member:
- * (User action on left, detected intent with cluster spec size in parenthese on the right side).
+ * (User action on left, detected intent with cluster spec size in parentheses on the right side).
  * <pre>
  * {@code
  * +-----------------------------------------------------------------+---------------------------------+
@@ -77,7 +80,7 @@ public class KubernetesTopologyIntentTracker implements ClusterTopologyIntentTra
     private final ILogger logger;
     private final Node node;
     /**
-     * The desired number of members, as specified in the runtime environment. eg in kubernetes
+     * The desired number of members, as specified in the runtime environment. e.g. in kubernetes
      * {@code kubectl scale sts hz --replicas 5} means {@code currentClusterSpecSize} is 5.
      */
     private volatile int currentClusterSpecSize = UNKNOWN;
@@ -122,6 +125,15 @@ public class KubernetesTopologyIntentTracker implements ClusterTopologyIntentTra
                        int previousCurrentReplicas, int updatedCurrentReplicas) {
         final int previousClusterSpecSizeValue = this.currentClusterSpecSize;
         this.currentClusterSpecSize = updatedSpecifiedReplicas;
+        if (logger.isFineEnabled()) {
+            logger.fine("Received topology update: specifiedReplicas=%s->%s, readyReplicas=%s->%s, "
+                    + "currentReplicas=%s->%s", previousSpecifiedReplicas, updatedSpecifiedReplicas,
+                    previousReadyReplicas, updatedReadyReplicas, previousCurrentReplicas, updatedCurrentReplicas);
+            logger.fine("State before update: previousIntent=%s, " + "clusterSpecSize=%s->%s, "
+                            + "lastKnownStableClusterSpecSize=%s, currentClusterSize=%s",
+                    clusterTopologyIntent.get(), previousClusterSpecSizeValue, currentClusterSpecSize,
+                    lastKnownStableClusterSpecSize, currentClusterSize);
+        }
         if (previousSpecifiedReplicas == UNKNOWN) {
             handleInitialUpdate(updatedSpecifiedReplicas, updatedReadyReplicas);
             return;
@@ -144,6 +156,12 @@ public class KubernetesTopologyIntentTracker implements ClusterTopologyIntentTra
         } else {
             newTopologyIntent = ClusterTopologyIntent.SCALING;
             postUpdateActionOnMaster = () -> changeClusterState(ClusterState.ACTIVE);
+            logger.fine("State changing: previousIntent=" + previous
+                    + ", nextIntent=" + newTopologyIntent
+                    + ", reason=specified replica count changed from " + previousSpecifiedReplicas
+                    + " to " + updatedSpecifiedReplicas
+                    + ", currentClusterSpecSize=" + currentClusterSpecSize
+                    + ", currentClusterSize=" + currentClusterSize);
         }
         if (clusterTopologyIntent.compareAndSet(previous, newTopologyIntent)) {
             onClusterTopologyIntentUpdate(previous, newTopologyIntent, postUpdateActionOnMaster);
@@ -168,6 +186,12 @@ public class KubernetesTopologyIntentTracker implements ClusterTopologyIntentTra
             this.lastKnownStableClusterSpecSize = previousClusterSpecSizeValue;
         }
         newTopologyIntent = nextIntentWhenShuttingDown(previous);
+        logger.fine("State changing: previousIntent=" + previous
+                + ", nextIntent=" + newTopologyIntent
+                + ", reason=specified replica count changed to 0"
+                + ", previousClusterSpecSize=" + previousClusterSpecSizeValue
+                + ", lastKnownStableClusterSpecSize=" + lastKnownStableClusterSpecSize
+                + ", currentClusterSize=" + currentClusterSize);
         return newTopologyIntent;
     }
 
@@ -222,12 +246,14 @@ public class KubernetesTopologyIntentTracker implements ClusterTopologyIntentTra
                                                          int previousCurrentReplicas, int updatedCurrentReplicas) {
         ClusterTopologyIntent next = previous;
         Runnable action = null;
+        String reason = "replica count did not change and no intent matched";
         if (updatedReadyReplicas == currentClusterSpecSize) {
             if (updatedCurrentReplicas < previousCurrentReplicas) {
                 if (updatedReadyReplicas == previousReadyReplicas) {
                     // If updatedReady == previousReady and updatedCurrent < previousCurrent, then this is the beginning of a
                     // rollout restart and readiness probe hasn't yet noticed.
                     next = ClusterTopologyIntent.CLUSTER_STABLE_WITH_MISSING_MEMBERS;
+                    reason = "replica count decreased while ready count did not change";
                 } else if (updatedReadyReplicas > previousReadyReplicas) {
                     // If updatedReady > previousReady and updatedCurrent < previousCurrent, then this is a coalesced Kubernetes
                     // event in the middle of rollout restart. It marks at the same time a previously restarted member
@@ -237,6 +263,7 @@ public class KubernetesTopologyIntentTracker implements ClusterTopologyIntentTra
                     action = clusterStateForMissingMembers == ClusterState.NO_MIGRATION
                             ? () -> changeClusterState(ClusterState.ACTIVE)
                             : null;
+                    reason = "replica count decreased while ready count increased";
                 }
             } else if (previous != ClusterTopologyIntent.CLUSTER_STABLE) {
                 next = ClusterTopologyIntent.CLUSTER_STABLE;
@@ -244,13 +271,19 @@ public class KubernetesTopologyIntentTracker implements ClusterTopologyIntentTra
                     if (getClusterService().getClusterState() != ClusterState.ACTIVE) {
                         tryExecuteOrSetDeferredClusterStateChange(ClusterState.ACTIVE);
                     } else if (!getPartitionService().isPartitionTableSafe()) {
+                        logger.fine("Triggering migration control task after stable topology: partition table is not safe.");
                         getPartitionService().getMigrationManager().triggerControlTask();
                     }
                 };
+                reason = "replica count reached the current cluster spec size";
             }
         } else if (previous == ClusterTopologyIntent.CLUSTER_STABLE && updatedCurrentReplicas < currentClusterSpecSize) {
             next = ClusterTopologyIntent.CLUSTER_STABLE_WITH_MISSING_MEMBERS;
+            reason = "cluster was stable and current replica count is below the cluster spec size";
         }
+        logger.fine("State intent decision: previousIntent=%s, nextIntent=%s, reason=%s, actionOnMaster=%s, "
+                        + "currentClusterSpecSize=%s, currentClusterSize=%s", previous, next, reason, action != null,
+                currentClusterSpecSize, currentClusterSize);
         return BiTuple.of(next, action);
     }
 
@@ -272,12 +305,17 @@ public class KubernetesTopologyIntentTracker implements ClusterTopologyIntentTra
 
     @Override
     public void shutdownWithIntent(ClusterTopologyIntent shutdownIntent) {
+        logger.fine("Shutdown requested: shutdownIntent=%s, clusterStateForMissingMembers=%s, currentClusterSpecSize=%s, "
+                        + "lastKnownStableClusterSpecSize=%s, currentClusterSize=%s", shutdownIntent,
+                clusterStateForMissingMembers, currentClusterSpecSize, lastKnownStableClusterSpecSize, currentClusterSize);
         // consider the detected shutdown intent before triggering node shutdown
         if (shutdownIntent == ClusterTopologyIntent.CLUSTER_STABLE
                 || shutdownIntent == ClusterTopologyIntent.CLUSTER_STABLE_WITH_MISSING_MEMBERS) {
             try {
                 // wait for partition table to be healthy before switching to NO_MIGRATION
-                // eg in "rollout restart" case, node is shutdown in NO_MIGRATION state
+                // e.g. in "rollout restart" case, node is shutdown in NO_MIGRATION state
+                logger.fine("Waiting for partition table to be safe before switching to %s state. shutdownIntent=%s",
+                        clusterStateForMissingMembers, shutdownIntent);
                 waitCallableWithShutdownTimeout(() -> getPartitionService().isPartitionTableSafe());
                 changeClusterState(clusterStateForMissingMembers);
             } catch (Throwable t) {
@@ -297,6 +335,7 @@ public class KubernetesTopologyIntentTracker implements ClusterTopologyIntentTra
             // - finally switch to PASSIVE cluster state and wait for partition replica sync (similar to normal
             //   CLUSTER_SHUTDOWN case)
             long remainingNanosForShutdown = waitForMissingMember();
+            logger.fine("Cluster shutdown with missing members: remainingNanosForShutdown=%s", remainingNanosForShutdown);
             clusterWideShutdownWithMissingMember(shutdownIntent, remainingNanosForShutdown);
         }
     }
@@ -324,48 +363,69 @@ public class KubernetesTopologyIntentTracker implements ClusterTopologyIntentTra
         }
         try {
             getNodeExtension().getInternalHotRestartService()
-                    .waitPartitionReplicaSyncOnCluster(remainingNanosForShutdown, TimeUnit.NANOSECONDS);
+                    .waitPartitionReplicaSyncOnCluster(remainingNanosForShutdown, TimeUnit.NANOSECONDS,
+                            () -> new SafeStateCheckOperation(true));
         } catch (IllegalStateException e) {
             logger.severe("Failure while waiting for partition replica sync before shutdown", e);
         }
     }
 
     private void clusterWideShutdown() {
+        Instant start = Instant.now();
+        logger.info("cluster-wide-shutdown, Starting");
         try {
             changeClusterState(ClusterState.PASSIVE);
         } catch (Throwable t) {
             // let shutdown proceed even though we failed to switch to PASSIVE state
-            logger.warning("Could not switch to transient PASSIVE state while cluster "
+            logger.warning("cluster-wide-shutdown, Could not switch to transient PASSIVE state while cluster "
                     + "shutdown intent was CLUSTER_SHUTDOWN.", t);
         }
         long timeoutNanos = node.getProperties().getNanos(CLUSTER_SHUTDOWN_TIMEOUT_SECONDS);
+        logger.info("cluster-wide-shutdown, Starting partition replica sync, Timeout(s): "
+                            + node.getProperties().getSeconds(CLUSTER_SHUTDOWN_TIMEOUT_SECONDS));
+        Instant partitionSyncStart = Instant.now();
         try {
             // wait for replica sync
             getNodeExtension().getInternalHotRestartService()
-                    .waitPartitionReplicaSyncOnCluster(timeoutNanos, TimeUnit.NANOSECONDS);
+                    .waitPartitionReplicaSyncOnCluster(timeoutNanos, TimeUnit.NANOSECONDS,
+                            () -> new SafeStateCheckOperation(true));
+            logger.info("cluster-wide-shutdown, Completed partition replica sync, Took(ms): "
+                                + Duration.between(partitionSyncStart, Instant.now()).toMillis());
         } catch (IllegalStateException e) {
-            logger.severe("Failure while waiting for partition replica sync before shutdown.", e);
+            logger.severe("cluster-wide-shutdown, Failure while waiting for partition replica sync before shutdown, "
+                    + "Took(ms): " + Duration.between(partitionSyncStart, Instant.now()).toMillis(), e);
         }
+        logger.info("cluster-wide-shutdown, Completed, Took(ms): " + Duration.between(start, Instant.now()).toMillis());
     }
 
     /**
      * Wait for cluster size (as observed by Hazelcast's ClusterService) to become equal to the
-     * last known cluster size as specified in Kubernetes {@code StatefulsetSpec.size), before cluster-wide shutdown
+     * last known cluster size as specified in Kubernetes {@code StatefulsetSpec.size}, before cluster-wide shutdown
      * was requested.
      * @return nanos remaining until cluster shutdown timeout
      */
     long waitForMissingMember() {
         long nanosRemaining = node.getProperties().getNanos(CLUSTER_SHUTDOWN_TIMEOUT_SECONDS);
-        if (getClusterService().getClusterState() == ClusterState.PASSIVE) {
-            // cluster is already in PASSIVE state and shutting down, so don't wait
+        ClusterState clusterState = getClusterService().getClusterState();
+        logger.fine("Checking if shutdown should wait for missing members: clusterState=%s, "
+                        + "lastKnownStableClusterSpecSize=%s, currentClusterSize=%s, timeoutNanos=%s",
+                clusterState, lastKnownStableClusterSpecSize, currentClusterSize, nanosRemaining);
+        if (clusterState == ClusterState.PASSIVE) {
+            logger.fine("Skipping wait for missing members because cluster is already PASSIVE");
             return nanosRemaining;
         }
         if (lastKnownStableClusterSpecSize == currentClusterSize) {
+            logger.fine("Skipping wait for missing members because cluster size already matches last stable spec: "
+                            + "lastKnownStableClusterSpecSize=%s, currentClusterSize=%s",
+                    lastKnownStableClusterSpecSize, currentClusterSize);
             return nanosRemaining;
         }
         logger.info("Waiting for missing members: lastKnownStableClusterSpecSize: " + lastKnownStableClusterSpecSize + ", "
                 + "currentClusterSize " + currentClusterSize);
-        return waitCallableWithTimeout(() -> lastKnownStableClusterSpecSize == currentClusterSize, nanosRemaining);
+        long remainingNanos = waitCallableWithTimeout(() -> lastKnownStableClusterSpecSize == currentClusterSize, nanosRemaining);
+        logger.fine("Finished waiting for missing members: lastKnownStableClusterSpecSize=%s, currentClusterSize=%s, "
+                + "remainingNanos=%s", lastKnownStableClusterSpecSize, currentClusterSize, remainingNanos);
+        return remainingNanos;
     }
 
     @Override
@@ -380,7 +440,13 @@ public class KubernetesTopologyIntentTracker implements ClusterTopologyIntentTra
 
     @Override
     public void onMembershipChange() {
+        int previousClusterSize = currentClusterSize;
         currentClusterSize = getClusterService().getSize();
+        if (logger.isFineEnabled()) {
+            logger.fine("Membership change detected: previousClusterSize=%s, currentClusterSize=%s, "
+                    + "currentClusterSpecSize=%s, currentIntent=%s",
+                    previousClusterSize, currentClusterSize, currentClusterSpecSize, clusterTopologyIntent.get());
+        }
     }
 
     /**
@@ -395,12 +461,14 @@ public class KubernetesTopologyIntentTracker implements ClusterTopologyIntentTra
         if (!getNodeExtension().getInternalHotRestartService().trySetDeferredClusterState(newClusterState)) {
             // hot restart recovery is completed, just apply the new cluster state here
             changeClusterState(newClusterState);
+        } else {
+            logger.fine("Waiting for persistence recovery: newClusterState=%s", newClusterState);
         }
     }
 
     /**
      *
-     * @param callable  {@link Callable<Boolean>} that returns {@code true} when its condition is completed and
+     * @param callable  {@link Callable} that returns {@code true} when its condition is completed and
      *                  control should return to caller.
      * @return {@code true} if completed because callable completed normally or {@code false} if timeout passed or
      *         thread was interrupted.
@@ -433,15 +501,16 @@ public class KubernetesTopologyIntentTracker implements ClusterTopologyIntentTra
      * Change cluster state, if current state is not already the desired one.
      * Retries up to 3 times. The cluster state change is transient, so if persistence
      * is enabled, the new cluster state is not persisted to disk.
-     *
-     * @param newClusterState
      */
     private void changeClusterState(ClusterState newClusterState) {
+        logger.fine("Changing cluster state: newClusterState=%s, transient=true", newClusterState);
         RetryUtils.retry(
                 () -> {
+                    logger.finest("Invoking cluster state change: newClusterState=%s, transient=true", newClusterState);
                     getClusterService().changeClusterState(newClusterState, true);
                     return null;
                 }, 3);
+        logger.fine("Completed cluster state change: newClusterState=%s, transient=true", newClusterState);
     }
 
     private NodeExtension getNodeExtension() {

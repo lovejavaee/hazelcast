@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ package com.hazelcast.internal.diagnostics;
 
 import com.hazelcast.config.Config;
 import com.hazelcast.core.HazelcastInstance;
-import com.hazelcast.test.AssertTask;
+import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
 import com.hazelcast.test.annotation.QuickTest;
@@ -27,10 +27,9 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
-import static com.hazelcast.internal.diagnostics.DiagnosticsPlugin.DISABLED;
+import static com.hazelcast.internal.diagnostics.DiagnosticsPlugin.NOT_SCHEDULED_PERIOD_MS;
 import static com.hazelcast.internal.diagnostics.SystemLogPlugin.ENABLED;
 import static com.hazelcast.internal.diagnostics.SystemLogPlugin.LOG_PARTITIONS;
-import static com.hazelcast.internal.util.StringUtil.LINE_SEPARATOR;
 import static com.hazelcast.test.Accessors.getNodeEngineImpl;
 import static org.junit.Assert.assertEquals;
 
@@ -51,7 +50,13 @@ public class SystemLogPluginTest extends AbstractDiagnosticsPluginTest {
 
         hzFactory = createHazelcastInstanceFactory(2);
         hz = hzFactory.newHazelcastInstance(config);
-        plugin = new SystemLogPlugin(getNodeEngineImpl(hz));
+        NodeEngineImpl nodeEngine = getNodeEngineImpl(hz);
+        plugin = new SystemLogPlugin(
+                nodeEngine.getLogger(SystemLogPlugin.class),
+                nodeEngine.getProperties(),
+                nodeEngine.getNode().getServer(),
+                hz,
+                nodeEngine.getNode().getNodeExtension());
         plugin.onStart();
     }
 
@@ -65,44 +70,41 @@ public class SystemLogPluginTest extends AbstractDiagnosticsPluginTest {
         config.setProperty(ENABLED.getName(), "false");
         HazelcastInstance instance = hzFactory.newHazelcastInstance(config);
 
-        plugin = new SystemLogPlugin(getNodeEngineImpl(instance));
+        NodeEngineImpl nodeEngine = getNodeEngineImpl(instance);
+        plugin = new SystemLogPlugin(
+                nodeEngine.getLogger(SystemLogPlugin.class),
+                nodeEngine.getProperties(),
+                nodeEngine.getNode().getServer(),
+                instance,
+                nodeEngine.getNode().getNodeExtension());
         plugin.onStart();
 
-        assertEquals(DISABLED, plugin.getPeriodMillis());
+        assertEquals(NOT_SCHEDULED_PERIOD_MS, plugin.getPeriodMillis());
     }
 
     @Test
     public void testLifecycle() {
         hz.shutdown();
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                plugin.run(logWriter);
+        assertTrueEventually(() -> {
+            plugin.run(logWriter);
 
-                assertContains("Lifecycle[" + LINE_SEPARATOR + "                          SHUTTING_DOWN]");
-            }
+            assertContains("Lifecycle[" + System.lineSeparator() + "                          SHUTTING_DOWN]");
         });
     }
 
     @Test
     public void testMembership() {
         HazelcastInstance instance = hzFactory.newHazelcastInstance(config);
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                plugin.run(logWriter);
-                assertContains("MemberAdded[");
-            }
+        assertTrueEventually(() -> {
+            plugin.run(logWriter);
+            assertContains("MemberAdded[");
         });
 
         instance.shutdown();
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                plugin.run(logWriter);
-                assertContains("MemberRemoved[");
-            }
+        assertTrueEventually(() -> {
+            plugin.run(logWriter);
+            assertContains("MemberRemoved[");
         });
     }
 
@@ -115,12 +117,9 @@ public class SystemLogPluginTest extends AbstractDiagnosticsPluginTest {
 
         waitAllForSafeState(hz, instance);
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                plugin.run(logWriter);
-                assertContains("MigrationCompleted");
-            }
+        assertTrueEventually(() -> {
+            plugin.run(logWriter);
+            assertContains("MigrationCompleted");
         });
     }
 }

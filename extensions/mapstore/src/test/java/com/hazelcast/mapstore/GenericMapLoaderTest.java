@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,23 +16,27 @@
 
 package com.hazelcast.mapstore;
 
+import com.hazelcast.config.Config;
+import com.hazelcast.config.DataConnectionConfig;
 import com.hazelcast.config.MapConfig;
 import com.hazelcast.config.MapStoreConfig;
 import com.hazelcast.core.HazelcastException;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.internal.serialization.impl.compact.CompactGenericRecord;
+import com.hazelcast.jet.sql.SqlTestSupport;
 import com.hazelcast.jet.sql.impl.connector.jdbc.JdbcSqlTestSupport;
 import com.hazelcast.jet.test.SerialTest;
 import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
-import com.hazelcast.test.HazelcastSerialClassRunner;
+import com.hazelcast.sql.SqlService;
 import com.hazelcast.test.annotation.QuickTest;
-import com.hazelcast.test.jdbc.H2DatabaseProvider;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
-import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
+import com.hazelcast.test.jdbc.JdbcObjectProvider;
+import com.hazelcast.test.jdbc.TestDatabaseProvider;
+import com.hazelcast.test.jdbc.TestDatabaseRecordProvider;
+import com.hazelcast.test.jdbc.TestDatabaseRecordProvider.ObjectSpec;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
@@ -40,69 +44,120 @@ import java.util.Properties;
 
 import static com.hazelcast.mapstore.GenericMapLoader.COLUMNS_PROPERTY;
 import static com.hazelcast.mapstore.GenericMapLoader.DATA_CONNECTION_REF_PROPERTY;
+import static com.hazelcast.mapstore.GenericMapLoader.EXTERNAL_NAME_PROPERTY;
 import static com.hazelcast.mapstore.GenericMapLoader.ID_COLUMN_PROPERTY;
+import static com.hazelcast.mapstore.GenericMapLoader.LOAD_ALL_KEYS_PROPERTY;
 import static com.hazelcast.mapstore.GenericMapLoader.MAPPING_PREFIX;
-import static com.hazelcast.mapstore.GenericMapLoader.TABLE_NAME_PROPERTY;
+import static com.hazelcast.mapstore.GenericMapLoader.SINGLE_COLUMN_AS_VALUE;
 import static com.hazelcast.mapstore.GenericMapLoader.TYPE_NAME_PROPERTY;
 import static com.hazelcast.nio.serialization.FieldKind.NOT_AVAILABLE;
+import static com.hazelcast.test.DockerTestUtil.assumeDockerEnabled;
+import static com.hazelcast.test.jdbc.TestDatabaseRecordProvider.Column.col;
+import static com.hazelcast.test.jdbc.TestDatabaseRecordProvider.ColumnType.INT;
+import static com.hazelcast.test.jdbc.TestDatabaseRecordProvider.ColumnType.STRING;
+import static com.hazelcast.jet.TestedVersions.TEST_MYSQL_IMAGE;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.util.Lists.newArrayList;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * This test runs the MapLoader methods directly, but it runs within real Hazelcast instance
  */
-@RunWith(HazelcastSerialClassRunner.class)
-@Category({QuickTest.class, SerialTest.class})
-public class GenericMapLoaderTest extends JdbcSqlTestSupport {
+@QuickTest
+@SerialTest
+public abstract class GenericMapLoaderTest extends SqlTestSupport {
+
+    protected static final String TEST_DATABASE_REF = "testDatabaseRef";
+
+    protected static TestDatabaseProvider databaseProvider;
+    protected static TestDatabaseRecordProvider objectProvider;
+
+    protected static String dbConnectionUrl;
+    protected static SqlService sqlService;
 
     protected String mapName;
 
     protected HazelcastInstance hz;
-    private GenericMapLoader<Integer> mapLoader;
+    private GenericMapLoader<Integer, GenericRecord> mapLoader;
+    private GenericMapLoader<Integer, String> mapLoaderSingleColumn;
 
-    @BeforeClass
-    public static void beforeClass() {
-        initialize(new H2DatabaseProvider());
+    @BeforeAll
+    public static void checkDockerEnabled() {
+        assumeDockerEnabled();
     }
 
-    @Before
+    public static <TDP extends TestDatabaseProvider> void initialize(TDP databaseProvider) {
+        initialize(databaseProvider, smallInstanceConfig());
+    }
+
+    public static <TDP extends TestDatabaseProvider> void initialize(TDP newDatabaseProvider,
+                                  Config config) {
+        databaseProvider = newDatabaseProvider;
+        objectProvider = databaseProvider.recordProvider();
+        dbConnectionUrl = databaseProvider.createDatabase(JdbcSqlTestSupport.class.getSimpleName());
+        config.addDataConnectionConfig(
+                new DataConnectionConfig(TEST_DATABASE_REF)
+                        .setType(GenericMapLoaderTest.databaseProvider.dataConnectionType())
+                        .setProperties(GenericMapLoaderTest.databaseProvider.properties())
+        );
+        initialize(2, config);
+        sqlService = instance().getSql();
+    }
+
+    @BeforeEach
     public void setUp() {
         hz = instances()[0];
         mapName = "people_" + randomName();
     }
 
-    @After
+    @AfterEach
     public void after() {
         if (mapLoader != null && mapLoader.initHasFinished()) {
             mapLoader.destroy();
             mapLoader = null;
         }
+        if (mapLoaderSingleColumn != null && mapLoaderSingleColumn.initHasFinished()) {
+            mapLoaderSingleColumn.destroy();
+            mapLoaderSingleColumn = null;
+        }
     }
 
-
     @Test
-    public void whenMapLoaderInit_thenCreateMappingForMapStoreConfig() throws Exception {
-        createTable(mapName);
+    public void whenMapLoaderInit_thenCreateMappingForMapStoreConfig() {
+        objectProvider.createObject(mapName, false);
 
         mapLoader = createMapLoader();
         assertMappingCreated();
     }
 
     @Test
-    public void whenMapLoaderInitCalledOnNonMaster_thenInitAndLoadValue() throws Exception {
-        createTable(mapName);
-        insertItems(mapName, 1);
+    public void whenMapLoaderInitCalledOnNonMaster_thenInitAndLoadValue() {
+        ObjectSpec spec = objectProvider.createObject(mapName, false);
+        objectProvider.insertItems(spec, 1);
 
         mapLoader = createMapLoader(instances()[1]);
-        GenericRecord record = mapLoader.load(0);
-        assertThat(record).isNotNull();
+        GenericRecord genericRecord = mapLoader.load(0);
+        assertThat(genericRecord).isNotNull();
+    }
+
+    protected static void createMapping(String tableName, String mappingName) {
+        sqlService.executeUpdate(
+                "CREATE MAPPING \"" + mappingName + "\""
+                        + " EXTERNAL NAME " + tableName + " "
+                        + " ("
+                        + " id INT, "
+                        + " name VARCHAR "
+                        + ") "
+                        + "DATA CONNECTION " + TEST_DATABASE_REF
+        );
     }
 
     @Test
-    public void givenValidMappingExists_whenMapLoaderInit_thenInitAndLoadRecord() throws Exception {
-        createTable(mapName);
-        insertItems(mapName, 1);
+    public void givenValidMappingExists_whenMapLoaderInit_thenInitAndLoadRecord() {
+        ObjectSpec spec = objectProvider.createObject(mapName, false);
+        objectProvider.insertItems(spec, 1);
         createMapping(mapName, MAPPING_PREFIX + mapName);
 
         mapLoader = createMapLoader();
@@ -111,8 +166,8 @@ public class GenericMapLoaderTest extends JdbcSqlTestSupport {
     }
 
     @Test
-    public void whenMapLoaderDestroyOnMaster_thenDropMapping() throws Exception {
-        createTable(mapName);
+    public void whenMapLoaderDestroyOnMaster_thenDropMapping() {
+        objectProvider.createObject(mapName, false);
 
         mapLoader = createMapLoader();
         assertMappingCreated();
@@ -122,90 +177,134 @@ public class GenericMapLoaderTest extends JdbcSqlTestSupport {
     }
 
     @Test
-    public void whenMapLoaderDestroyOnNonMaster_thenDropMapping() throws Exception {
-        createTable(mapName);
+    public void whenMapLoaderDestroyOnNonMaster_thenDropMapping() {
+        objectProvider.createObject(mapName, false);
 
         mapLoader = createMapLoader();
         assertMappingCreated();
 
-        GenericMapLoader<Object> mapLoaderNotMaster = createMapLoader(instances()[1]);
+        GenericMapLoader<Object, GenericRecord> mapLoaderNotMaster = createMapLoader(instances()[1]);
         mapLoaderNotMaster.destroy();
         assertMappingDestroyed();
     }
 
     @Test
-    public void whenMapLoaderInitOnNonMaster_thenLoadWaitsForSuccessfulInit() throws Exception {
-        createTable(mapName);
-        insertItems(mapName, 1);
+    public void whenMapLoaderInitOnNonMaster_thenLoadWaitsForSuccessfulInit() {
+        ObjectSpec spec = objectProvider.createObject(mapName, false);
+        objectProvider.insertItems(spec, 1);
 
-        GenericMapLoader<Object> mapLoaderNonMaster = createMapLoader(instances()[1]);
+        GenericMapLoader<Object, GenericRecord> mapLoaderNonMaster = createMapLoader(instances()[1]);
         mapLoader = createMapLoader();
 
-        GenericRecord record = mapLoaderNonMaster.load(0);
-        assertThat(record).isNotNull();
+        GenericRecord genericRecord = mapLoaderNonMaster.load(0);
+        assertThat(genericRecord).isNotNull();
     }
 
     @Test
-    public void givenRow_whenLoad_thenReturnGenericRecord() throws Exception {
-        createTable(mapName);
-        insertItems(mapName, 1);
+    public void givenRow_whenLoad_thenReturnGenericRecord() {
+        ObjectSpec spec = objectProvider.createObject(mapName, false);
+        objectProvider.insertItems(spec, 1);
 
         mapLoader = createMapLoader();
-        GenericRecord record = mapLoader.load(0);
+        GenericRecord genericRecord = mapLoader.load(0);
 
-        assertThat(record.getInt32("id")).isZero();
-        assertThat(record.getString("name")).isEqualTo("name-0");
+        assertThat(genericRecord.getInt32("id")).isZero();
+        assertThat(genericRecord.getString("name")).isEqualTo("name-0");
     }
 
     @Test
-    public void givenTableMultipleColumns_whenLoad_thenReturnGenericRecord() throws Exception {
-        createTable(mapName, "id INT PRIMARY KEY", "name VARCHAR(100)", "age INT", "address VARCHAR(100)");
-        executeJdbc("INSERT INTO " + mapName + " VALUES(0, 'name-0', 42, 'Palo Alto, CA 94306')");
+    public void givenRow_whenLoad_thenReturnSingleColumn() {
+        ObjectSpec spec = objectProvider.createObject(mapName);
+        objectProvider.insertItems(spec, 1);
 
-        mapLoader = createMapLoader();
-        GenericRecord record = mapLoader.load(0);
+        mapLoaderSingleColumn = createMapLoaderSingleColumn();
+        String name = mapLoaderSingleColumn.load(0);
 
-        assertThat(record.getInt32("id")).isZero();
-        assertThat(record.getString("name")).isEqualTo("name-0");
-        assertThat(record.getInt32("age")).isEqualTo(42);
-        assertThat(record.getString("address")).isEqualTo("Palo Alto, CA 94306");
+        assertThat(name).isEqualTo("name-0");
     }
 
     @Test
-    public void givenTableVarcharPKColumn_whenLoad_thenReturnGenericRecordWithCorrectType() throws Exception {
-        createTable(mapName, "id VARCHAR(100)", "name VARCHAR(100)");
-        executeJdbc("INSERT INTO " + mapName + " VALUES('0', 'name-0')");
+    public void givenTableMultipleColumns_whenLoad_thenReturnGenericRecord() {
+        var spec = new ObjectSpec(mapName,
+                col("id", INT),
+                col("name", STRING),
+                col("age", INT),
+                col("address", STRING));
+        objectProvider.createObject(spec);
+        objectProvider.insertItems(spec, 1);
 
-        GenericMapLoader<String> mapLoader = createMapLoader();
-        GenericRecord record = mapLoader.load("0");
+        mapLoader = createMapLoader();
+        GenericRecord genericRecord = mapLoader.load(0);
 
-        assertThat(record.getString("id")).isEqualTo("0");
-        assertThat(record.getString("name")).isEqualTo("name-0");
+        assertThat(genericRecord.getInt32("id")).isZero();
+        assertThat(genericRecord.getString("name")).isEqualTo("name-0");
+        assertThat(genericRecord.getInt32("age")).isEqualTo(2);
+        assertThat(genericRecord.getString("address")).isEqualTo("address-0");
+    }
+
+    @Test
+    public void givenTableVarcharPKColumn_whenLoad_thenReturnGenericRecordWithCorrectType() {
+        var spec = new ObjectSpec(mapName, col("id", STRING), col("name", STRING));
+        objectProvider.createObject(spec);
+        objectProvider.insertItems(spec, 1);
+
+        GenericMapLoader<String, GenericRecord> mapLoader = createMapLoader();
+        GenericRecord genericRecord = mapLoader.load("id-0");
+
+        assertThat(genericRecord.getString("id")).isEqualTo("id-0");
+        assertThat(genericRecord.getString("name")).isEqualTo("name-0");
         mapLoader.destroy();
     }
 
     @Test
-    public void givenTable_whenSetColumns_thenGenericRecordHasSetColumns() throws Exception {
-        createTable(mapName, "id INT PRIMARY KEY", "name VARCHAR(100)", "age INT", "address VARCHAR(100)");
-        executeJdbc("INSERT INTO " + mapName + " VALUES(0, 'name-0', 42, 'Palo Alto, CA 94306')");
+    public void givenTableVarcharPKColumn_whenLoad_thenReturnSingleColumnWithCorrectType() {
+        var spec = new ObjectSpec(mapName,
+                col("id", STRING),
+                col("name", STRING)
+        );
+        objectProvider.createObject(spec);
+        objectProvider.insertItems(spec, 1);
 
-        Properties properties = new Properties();
+        GenericMapLoader<String, String> mapLoader = createMapLoaderSingleColumn();
+        String name = mapLoader.load("id-0");
+
+        assertThat(name).isEqualTo("name-0");
+
+        mapLoader.destroy();
+    }
+
+    @Test
+    public void givenTable_whenSetColumns_thenGenericRecordHasSetColumns() {
+        ObjectSpec spec = new ObjectSpec(mapName,
+                col("id", INT),
+                col("name", STRING),
+                col("age", INT),
+                col("address", STRING));
+        objectProvider.createObject(spec);
+        objectProvider.insertItems(spec, 1);
+
+        Properties properties =
+                new Properties();
         properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
         properties.setProperty(COLUMNS_PROPERTY, "id,name,age");
         mapLoader = createMapLoader(properties, hz);
 
-        GenericRecord record = mapLoader.load(0);
+        GenericRecord genericRecord = mapLoader.load(0);
 
-        assertThat(record.getInt32("id")).isZero();
-        assertThat(record.getString("name")).isEqualTo("name-0");
-        assertThat(record.getInt32("age")).isEqualTo(42);
-        assertThat(record.getFieldKind("address")).isEqualTo(NOT_AVAILABLE);
+        assertThat(genericRecord.getInt32("id")).isZero();
+        assertThat(genericRecord.getString("name")).isEqualTo("name-0");
+        assertThat(genericRecord.getInt32("age")).isEqualTo(2);
+        assertThat(genericRecord.getFieldKind("address")).isEqualTo(NOT_AVAILABLE);
     }
 
     @Test
-    public void whenSetNonExistingColumnOnSecondMapStore_thenFailToInitialize() throws Exception {
-        createTable(mapName, "id INT PRIMARY KEY", "name VARCHAR(100)", "age INT");
-        executeJdbc("INSERT INTO " + mapName + " VALUES(0, 'name-0', 42)");
+    public void whenSetNonExistingColumnOnSecondMapStore_thenFailToInitialize() {
+        ObjectSpec spec = new ObjectSpec(mapName,
+                col("id", INT),
+                col("name", STRING),
+                col("age", INT));
+        objectProvider.createObject(spec);
+        objectProvider.insertItems(spec, 1);
         createMapping(mapName, MAPPING_PREFIX + mapName);
         assertMappingCreated();
         // This simulates a second map store on a different instance. The mapping is created, but must be validated
@@ -222,9 +321,9 @@ public class GenericMapLoaderTest extends JdbcSqlTestSupport {
     }
 
     @Test
-    public void whenSetNonExistingColumn_thenFailToInitialize() throws Exception {
-        createTable(mapName, "id INT PRIMARY KEY", "name VARCHAR(100)");
-        insertItems(mapName, 1);
+    public void whenSetNonExistingColumn_thenFailToInitialize() {
+        ObjectSpec spec = objectProvider.createObject(mapName, false);
+        objectProvider.insertItems(spec, 1);
 
         Properties properties = new Properties();
         properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
@@ -238,9 +337,13 @@ public class GenericMapLoaderTest extends JdbcSqlTestSupport {
     }
 
     @Test
-    public void whenSetNonExistingColumnOnSecondMapLoader_thenFailToInitialize() throws Exception {
-        createTable(mapName, "id INT PRIMARY KEY", "name VARCHAR(100)", "age INT");
-        executeJdbc("INSERT INTO " + mapName + " VALUES(0, 'name-0', 42)");
+    public void whenSetNonExistingColumnOnSecondMapLoader_thenFailToInitialize() {
+        var spec = new ObjectSpec(mapName,
+                col("id", INT),
+                col("name", STRING),
+                col("age", INT));
+        objectProvider.createObject(spec);
+        objectProvider.insertItems(spec, 1);
         createMapping(mapName, MAPPING_PREFIX + mapName);
         assertMappingCreated();
         // This simulates a second map loader on a different instance. The mapping is created, but must be validated
@@ -257,106 +360,191 @@ public class GenericMapLoaderTest extends JdbcSqlTestSupport {
     }
 
     @Test
-    public void givenDefaultTypeName_whenLoad_thenReturnGenericRecordMapNameAsTypeName() throws Exception {
-        createTable(mapName);
-        insertItems(mapName, 1);
+    public void givenDefaultTypeName_whenLoad_thenReturnGenericRecordMapNameAsTypeName() {
+        ObjectSpec spec = objectProvider.createObject(mapName, false);
+        objectProvider.insertItems(spec, 1);
 
         mapLoader = createMapLoader();
 
-        CompactGenericRecord record = (CompactGenericRecord) mapLoader.load(0);
-        assertThat(record.getSchema().getTypeName()).isEqualTo(mapName);
+        CompactGenericRecord genericRecord = (CompactGenericRecord) mapLoader.load(0);
+        assertThat(genericRecord.getSchema().getTypeName()).isEqualTo(mapName);
     }
 
     @Test
-    public void givenTypeName_whenLoad_thenReturnGenericRecordWithCorrectTypeName() throws Exception {
-        createTable(mapName);
-        insertItems(mapName, 1);
+    public void givenTypeName_whenLoad_thenReturnGenericRecordWithCorrectTypeName() {
+        ObjectSpec spec = objectProvider.createObject(mapName, false);
+        objectProvider.insertItems(spec, 1);
 
         Properties properties = new Properties();
         properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
         properties.setProperty(TYPE_NAME_PROPERTY, "my.Person");
         mapLoader = createMapLoader(properties, hz);
 
-        CompactGenericRecord record = (CompactGenericRecord) mapLoader.load(0);
-        assertThat(record.getSchema().getTypeName()).isEqualTo("my.Person");
+        CompactGenericRecord genericRecord = (CompactGenericRecord) mapLoader.load(0);
+        assertThat(genericRecord.getSchema().getTypeName()).isEqualTo("my.Person");
     }
 
     @Test
-    public void givenRowAndIdColumn_whenLoad_thenReturnGenericRecord() throws Exception {
-        createTable(mapName, quote("person-id") + " INT PRIMARY KEY", "name VARCHAR(100)");
-        insertItems(mapName, 1);
+    public void givenRowAndIdColumn_whenLoad_thenReturnGenericRecord() {
+        ObjectSpec spec = objectProvider.createObject(mapName, true);
+        objectProvider.insertItems(spec, 1);
 
         Properties properties = new Properties();
         properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
         properties.setProperty(ID_COLUMN_PROPERTY, "person-id");
         mapLoader = createMapLoader(properties, hz);
-        GenericRecord record = mapLoader.load(0);
+        GenericRecord genericRecord = mapLoader.load(0);
 
-        assertThat(record.getInt32("person-id")).isZero();
-        assertThat(record.getString("name")).isEqualTo("name-0");
+        assertThat(genericRecord.getInt32("person-id")).isZero();
+        assertThat(genericRecord.getString("name")).isEqualTo("name-0");
     }
 
     @Test
-    public void givenRowAndColumnsWithoutId_whenLoadAndLoadAll_thenReturnGenericRecordWithoutId() throws Exception {
-        createTable(mapName);
-        insertItems(mapName, 1);
+    public void givenRowAndIdColumn_whenLoad_thenReturnSingleColumn() {
+        ObjectSpec spec = objectProvider.createObject(mapName, true);
+        objectProvider.insertItems(spec, 1);
+
+        Properties properties = new Properties();
+        properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
+        properties.setProperty(ID_COLUMN_PROPERTY, "person-id");
+        properties.setProperty(SINGLE_COLUMN_AS_VALUE, "true");
+        mapLoaderSingleColumn = createMapLoader(properties, hz);
+        String name = mapLoaderSingleColumn.load(0);
+
+        assertThat(name).isEqualTo("name-0");
+    }
+
+    @Test
+    public void givenRowAndColumnsWithoutId_whenLoadAndLoadAll_thenReturnGenericRecordWithoutId() {
+        ObjectSpec spec = objectProvider.createObject(mapName, false);
+        objectProvider.insertItems(spec, 1);
 
         Properties properties = new Properties();
         properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
         properties.setProperty(COLUMNS_PROPERTY, "name");
         mapLoader = createMapLoader(properties, hz);
 
-        GenericRecord record = mapLoader.load(0);
-        assertThat(record.getFieldKind("id")).isEqualTo(NOT_AVAILABLE);
+        GenericRecord genericRecord = mapLoader.load(0);
+        assertThat(genericRecord.getFieldKind("id")).isEqualTo(NOT_AVAILABLE);
 
         Map<Integer, GenericRecord> records = mapLoader.loadAll(newArrayList(0));
         assertThat(records.get(0).getFieldKind("id")).isEqualTo(NOT_AVAILABLE);
     }
 
     @Test
-    public void givenRowDoesNotExist_whenLoad_thenReturnNull() throws Exception {
-        createTable(mapName);
+    public void givenRowDoesNotExist_whenLoad_thenReturnNull() {
+        objectProvider.createObject(mapName, false);
         mapLoader = createMapLoader();
 
-        GenericRecord record = mapLoader.load(0);
-        assertThat(record).isNull();
+        GenericRecord genericRecord = mapLoader.load(0);
+        assertThat(genericRecord).isNull();
     }
 
     @Test
-    public void givenRow_whenLoadAll_thenReturnMapWithGenericRecord() throws Exception {
-        createTable(mapName);
+    public void givenRowDoesNotExist_whenLoad_thenReturnNullSingleColumn() {
+        objectProvider.createObject(mapName);
+        mapLoaderSingleColumn = createMapLoaderSingleColumn();
+
+        String name = mapLoaderSingleColumn.load(0);
+        assertThat(name).isNull();
+    }
+
+    @Test
+    public void givenRow_whenLoadAll_thenReturnMapWithGenericRecord() {
+        ObjectSpec spec = objectProvider.createObject(mapName, false);
         mapLoader = createMapLoader();
 
-        insertItems(mapName, 1);
+        objectProvider.insertItems(spec, 1);
 
         Map<Integer, GenericRecord> records = mapLoader.loadAll(newArrayList(0));
 
         assertThat(records).containsKey(0);
 
-        GenericRecord record = records.values().iterator().next();
+        GenericRecord genericRecord = records.values().iterator().next();
         records.values().iterator().next();
-        assertThat(record.getInt32("id")).isZero();
-        assertThat(record.getString("name")).isEqualTo("name-0");
+        assertThat(genericRecord.getInt32("id")).isZero();
+        assertThat(genericRecord.getString("name")).isEqualTo("name-0");
     }
 
     @Test
-    public void givenRowAndIdColumn_whenLoadAll_thenReturnGenericRecord() throws Exception {
-        createTable(mapName, quote("person-id") + " INT PRIMARY KEY", "name VARCHAR(100)");
-        insertItems(mapName, 1);
+    public void givenRow_whenLoadAll_thenReturnMapWithSingleColumn() {
+        ObjectSpec spec = objectProvider.createObject(mapName);
+        mapLoaderSingleColumn = createMapLoaderSingleColumn();
+
+        objectProvider.insertItems(spec, 1);
+
+        Map<Integer, String> names = mapLoaderSingleColumn.loadAll(newArrayList(0));
+
+        assertThat(names).containsKey(0);
+
+        String name = names.values().iterator().next();
+        names.values().iterator().next();
+        assertThat(name).isEqualTo("name-0");
+    }
+
+    @Test
+    public void givenRowAndIdColumn_whenLoadAll_thenReturnGenericRecord() {
+        ObjectSpec spec = objectProvider.createObject(mapName, true);
+        objectProvider.insertItems(spec, 1);
 
         Properties properties = new Properties();
         properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
         properties.setProperty(ID_COLUMN_PROPERTY, "person-id");
         mapLoader = createMapLoader(properties, hz);
-        GenericRecord record = mapLoader.loadAll(newArrayList(0)).get(0);
+        GenericRecord genericRecord = mapLoader.loadAll(newArrayList(0)).get(0);
 
-        assertThat(record.getInt32("person-id")).isZero();
-        assertThat(record.getString("name")).isEqualTo("name-0");
+        assertThat(genericRecord.getInt32("person-id")).isZero();
+        assertThat(genericRecord.getString("name")).isEqualTo("name-0");
     }
 
     @Test
-    public void givenRowDoesNotExist_whenLoadAll_thenReturnEmptyMap() throws Exception {
-        createTable(mapName);
+    public void givenRowAndIdColumn_whenLoadAll_thenReturnSingleColumn() {
+        ObjectSpec spec = objectProvider.createObject(mapName, true);
+        objectProvider.insertItems(spec, 1);
+
+        Properties properties = new Properties();
+        properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
+        properties.setProperty(ID_COLUMN_PROPERTY, "person-id");
+        properties.setProperty(SINGLE_COLUMN_AS_VALUE, "true");
+        mapLoaderSingleColumn = createMapLoader(properties, hz);
+        String name = mapLoaderSingleColumn.loadAll(newArrayList(0)).get(0);
+
+        assertThat(name).isEqualTo("name-0");
+    }
+
+    @Test
+    public void givenRowAndIdColumn_whenLoadAllMultipleItems_thenReturnGenericRecords() {
+        ObjectSpec spec = objectProvider.createObject(mapName, true);
+        objectProvider.insertItems(spec, 2);
+
+        Properties properties = new Properties();
+        properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
+        properties.setProperty(ID_COLUMN_PROPERTY, "person-id");
+        mapLoader = createMapLoader(properties, hz);
+        Map<Integer, GenericRecord> records = mapLoader.loadAll(newArrayList(0, 1));
+
+        assertThat(records).hasSize(2);
+    }
+
+    @Test
+    public void givenRowAndIdColumn_whenLoadAllMultipleItems_thenReturnSingleColumn() {
+        ObjectSpec spec = objectProvider.createObject(mapName, true);
+        objectProvider.insertItems(spec, 2);
+
+        Properties properties = new Properties();
+        properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
+        properties.setProperty(ID_COLUMN_PROPERTY, "person-id");
+        properties.setProperty(SINGLE_COLUMN_AS_VALUE, "true");
+        mapLoaderSingleColumn = createMapLoader(properties, hz);
+        Map<Integer, String> names = mapLoaderSingleColumn.loadAll(newArrayList(0, 1));
+
+        assertThat(names).hasSize(2);
+
+    }
+
+    @Test
+    public void givenRowDoesNotExist_whenLoadAll_thenReturnEmptyMap() {
+        objectProvider.createObject(mapName, false);
         mapLoader = createMapLoader();
 
         Map<Integer, GenericRecord> records = mapLoader.loadAll(newArrayList(0));
@@ -364,20 +552,40 @@ public class GenericMapLoaderTest extends JdbcSqlTestSupport {
     }
 
     @Test
-    public void givenRow_whenLoadAllKeys_thenReturnKeys() throws Exception {
-        createTable(mapName);
+    public void givenRowDoesNotExist_whenLoadAllWithSingleColumn_thenReturnEmptyMap() {
+        objectProvider.createObject(mapName);
+        mapLoaderSingleColumn = createMapLoaderSingleColumn();
+
+        Map<Integer, String> names = mapLoaderSingleColumn.loadAll(newArrayList(0));
+        assertThat(names).isEmpty();
+    }
+
+    @Test
+    public void givenRow_whenLoadAllKeys_thenReturnKeys() {
+        ObjectSpec spec = objectProvider.createObject(mapName, false);
         mapLoader = createMapLoader();
 
-        insertItems(mapName, 1);
+        objectProvider.insertItems(spec, 1);
 
         List<Integer> ids = newArrayList(mapLoader.loadAllKeys());
         assertThat(ids).contains(0);
     }
 
     @Test
-    public void givenRowAndIdColumn_whenLoadAllKeys_thenReturnKeys() throws Exception {
-        createTable(mapName, quote("person-id") + " INT PRIMARY KEY", "name VARCHAR(100)");
-        insertItems(mapName, 1);
+    public void givenRow_whenLoadAllKeysWithSingleColumn_thenReturnKeys() {
+        ObjectSpec spec = objectProvider.createObject(mapName);
+        mapLoaderSingleColumn = createMapLoaderSingleColumn();
+
+        objectProvider.insertItems(spec, 1);
+
+        List<Integer> ids = newArrayList(mapLoaderSingleColumn.loadAllKeys());
+        assertThat(ids).contains(0);
+    }
+
+    @Test
+    public void givenRowAndIdColumn_whenLoadAllKeys_thenReturnKeys() {
+        ObjectSpec spec = objectProvider.createObject(mapName, true);
+        objectProvider.insertItems(spec, 1);
 
         Properties properties = new Properties();
         properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
@@ -390,8 +598,72 @@ public class GenericMapLoaderTest extends JdbcSqlTestSupport {
     }
 
     @Test
-    public void givenNoRows_whenLoadAllKeys_thenEmptyIterable() throws Exception {
-        createTable(mapName);
+    public void givenRowAndIdColumn_whenLoadAllKeysWithSingleColumn_thenReturnKeys() {
+        ObjectSpec spec = objectProvider.createObject(mapName, true);
+        objectProvider.insertItems(spec, 1);
+
+        Properties properties = new Properties();
+        properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
+        properties.setProperty(SINGLE_COLUMN_AS_VALUE, "true");
+        properties.setProperty(ID_COLUMN_PROPERTY, "person-id");
+        mapLoaderSingleColumn = createMapLoader(properties, hz);
+
+        List<Integer> ids = newArrayList(mapLoaderSingleColumn.loadAllKeys());
+        assertThat(ids).contains(0);
+    }
+
+    @Test
+    public void givenFalse_whenLoadAllKeys_thenReturnNull() {
+        ObjectSpec spec = objectProvider.createObject(mapName, true);
+        objectProvider.insertItems(spec, 1);
+
+        Properties properties = new Properties();
+        properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
+
+        properties.setProperty(ID_COLUMN_PROPERTY, "person-id");
+        properties.setProperty(LOAD_ALL_KEYS_PROPERTY, "false");
+        mapLoader = createMapLoader(properties, hz);
+
+        List<Integer> ids = newArrayList(mapLoader.loadAllKeys());
+        assertThat(ids).isEmpty();
+    }
+
+    @Test
+    public void givenTrue_whenLoadAllKeys_thenReturnKeys() {
+        ObjectSpec spec = objectProvider.createObject(mapName, true);
+        objectProvider.insertItems(spec, 1);
+
+        Properties properties = new Properties();
+        properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
+
+        properties.setProperty(ID_COLUMN_PROPERTY, "person-id");
+        properties.setProperty(LOAD_ALL_KEYS_PROPERTY, "true");
+        mapLoader = createMapLoader(properties, hz);
+
+        List<Integer> ids = newArrayList(mapLoader.loadAllKeys());
+        assertThat(ids).contains(0);
+    }
+
+    @Test
+    public void givenInvalid_whenLoadAllKeys_thenReturnKeys() {
+        ObjectSpec spec = objectProvider.createObject(mapName, true);
+        objectProvider.insertItems(spec, 1);
+
+        Properties properties = new Properties();
+        properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
+
+        properties.setProperty(ID_COLUMN_PROPERTY, "person-id");
+        properties.setProperty(LOAD_ALL_KEYS_PROPERTY, "invalidBooleanValue");
+        assertThatThrownBy(() -> createMapLoader(properties, hz))
+                .isInstanceOf(HazelcastException.class)
+                .hasMessage("MapStoreConfig for " + mapName + " must have `load-all-keys` property set as true or false");
+
+
+    }
+
+    @Test
+    public void givenNoRows_whenLoadAllKeys_thenEmptyIterable() {
+        objectProvider.createObject(mapName, false);
         mapLoader = createMapLoader();
 
         Iterable<Integer> ids = mapLoader.loadAllKeys();
@@ -401,7 +673,7 @@ public class GenericMapLoaderTest extends JdbcSqlTestSupport {
     @Test
     public void givenMapStoreConfigWithOffloadDisabled_thenFail() {
         MapStoreConfig mapStoreConfig = new MapStoreConfig()
-                .setClassName(GenericMapStore.class.getName())
+                .setClassName(GenericMapLoader.class.getName())
                 .setOffload(false);
 
         MapConfig mapConfig = new MapConfig(mapName);
@@ -414,45 +686,118 @@ public class GenericMapLoaderTest extends JdbcSqlTestSupport {
 
         assertThatThrownBy(() -> mapLoader.init(hz, properties, mapName))
                 .isInstanceOf(HazelcastException.class)
-                .hasMessage("Config for GenericMapStore must have `offload` property set to true");
+                .hasMessage("MapStoreConfig for " + mapName + " must have `offload` property set to true");
     }
 
     @Test
-    public void givenTableNameProperty_whenCreateMapLoader_thenUseTableName() throws Exception {
-        String tableName = randomTableName();
+    public void givenMapStoreConfig_WithoutDataConnection_thenFail() {
+        MapStoreConfig mapStoreConfig = new MapStoreConfig()
+                .setClassName(GenericMapLoader.class.getName());
 
-        createTable(tableName);
-        insertItems(tableName, 1);
+        MapConfig mapConfig = new MapConfig(mapName);
+        mapConfig.setMapStoreConfig(mapStoreConfig);
+        instance().getConfig().addMapConfig(mapConfig);
+
+        mapLoader = new GenericMapLoader<>();
+        Properties properties = new Properties();
+
+        assertThatThrownBy(() -> mapLoader.init(hz, properties, mapName))
+                .isInstanceOf(HazelcastException.class)
+                .hasMessage("MapStoreConfig for " + mapName + " must have `data-connection-ref` property set");
+    }
+
+    @Test
+    public void givenTableNameProperty_whenCreateMapLoader_thenUseTableName() {
+        String tableName = randomName();
+
+        ObjectSpec spec = objectProvider.createObject(tableName, false);
+        objectProvider.insertItems(spec, 1);
 
         Properties properties = new Properties();
         properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
-        properties.setProperty(TABLE_NAME_PROPERTY, tableName);
+        properties.setProperty(EXTERNAL_NAME_PROPERTY, tableName);
         mapLoader = createMapLoader(properties, hz);
 
-        GenericRecord record = mapLoader.load(0);
-        assertThat(record).isNotNull();
+        GenericRecord genericRecord = mapLoader.load(0);
+        assertThat(genericRecord).isNotNull();
     }
 
-    private <K> GenericMapLoader<K> createMapLoader() {
+    @Test
+    public void givenTableNameProperty_whenCreateMapLoader_thenUseTableNameWithCustomSchema() {
+        assumeTrue(objectProvider instanceof JdbcObjectProvider);
+        var jdbcDatabaseProvider = (JdbcObjectProvider) objectProvider;
+        String schemaName = "custom_schema";
+        jdbcDatabaseProvider.createSchema(schemaName);
+        String tableName = randomName() + "-with-hyphen";
+        String fullTableName = databaseProvider.quote(schemaName, tableName);
+
+        ObjectSpec spec = objectProvider.createObject(fullTableName, false);
+        objectProvider.insertItems(spec, 1);
+
+        Properties properties = new Properties();
+        properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
+        properties.setProperty(EXTERNAL_NAME_PROPERTY, schemaName + ".\"" + tableName + "\"");
+        mapLoader = createMapLoader(properties, hz);
+
+        GenericRecord genericRecord = mapLoader.load(0);
+        assertThat(genericRecord).isNotNull();
+    }
+
+    @Test
+    public void givenTableNameProperty_whenCreateMapLoader_thenUseTableNameWithCustomSchemaWithDotInName() {
+        assumeTrue(objectProvider instanceof JdbcObjectProvider);
+        var jdbcDatabaseProvider = (JdbcObjectProvider) objectProvider;
+        // See MySQLSchemaJdbcSqlConnectorTest
+        assumeFalse(TEST_MYSQL_IMAGE.getVersionPart().startsWith("5"));
+
+        String schemaName = "custom_schema2";
+        jdbcDatabaseProvider.createSchema(schemaName);
+        String tableName = randomName() + ".with_dot";
+        String fullTableName = databaseProvider.quote(schemaName, tableName);
+
+        ObjectSpec spec = objectProvider.createObject(fullTableName, false);
+        objectProvider.insertItems(spec, 1);
+
+        Properties properties = new Properties();
+        properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
+        properties.setProperty(EXTERNAL_NAME_PROPERTY, schemaName + ".\"" + tableName + "\"");
+        mapLoader = createMapLoader(properties, hz);
+
+        GenericRecord genericRecord = mapLoader.load(0);
+        assertThat(genericRecord).isNotNull();
+    }
+
+    private <K, V> GenericMapLoader<K, V> createMapLoader() {
         return createMapLoader(hz);
     }
 
-    private <K> GenericMapLoader<K> createMapLoader(HazelcastInstance instance) {
+    private <K, V> GenericMapLoader<K, V> createMapLoaderSingleColumn() {
+        return createMapLoaderSingleColumn(hz);
+    }
+
+    private <K, V> GenericMapLoader<K, V> createMapLoader(HazelcastInstance instance) {
         Properties properties = new Properties();
         properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
         return createMapLoader(properties, instance);
     }
 
-    private <K> GenericMapLoader<K> createMapLoader(Properties properties, HazelcastInstance instance) {
+    private <K, V> GenericMapLoader<K, V> createMapLoaderSingleColumn(HazelcastInstance instance) {
+        Properties properties = new Properties();
+        properties.setProperty(DATA_CONNECTION_REF_PROPERTY, TEST_DATABASE_REF);
+        properties.setProperty(SINGLE_COLUMN_AS_VALUE, "true");
+        return createMapLoader(properties, instance);
+    }
+
+    private <K, V> GenericMapLoader<K, V> createMapLoader(Properties properties, HazelcastInstance instance) {
         return createUnitUnderTest(properties, instance, true);
     }
 
-    protected <K> GenericMapLoader<K> createUnitUnderTest(Properties properties, HazelcastInstance instance,
+    protected <K, V> GenericMapLoader<K, V> createUnitUnderTest(Properties properties, HazelcastInstance instance,
                                                           boolean init) {
-        MapConfig mapConfig = createMapConfigWithMapStore(mapName);
+        MapConfig mapConfig = createMapConfigWithMapStore(mapName, properties);
         instance.getConfig().addMapConfig(mapConfig);
 
-        GenericMapLoader<K> mapLoader = new GenericMapLoader<>();
+        GenericMapLoader<K, V> mapLoader = new GenericMapLoader<>();
         if (init) {
             mapLoader.init(instance, properties, mapName);
             mapLoader.awaitInitFinished();
@@ -460,9 +805,10 @@ public class GenericMapLoaderTest extends JdbcSqlTestSupport {
         return mapLoader;
     }
 
-    private MapConfig createMapConfigWithMapStore(String mapName) {
+    private MapConfig createMapConfigWithMapStore(String mapName, Properties properties) {
         MapStoreConfig mapStoreConfig = new MapStoreConfig();
         mapStoreConfig.setClassName(GenericMapLoader.class.getName());
+        mapStoreConfig.setProperties(properties);
         MapConfig mapConfig = new MapConfig(mapName);
         mapConfig.setMapStoreConfig(mapStoreConfig);
         return mapConfig;

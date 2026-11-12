@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,14 +31,12 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Spliterator;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 import static org.junit.Assert.assertEquals;
@@ -59,7 +57,7 @@ public class ClientSetTest extends HazelcastTestSupport {
     }
 
     @Before
-    public void setup() throws IOException {
+    public void setup() {
         hazelcastFactory = new TestHazelcastFactory();
         hazelcastFactory.newHazelcastInstance();
         HazelcastInstance client = hazelcastFactory.newHazelcastClient();
@@ -68,7 +66,7 @@ public class ClientSetTest extends HazelcastTestSupport {
 
     @Test
     public void testAddAll() {
-        List<String> l = new ArrayList<String>();
+        List<String> l = new ArrayList<>();
         l.add("item1");
         l.add("item2");
 
@@ -118,7 +116,7 @@ public class ClientSetTest extends HazelcastTestSupport {
         Spliterator spliterator = set.spliterator();
 
         ArrayList recorder = new ArrayList(set.size());
-        Consumer consumer = value -> recorder.add(value);
+        Consumer consumer = recorder::add;
 
         // tryAdvance.
         assertTrue(spliterator.tryAdvance(consumer));
@@ -144,7 +142,7 @@ public class ClientSetTest extends HazelcastTestSupport {
         assertNotContains(set, "item5");
         assertContains(set, "item2");
 
-        List<String> l = new ArrayList<String>();
+        List<String> l = new ArrayList<>();
         l.add("item6");
         l.add("item3");
 
@@ -160,7 +158,7 @@ public class ClientSetTest extends HazelcastTestSupport {
         assertTrue(set.add("item3"));
         assertTrue(set.add("item4"));
 
-        List<String> l = new ArrayList<String>();
+        List<String> l = new ArrayList<>();
         l.add("item4");
         l.add("item3");
 
@@ -183,28 +181,30 @@ public class ClientSetTest extends HazelcastTestSupport {
     @Test
     public void testListener() throws Exception {
 
-        final CountDownLatch latch = new CountDownLatch(6);
+        final CountDownLatch addLatch = new CountDownLatch(6);
+        final CountDownLatch removeLatch = new CountDownLatch(1);
 
-        ItemListener<String> listener = new ItemListener<String>() {
+        ItemListener<String> listener = new ItemListener<>() {
 
             public void itemAdded(ItemEvent<String> itemEvent) {
-                latch.countDown();
+                addLatch.countDown();
             }
 
             public void itemRemoved(ItemEvent<String> item) {
+                removeLatch.countDown();
             }
         };
         UUID registrationId = set.addItemListener(listener, true);
 
-        new Thread() {
-            public void run() {
-                for (int i = 0; i < 5; i++) {
-                    set.add("item" + i);
-                }
-                set.add("done");
+        new Thread(() -> {
+            for (int i = 0; i < 5; i++) {
+                set.add("item" + i);
             }
-        }.start();
-        assertTrue(latch.await(20, TimeUnit.SECONDS));
+            set.add("done");
+            set.remove("done");
+        }).start();
+        assertOpenEventually(addLatch);
+        assertOpenEventually(removeLatch);
         set.removeItemListener(registrationId);
     }
 

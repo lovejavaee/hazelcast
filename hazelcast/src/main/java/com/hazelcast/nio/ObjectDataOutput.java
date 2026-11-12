@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,8 @@ public interface ObjectDataOutput extends DataOutput, VersionAware, WanProtocolV
     /**
      * @deprecated for the sake of better naming. Use {@link #writeString(String)} instead
      */
-    @Deprecated
+    @Deprecated(since = "4.2", forRemoval = true)
+    @Override
     void writeUTF(@Nullable String string) throws IOException;
 
     /**
@@ -91,7 +92,7 @@ public interface ObjectDataOutput extends DataOutput, VersionAware, WanProtocolV
      * @throws IOException in case of any exceptional case
      * @deprecated for the sake of better naming. Use {@link #writeStringArray(String[])} instead
      */
-    @Deprecated
+    @Deprecated(since = "4.2", forRemoval = true)
     void writeUTFArray(@Nullable String[] values) throws IOException;
 
     /**

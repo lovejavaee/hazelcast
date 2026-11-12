@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.query.impl.Comparables;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.internal.util.MapUtil;
 
 import java.io.IOException;
@@ -45,7 +46,7 @@ public final class CanonicalizingHashSet<E> implements Set<E>, IdentifiedDataSer
      * Constructs a new empty instance of canonicalizing hash set.
      */
     public CanonicalizingHashSet() {
-        this.map = new HashMap<Object, E>();
+        this.map = new HashMap<>();
     }
 
     /**
@@ -54,7 +55,7 @@ public final class CanonicalizingHashSet<E> implements Set<E>, IdentifiedDataSer
      * @param capacity the expected capacity
      */
     public CanonicalizingHashSet(int capacity) {
-        this.map = new HashMap<Object, E>(capacity);
+        this.map = new HashMap<>(capacity);
     }
 
     /**
@@ -79,16 +80,13 @@ public final class CanonicalizingHashSet<E> implements Set<E>, IdentifiedDataSer
 
     @Override
     public void writeData(ObjectDataOutput out) throws IOException {
-        out.writeInt(size());
-        for (Object element : this) {
-            out.writeObject(element);
-        }
+        SerializationUtil.writeCollection(this, out);
     }
 
     @Override
     public void readData(ObjectDataInput in) throws IOException {
         int count = in.readInt();
-        this.map = new HashMap<Object, E>(MapUtil.calculateInitialCapacity(count));
+        this.map = new HashMap<>(MapUtil.calculateInitialCapacity(count));
         for (int i = 0; i < count; i++) {
             E element = in.readObject();
             addInternal(element);
@@ -190,10 +188,9 @@ public final class CanonicalizingHashSet<E> implements Set<E>, IdentifiedDataSer
             return true;
         }
 
-        if (!(obj instanceof Set)) {
+        if (!(obj instanceof Set that)) {
             return false;
         }
-        Set that = (Set) obj;
 
         return containsAll(that);
     }
@@ -204,8 +201,8 @@ public final class CanonicalizingHashSet<E> implements Set<E>, IdentifiedDataSer
     }
 
     private static Object canonicalize(Object value) {
-        if (value instanceof Comparable) {
-            return Comparables.canonicalizeForHashLookup((Comparable) value);
+        if (value instanceof Comparable comparable) {
+            return Comparables.canonicalizeForHashLookup(comparable);
         }
 
         return value;

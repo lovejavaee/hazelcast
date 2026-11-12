@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,12 +24,12 @@ import com.hazelcast.config.ClassFilter;
 import com.hazelcast.config.CompactSerializationConfig;
 import com.hazelcast.config.CompactSerializationConfigAccessor;
 import com.hazelcast.config.Config;
+import com.hazelcast.config.DataConnectionConfig;
 import com.hazelcast.config.DiscoveryConfig;
 import com.hazelcast.config.DurableExecutorConfig;
 import com.hazelcast.config.EndpointConfig;
 import com.hazelcast.config.EntryListenerConfig;
 import com.hazelcast.config.ExecutorConfig;
-import com.hazelcast.config.DataConnectionConfig;
 import com.hazelcast.config.FlakeIdGeneratorConfig;
 import com.hazelcast.config.GlobalSerializerConfig;
 import com.hazelcast.config.IndexConfig;
@@ -71,10 +71,12 @@ import com.hazelcast.config.SplitBrainProtectionListenerConfig;
 import com.hazelcast.config.TcpIpConfig;
 import com.hazelcast.config.TopicConfig;
 import com.hazelcast.config.TrustedInterfacesConfigurable;
+import com.hazelcast.config.UserCodeNamespaceConfig;
 import com.hazelcast.config.WanBatchPublisherConfig;
 import com.hazelcast.config.WanCustomPublisherConfig;
 import com.hazelcast.config.WanReplicationConfig;
 import com.hazelcast.config.WanReplicationRef;
+import com.hazelcast.config.cp.CPMapConfig;
 import com.hazelcast.config.cp.CPSubsystemConfig;
 import com.hazelcast.config.cp.FencedLockConfig;
 import com.hazelcast.config.cp.SemaphoreConfig;
@@ -83,6 +85,8 @@ import com.hazelcast.config.security.RealmConfig;
 import com.hazelcast.config.security.SimpleAuthenticationConfig;
 import com.hazelcast.config.security.TokenEncoding;
 import com.hazelcast.config.security.TokenIdentityConfig;
+import com.hazelcast.config.vector.VectorCollectionConfig;
+import com.hazelcast.config.vector.VectorIndexConfig;
 import com.hazelcast.instance.ProtocolType;
 import com.hazelcast.internal.util.StringUtil;
 import com.hazelcast.internal.yaml.YamlNode;
@@ -92,6 +96,9 @@ import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
+import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.List;
@@ -104,6 +111,8 @@ import static com.hazelcast.internal.config.DomConfigHelper.childElements;
 import static com.hazelcast.internal.config.DomConfigHelper.cleanNodeName;
 import static com.hazelcast.internal.config.DomConfigHelper.getBooleanValue;
 import static com.hazelcast.internal.config.DomConfigHelper.getIntegerValue;
+import static com.hazelcast.internal.config.YamlMemberDomConfigProcessor.NamespaceDefinitionStyle.NEW_STYLE;
+import static com.hazelcast.internal.config.YamlMemberDomConfigProcessor.NamespaceDefinitionStyle.OLD_STYLE;
 import static com.hazelcast.internal.config.yaml.W3cDomUtil.getWrappedYamlSequence;
 import static com.hazelcast.internal.util.StringUtil.lowerCaseInternal;
 import static com.hazelcast.internal.util.StringUtil.upperCaseInternal;
@@ -132,7 +141,8 @@ public class YamlMemberDomConfigProcessor extends MemberDomConfigProcessor {
         cfg.addSecurityInterceptorConfig(new SecurityInterceptorConfig(className));
     }
 
-    @SuppressWarnings({ "checkstyle:npathcomplexity", "checkstyle:methodlength" })
+    @Override
+    @SuppressWarnings({"checkstyle:npathcomplexity", "checkstyle:methodlength"})
     protected void handleSecurityPermissions(Node node) {
         String onJoinOp = getAttribute(node, "on-join-operation");
         if (onJoinOp != null) {
@@ -140,10 +150,11 @@ public class YamlMemberDomConfigProcessor extends MemberDomConfigProcessor {
                     .valueOf(upperCaseInternal(onJoinOp));
             config.getSecurityConfig().setOnJoinPermissionOperation(onJoinPermissionOperation);
         }
+        config.getSecurityConfig().setPermissionPriorityGrant(getBooleanValue(getAttribute(node, "priority-grant")));
         Iterable<Node> nodes = childElements(node);
         for (Node child : nodes) {
             String nodeName = cleanNodeName(child);
-            if (matches("on-join-operation", nodeName)) {
+            if (matches("on-join-operation", nodeName) || matches("priority-grant", nodeName)) {
                 continue;
             }
             nodeName = matches("all", nodeName) ? nodeName + "-permissions" : nodeName + "-permission";
@@ -306,6 +317,86 @@ public class YamlMemberDomConfigProcessor extends MemberDomConfigProcessor {
             MapConfig mapConfig = ConfigUtils.getByNameOrNew(config.getMapConfigs(), name, MapConfig.class);
             handleMapNode(mapNode, mapConfig);
         }
+    }
+
+    /**
+     * Backward-compatible implementation of YAML version of UserCodeNamespacesConfig handling.
+     * The implementation includes two styles of configuration:
+     * <pre>
+     * 1. Released in 5.4 - namespace configurations are a part of the 'user-code-namespaces' array.
+     * 2. Released in 5.5 and backported to 5.4.1 namespace configurations are inside the 'name-spaces' object.
+     * </pre>
+     */
+    @Override
+    protected void handleNamespacesNode(Node node) {
+        NamespaceDefinitionStyle styleInUse = null;
+        for (Node n : childElements(node)) {
+            String nodeName = cleanNodeName(n);
+            boolean matchesNamespace = matches("name-spaces", nodeName);
+            if (matches(nodeName, "class-filter")) {
+                fillJavaSerializationFilter(n, config.getNamespacesConfig());
+            } else if (matchesNamespace) {
+                if (styleInUse == OLD_STYLE) {
+                    throw new InvalidConfigurationException(
+                            "Namespace definitions are allowed to be enumerated or only under 'name-spaces' tag, "
+                                    + "or be enumerated as array members. Still, we strongly recommend to define "
+                                    + "namespace resources only under 'name-spaces' tag");
+                }
+                // 'new' style
+                styleInUse = NEW_STYLE;
+                for (Node child : childElements(n)) {
+                    extractUserCodeNamespaceConfigs(config, child);
+                }
+            } else if (!matches("enabled", nodeName)) {
+                if (styleInUse == NEW_STYLE) {
+                    throw new InvalidConfigurationException(
+                            "Namespace configurations are not allowed outside of 'name-spaces'");
+                }
+                styleInUse = OLD_STYLE;
+                // RU_COMPAT 'old' style
+                extractUserCodeNamespaceConfigs(config, n);
+            }
+        }
+    }
+
+    @SuppressWarnings("checkstyle:InnerAssignment")
+    private static void extractUserCodeNamespaceConfigs(Config config, Node n) {
+        UserCodeNamespaceConfig ns = new UserCodeNamespaceConfig(n.getNodeName());
+        //get list of resources
+        for (Node subChild : childElements(n)) {
+            String resourceId = null;
+            String resourceTypeName = null;
+            String resourceUrl = null;
+            for (Node resourceChild : childElements(subChild)) {
+                switch (resourceChild.getNodeName()) {
+                    case "resource-type" -> resourceTypeName = resourceChild.getNodeValue();
+                    case "url" -> resourceUrl = resourceChild.getNodeValue();
+                    case "id" -> resourceId = resourceChild.getNodeValue();
+                    default -> throw new InvalidConfigurationException(
+                            String.format("Namespace resource %s was configured with invalid element %s",
+                                    subChild.getNodeName(), resourceChild.getNodeName()));
+                }
+            }
+            if (resourceTypeName == null || resourceUrl == null || resourceId == null) {
+                throw new InvalidConfigurationException("For each namespace, resource elements \"id\","
+                        + " \"resource-type\" and \"url\" must be defined.");
+            }
+            try {
+                switch (resourceTypeName.toLowerCase()) {
+                    case "jar" -> ns.addJar(new URI(resourceUrl).toURL(), resourceId);
+                    case "jars_in_zip" -> ns.addJarsInZip(new URI(resourceUrl).toURL(), resourceId);
+                    case "class" -> ns.addClass(new URI(resourceUrl).toURL(), resourceId);
+                    default -> throw new InvalidConfigurationException(
+                            String.format("Namespace resource %s was configured with invalid resource type %s",
+                                    resourceId, resourceTypeName));
+                }
+            } catch (MalformedURLException | URISyntaxException e) {
+                throw new InvalidConfigurationException(
+                        String.format("Namespace resource %s was configured with invalid URL %s",
+                                resourceId, resourceUrl), e);
+            }
+        }
+        config.getNamespacesConfig().addNamespaceConfig(ns);
     }
 
     @Override
@@ -664,6 +755,8 @@ public class YamlMemberDomConfigProcessor extends MemberDomConfigProcessor {
                 fillCompactSerializers(child, compactSerializationConfig);
             } else if (matches("classes", name)) {
                 fillCompactSerializableClasses(child, compactSerializationConfig);
+            } else if (matches("zero-config-filter", name)) {
+                fillJavaSerializationFilter(child, compactSerializationConfig);
             }
         }
     }
@@ -898,6 +991,23 @@ public class YamlMemberDomConfigProcessor extends MemberDomConfigProcessor {
     }
 
     @Override
+    void handleCPMaps(CPSubsystemConfig cpSubsystemConfig, Node node) {
+        for (Node child : childElements(node)) {
+            CPMapConfig cpMapConfig = new CPMapConfig();
+            cpMapConfig.setName(child.getNodeName());
+            for (Node subChild : childElements(child)) {
+                String nodeName = cleanNodeName(subChild);
+                if (matches("max-size-mb", nodeName)) {
+                    cpMapConfig.setMaxSizeMb(Integer.parseInt(getTextContent(subChild)));
+                } else if (matches("purge-enabled", nodeName)) {
+                    cpMapConfig.setPurgeEnabled(Boolean.parseBoolean(getTextContent(subChild)));
+                }
+            }
+            cpSubsystemConfig.addCPMapConfig(cpMapConfig);
+        }
+    }
+
+    @Override
     protected void handleRealms(Node node) {
         for (Node child : childElements(node)) {
             handleRealm(child);
@@ -970,7 +1080,34 @@ public class YamlMemberDomConfigProcessor extends MemberDomConfigProcessor {
     }
 
     @Override
+    protected void handleVector(Node node) {
+        for (Node vectorNode : childElements(node)) {
+            String name = vectorNode.getNodeName();
+            VectorCollectionConfig vectorConfig = ConfigUtils.getByNameOrNew(
+                    config.getVectorCollectionConfigs(),
+                    name,
+                    VectorCollectionConfig.class
+            );
+            handleVectorNode(vectorNode, vectorConfig);
+        }
+    }
+
+    @Override
+    protected void handleVectorIndexesNode(Node indexesNode, VectorCollectionConfig collectionConfig) {
+        for (Node indexNode : childElements(indexesNode)) {
+            VectorIndexConfig indexConfig = new VectorIndexConfig();
+            handleVectorIndexNode(indexNode, indexConfig);
+            collectionConfig.addVectorIndexConfig(indexConfig);
+        }
+    }
+
+    @Override
     protected void handlePartitioningAttributeConfig(Node node, PartitioningAttributeConfig config) {
         config.setAttributeName(getAttribute(node, "name"));
+    }
+
+    enum NamespaceDefinitionStyle {
+        OLD_STYLE,
+        NEW_STYLE
     }
 }

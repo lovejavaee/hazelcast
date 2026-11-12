@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,14 +24,17 @@ import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.internal.server.FirewallingServer.FirewallingServerConnectionManager;
 import com.hazelcast.internal.server.OperationPacketFilter;
 import com.hazelcast.internal.server.PacketFilter;
+import com.hazelcast.internal.server.ServerConnectionManager;
 import com.hazelcast.internal.util.Preconditions;
 import com.hazelcast.internal.util.collection.IntHashSet;
+import com.hazelcast.logging.ILogger;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.UnaryOperator;
 
 import static com.hazelcast.test.Accessors.getAddress;
 import static com.hazelcast.test.Accessors.getNode;
@@ -43,14 +46,19 @@ public final class PacketFiltersUtil {
     private PacketFiltersUtil() {
     }
 
-    public static FirewallingServerConnectionManager getConnectionManager(HazelcastInstance instance) {
+    public static ServerConnectionManager getConnectionManager(HazelcastInstance instance) {
         Node node = getNode(instance);
-        return (FirewallingServerConnectionManager) node.getServer().getConnectionManager(EndpointQualifier.MEMBER);
+        return node.getServer().getConnectionManager(EndpointQualifier.MEMBER);
     }
 
     public static void resetPacketFiltersFrom(HazelcastInstance instance) {
-        FirewallingServerConnectionManager cm = getConnectionManager(instance);
-        cm.removePacketFilter();
+        ServerConnectionManager cm = getConnectionManager(instance);
+        if (cm instanceof FirewallingServerConnectionManager manager) {
+            manager.removePacketFilter();
+        } else {
+            ILogger logger = instance.getLoggingService().getLogger(PacketFiltersUtil.class);
+            logger.warning("Trying to reset packet filters when using real network");
+        }
     }
 
     public static void delayOperationsFrom(HazelcastInstance instance, int factory, List<Integer> opTypes) {
@@ -122,6 +130,16 @@ public final class PacketFiltersUtil {
         cm.setPacketFilter(packetFilter);
     }
 
+    public static void wrapCustomerFilter(HazelcastInstance from, UnaryOperator<PacketFilter> packetFilterWrapper) {
+        Node node = getNode(from);
+        FirewallingServerConnectionManager cm = (FirewallingServerConnectionManager)
+                node.getServer().getConnectionManager(EndpointQualifier.MEMBER);
+        PacketFilter original = cm.getPacketFilter();
+        assert original != null;
+        var wrapped = packetFilterWrapper.apply(original);
+        cm.setPacketFilter(wrapped);
+    }
+
     private static class EndpointAgnosticPacketFilter extends OperationPacketFilter {
 
         final int factory;
@@ -134,7 +152,7 @@ public final class PacketFiltersUtil {
                 List<Integer> typeIds, Action action) {
             super(serializationService);
             this.action = Preconditions.checkNotNull(action);
-            assert typeIds.size() > 0 : "At least one operation type must be defined!";
+            assert !typeIds.isEmpty() : "At least one operation type must be defined!";
             this.factory = factory;
             types.addAll(typeIds);
         }

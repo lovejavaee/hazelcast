@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -100,7 +100,7 @@ public class QueryCacheNaturalFilteringStrategy extends AbstractFilteringStrateg
         EventListenerFilter filterAsEventListenerFilter = null;
         boolean originalFilterEventTypeMatches = true;
 
-        if (filter instanceof EventListenerFilter) {
+        if (filter instanceof EventListenerFilter listenerFilter) {
             int type = eventType.getType();
             if (type == INVALIDATION.getType()) {
                 return FILTER_DOES_NOT_MATCH;
@@ -108,10 +108,10 @@ public class QueryCacheNaturalFilteringStrategy extends AbstractFilteringStrateg
 
             // evaluate whether the filter matches the original event type
             originalFilterEventTypeMatches = filter.eval(type);
-            // hold a reference to the original event filter; this may be used later, in case there is a query event filter
+            // hold a reference to the original event filter; this may be used later, in case there is a query event filter,
             // and it alters the event type to be published
-            filterAsEventListenerFilter = ((EventListenerFilter) filter);
-            filter = ((EventListenerFilter) filter).getEventFilter();
+            filterAsEventListenerFilter = listenerFilter;
+            filter = listenerFilter.getEventFilter();
             if (filter instanceof UuidFilter) {
                 return FILTER_DOES_NOT_MATCH;
             }

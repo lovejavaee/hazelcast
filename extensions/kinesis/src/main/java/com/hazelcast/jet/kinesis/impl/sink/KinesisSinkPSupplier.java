@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,16 +16,17 @@
 
 package com.hazelcast.jet.kinesis.impl.sink;
 
-import com.amazonaws.services.kinesis.AmazonKinesisAsync;
 import com.hazelcast.function.FunctionEx;
 import com.hazelcast.jet.core.Processor;
 import com.hazelcast.jet.core.ProcessorSupplier;
 import com.hazelcast.jet.kinesis.impl.AwsConfig;
 import com.hazelcast.jet.retry.RetryStrategy;
 import com.hazelcast.logging.ILogger;
+import software.amazon.awssdk.services.kinesis.KinesisAsyncClient;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.io.Serial;
 import java.util.Collection;
 import java.util.stream.IntStream;
 
@@ -33,6 +34,7 @@ import static java.util.stream.Collectors.toList;
 
 public class KinesisSinkPSupplier<T> implements ProcessorSupplier {
 
+    @Serial
     private static final long serialVersionUID = 1L;
 
     @Nonnull
@@ -46,7 +48,7 @@ public class KinesisSinkPSupplier<T> implements ProcessorSupplier {
     @Nonnull
     private final RetryStrategy retryStrategy;
 
-    private transient AmazonKinesisAsync client;
+    private transient KinesisAsyncClient client;
     private transient int memberCount;
     private transient ILogger logger;
 
@@ -95,7 +97,7 @@ public class KinesisSinkPSupplier<T> implements ProcessorSupplier {
     @Override
     public void close(@Nullable Throwable error) {
         if (client != null) {
-            client.shutdown();
+            client.close();
         }
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -67,9 +67,9 @@ public class CardinalityEstimatorService
 
     private NodeEngine nodeEngine;
     private final ConcurrentMap<String, CardinalityEstimatorContainer> containers =
-            new ConcurrentHashMap<String, CardinalityEstimatorContainer>();
+            new ConcurrentHashMap<>();
     private final ConstructorFunction<String, CardinalityEstimatorContainer> cardinalityEstimatorContainerConstructorFunction =
-            new ConstructorFunction<String, CardinalityEstimatorContainer>() {
+            new ConstructorFunction<>() {
                 @Override
                 public CardinalityEstimatorContainer createNew(String name) {
                     CardinalityEstimatorConfig config = nodeEngine.getConfig().findCardinalityEstimatorConfig(name);
@@ -77,10 +77,10 @@ public class CardinalityEstimatorService
                 }
             };
 
-    private final ConcurrentMap<String, Object> splitBrainProtectionConfigCache = new ConcurrentHashMap<String, Object>();
+    private final ConcurrentMap<String, Object> splitBrainProtectionConfigCache = new ConcurrentHashMap<>();
     private final ContextMutexFactory splitBrainProtectionConfigCacheMutexFactory = new ContextMutexFactory();
     private final ConstructorFunction<String, Object> splitBrainProtectionConfigConstructor =
-            new ConstructorFunction<String, Object>() {
+            new ConstructorFunction<>() {
         @Override
         public Object createNew(String name) {
             CardinalityEstimatorConfig config = nodeEngine.getConfig().findCardinalityEstimatorConfig(name);
@@ -218,7 +218,10 @@ public class CardinalityEstimatorService
                 for (CardinalityEstimatorContainer container : containerList) {
                     String containerName = collector.getContainerName(container);
                     SplitBrainMergePolicy<HyperLogLog, CardinalityEstimatorMergeTypes, HyperLogLog> mergePolicy
-                            = getMergePolicy(collector.getMergePolicyConfig(container));
+                            = getMergePolicy(
+                            collector.getMergePolicyConfig(container),
+                            collector.getUserNamespaceContainer(container)
+                    );
 
                     MergeOperation operation = new MergeOperation(containerName, mergePolicy, container.hll);
                     invoke(SERVICE_NAME, operation, partitionId);

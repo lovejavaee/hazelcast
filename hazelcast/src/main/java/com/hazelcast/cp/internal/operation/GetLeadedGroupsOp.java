@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ import java.util.Map;
 public class GetLeadedGroupsOp extends Operation implements RaftSystemOperation, IdentifiedDataSerializable {
 
     private transient Map.Entry<Integer, Collection<CPGroupId>> entry =
-        new AbstractMap.SimpleImmutableEntry<>(0, Collections.emptyList());
+            new AbstractMap.SimpleImmutableEntry<>(0, Collections.emptyList());
 
     public GetLeadedGroupsOp() {
     }
@@ -45,9 +45,7 @@ public class GetLeadedGroupsOp extends Operation implements RaftSystemOperation,
     @Override
     public void run() throws Exception {
         RaftService service = getService();
-        Collection<CPGroupId> groups = service.getLeadedGroups();
-        int cpMemberPriority = service.getCPMemberPriority();
-        entry = new AbstractMap.SimpleImmutableEntry<>(cpMemberPriority, groups);
+        entry = service.getEnrichedLeadershipInfo();
     }
 
     @Override

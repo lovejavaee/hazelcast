@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,20 +16,24 @@
 
 package com.hazelcast.jet.hadoop.file;
 
-import com.fasterxml.jackson.core.JsonParseException;
-import com.fasterxml.jackson.core.io.JsonEOFException;
-import com.google.common.collect.ImmutableMap;
 import com.hazelcast.jet.hadoop.file.model.User;
 import com.hazelcast.jet.pipeline.file.FileFormat;
 import com.hazelcast.jet.pipeline.file.FileSourceBuilder;
 import com.hazelcast.jet.pipeline.file.FileSources;
+import com.hazelcast.jet.test.IgnoreInJenkinsOnWindows;
+import com.hazelcast.test.annotation.NightlyTest;
+import com.hazelcast.test.annotation.ParallelJVMTest;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
+import tools.jackson.core.exc.StreamReadException;
+import tools.jackson.core.exc.UnexpectedEndOfInputException;
 
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assumptions.assumeThat;
 
+@Category({NightlyTest.class, ParallelJVMTest.class, IgnoreInJenkinsOnWindows.class})
 public class JsonFileFormatTest extends BaseFileFormatTest {
 
     @Test
@@ -41,11 +45,11 @@ public class JsonFileFormatTest extends BaseFileFormatTest {
         assertItemsInSource(source,
                 collected -> assertThat(collected).usingRecursiveFieldByFieldElementComparator()
                                                   .containsOnly(
-                                                          ImmutableMap.of(
+                                                          Map.of(
                                                                   "name", "Frantisek",
                                                                   "favoriteNumber", 7
                                                           ),
-                                                          ImmutableMap.of(
+                                                          Map.of(
                                                                   "name", "Ali",
                                                                   "favoriteNumber", 42
                                                           )
@@ -160,7 +164,7 @@ public class JsonFileFormatTest extends BaseFileFormatTest {
                                                     .glob("invalid-data.png")
                                                     .format(FileFormat.json(User.class));
 
-        assertJobFailed(source, JsonParseException.class, "Unexpected character");
+        assertJobFailed(source, StreamReadException.class, "Unexpected character");
     }
 
     @Test
@@ -169,7 +173,7 @@ public class JsonFileFormatTest extends BaseFileFormatTest {
                                                     .glob("file-invalid.jsonl")
                                                     .format(FileFormat.json(User.class));
 
-        assertJobFailed(source, JsonParseException.class, "Unexpected character");
+        assertJobFailed(source, StreamReadException.class, "Unexpected character");
     }
 
     @Test
@@ -194,6 +198,6 @@ public class JsonFileFormatTest extends BaseFileFormatTest {
                                                     .glob("file-multiline.jsonl")
                                                     .format(FileFormat.json(User.class).multiline(false));
 
-        assertJobFailed(source, JsonEOFException.class, "expected close marker for Object");
+        assertJobFailed(source, UnexpectedEndOfInputException.class, "Unexpected end-of-input: expected close marker for Object ");
     }
 }

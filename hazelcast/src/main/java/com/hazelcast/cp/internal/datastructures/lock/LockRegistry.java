@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -65,7 +65,7 @@ class LockRegistry extends ResourceRegistry<LockInvocationKey, Lock> implements 
         for (Entry<String, Lock> e : this.resources.entrySet()) {
             clone.resources.put(e.getKey(), e.getValue().cloneForSnapshot());
         }
-        clone.destroyedNames.addAll(this.destroyedNames);
+        clone.destroyed.addAll(this.destroyed);
         clone.waitTimeouts.putAll(this.waitTimeouts);
 
         return clone;

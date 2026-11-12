@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,10 @@
 
 package com.hazelcast.internal.tpcengine;
 
+import com.hazelcast.internal.tpcengine.util.OS;
+
 import java.util.Collection;
+import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
@@ -29,17 +32,31 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.junit.Assume.assumeFalse;
 
 public class TpcTestSupport {
 
     // the unit of the above 2 timeouts is milliseconds.
     public static final int ASSERT_TRUE_EVENTUALLY_TIMEOUT = getInteger("hazelcast.assertTrueEventually.timeout", 120);
-    public static final int ASSERT_TRUE_EVENTUALLY_TIMEOUT_NIGHTLY = getInteger("hazelcast.assertTrueEventually.timeout.nightly", 240);
+    public static final int ASSERT_TRUE_EVENTUALLY_TIMEOUT_NIGHTLY =
+            getInteger("hazelcast.assertTrueEventually.timeout.nightly", 240);
 
     public static final int TERMINATION_TIMEOUT_SECONDS = 30;
 
+    public static void assumeNotWindows() {
+        assumeFalse("Skipping on Windows", OS.isWindows());
+    }
+
     public static void assertCompletesEventually(final Future future) {
         assertTrueEventually(() -> assertTrue("Future has not completed", future.isDone()));
+    }
+
+    public static <T> void assertCompletesEventually(final List<Future<T>> futures, long timeoutSeconds) {
+        assertTrueEventually(() -> {
+            for (Future<?> future : futures) {
+                assertTrue(future.isDone());
+            }
+        }, timeoutSeconds);
     }
 
     public static void terminateAll(Collection<? extends Reactor> reactors) {
@@ -161,12 +178,7 @@ public class TpcTestSupport {
     }
 
     public static void assertEqualsEventually(final int expected, final AtomicInteger value) {
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertEquals(expected, value.get());
-            }
-        });
+        assertTrueEventually(() -> assertEquals(expected, value.get()));
     }
 
     public static void assertTrueEventually(AssertTask task) {
@@ -199,12 +211,12 @@ public class TpcTestSupport {
     }
 
     public static RuntimeException rethrow(Throwable t) {
-        if (t instanceof Error) {
-            throw (Error) t;
+        if (t instanceof Error error) {
+            throw error;
         }
 
-        if (t instanceof RuntimeException) {
-            throw (RuntimeException) t;
+        if (t instanceof RuntimeException exception) {
+            throw exception;
         }
 
         throw new RuntimeException(t);

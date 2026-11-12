@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -80,8 +80,8 @@ public class ClientTestSupport extends HazelcastTestSupport {
     }
 
     protected static HazelcastClientInstanceImpl getHazelcastClientInstanceImpl(HazelcastInstance client) {
-        if (client instanceof HazelcastClientInstanceImpl) {
-            return (HazelcastClientInstanceImpl) client;
+        if (client instanceof HazelcastClientInstanceImpl impl) {
+            return impl;
         }
         HazelcastClientProxy clientProxy = (HazelcastClientProxy) client;
         return clientProxy.client;
@@ -90,14 +90,18 @@ public class ClientTestSupport extends HazelcastTestSupport {
     public static void makeSureDisconnectedFromServer(final HazelcastInstance client, UUID memberUUID) {
         assertTrueEventually(() -> {
             ClientConnectionManager connectionManager = getHazelcastClientInstanceImpl(client).getConnectionManager();
-            assertNull(connectionManager.getConnection(memberUUID));
+            assertNull(connectionManager.getActiveConnection(memberUUID));
         });
     }
 
-    protected void makeSureConnectedToServers(final HazelcastInstance client, final int numberOfServers) {
+    public static void makeSureConnectedToServers(final HazelcastInstance client,
+                                               final int expectedConnectedServerCount) {
         assertTrueEventually(() -> {
-            ClientConnectionManager connectionManager = getHazelcastClientInstanceImpl(client).getConnectionManager();
-            assertEquals(numberOfServers, connectionManager.getActiveConnections().size());
+            assert client != null;
+            HazelcastClientInstanceImpl clientInstanceImpl = getHazelcastClientInstanceImpl(client);
+            ClientConnectionManager connectionManager = clientInstanceImpl.getConnectionManager();
+            Collection<ClientConnection> activeConnections = connectionManager.getActiveConnections();
+            assertEquals(activeConnections.toString(), expectedConnectedServerCount, activeConnections.size());
         });
     }
 
@@ -120,10 +124,10 @@ public class ClientTestSupport extends HazelcastTestSupport {
         @Override
         public void stateChanged(LifecycleEvent event) {
             LifecycleEvent.LifecycleState state = event.getState();
-            if (state.equals(LifecycleEvent.LifecycleState.CLIENT_DISCONNECTED)) {
+            if (state == LifecycleEvent.LifecycleState.CLIENT_DISCONNECTED) {
                 disconnected.set(true);
                 disconnectedLatch.countDown();
-            } else if (state.equals(LifecycleEvent.LifecycleState.CLIENT_CONNECTED)) {
+            } else if (state == LifecycleEvent.LifecycleState.CLIENT_CONNECTED) {
                 if (disconnected.get()) {
                     reconnectedLatch.countDown();
                 }

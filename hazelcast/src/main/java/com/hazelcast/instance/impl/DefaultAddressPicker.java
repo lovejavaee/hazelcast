@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.hazelcast.cluster.Address;
 import com.hazelcast.config.Config;
 import com.hazelcast.config.EndpointConfig;
 import com.hazelcast.config.InterfacesConfig;
+import com.hazelcast.config.ServerSocketEndpointConfig;
 import com.hazelcast.config.TcpIpConfig;
 import com.hazelcast.instance.AddressPicker;
 import com.hazelcast.instance.EndpointQualifier;
@@ -31,8 +32,8 @@ import com.hazelcast.logging.ILogger;
 import com.hazelcast.spi.properties.ClusterProperty;
 import com.hazelcast.spi.properties.HazelcastProperties;
 
+import java.io.File;
 import java.io.IOException;
-import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.SocketException;
@@ -59,16 +60,6 @@ import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 class DefaultAddressPicker
         implements AddressPicker {
 
-    /**
-     * See https://docs.oracle.com/javase/8/docs/api/java/net/doc-files/net-properties.html
-     */
-    static final String PREFER_IPV4_STACK = "java.net.preferIPv4Stack";
-
-    /**
-     * See https://docs.oracle.com/javase/8/docs/api/java/net/doc-files/net-properties.html
-     */
-    static final String PREFER_IPV6_ADDRESSES = "java.net.preferIPv6Addresses";
-
     private final ILogger logger;
 
     private final HazelcastProperties hazelcastProperties;
@@ -82,6 +73,7 @@ class DefaultAddressPicker
     private final boolean isPortAutoIncrement;
     private final int port;
     private final int portCount;
+    private final JavaIPvXProperties javaNetProps;
 
     private HostnameResolver hostnameResolver = new InetAddressHostnameResolver();
     private Address publicAddress;
@@ -89,27 +81,41 @@ class DefaultAddressPicker
     private ServerSocketChannel serverSocketChannel;
     private NetworkInterfacesEnumerator networkInterfacesEnumerator = NetworkInterfacesEnumerator.defaultEnumerator();
 
-    DefaultAddressPicker(Config config, ILogger logger) {
-        this(config, null, config.getNetworkConfig().getInterfaces(), config.getNetworkConfig().getJoin().getTcpIpConfig(),
-                config.getNetworkConfig().isReuseAddress(), config.getNetworkConfig().isPortAutoIncrement(),
-                config.getNetworkConfig().getPort(), config.getNetworkConfig().getPortCount(),
-                config.getNetworkConfig().getPublicAddress(), logger);
+    private record PortConfig(int port, int count) {
     }
 
-    DefaultAddressPicker(Config config, EndpointQualifier endpointQualifier, InterfacesConfig interfacesConfig,
-                         TcpIpConfig tcpIpConfig, boolean isReuseAddress, boolean isPortAutoIncrement, int port, int portCount,
-                         String publicAddressConfig, ILogger logger) {
+    DefaultAddressPicker(Config config, ILogger logger) {
+        this(config, logger, JavaIPvXProperties.INSTANCE);
+    }
+
+    DefaultAddressPicker(Config config, ILogger logger, JavaIPvXProperties javaNetProps) {
+        this(config, null, config.getNetworkConfig().getInterfaces(), config.getNetworkConfig().getJoin().getTcpIpConfig(),
+                config.getNetworkConfig().isReuseAddress(), config.getNetworkConfig().isPortAutoIncrement(),
+                new PortConfig(config.getNetworkConfig().getPort(), config.getNetworkConfig().getPortCount()),
+                config.getNetworkConfig().getPublicAddress(), logger, javaNetProps);
+    }
+
+    DefaultAddressPicker(Config config, ServerSocketEndpointConfig endpointConfig, TcpIpConfig tcpIpConfig, ILogger logger) {
+        this(config, endpointConfig.getQualifier(), endpointConfig.getInterfaces(), tcpIpConfig, endpointConfig.isReuseAddress(),
+                endpointConfig.isPortAutoIncrement(), new PortConfig(endpointConfig.getPort(), endpointConfig.getPortCount()),
+                endpointConfig.getPublicAddress(), logger, JavaIPvXProperties.INSTANCE);
+    }
+
+    private DefaultAddressPicker(Config config, EndpointQualifier endpointQualifier, InterfacesConfig interfacesConfig,
+                         TcpIpConfig tcpIpConfig, boolean isReuseAddress, boolean isPortAutoIncrement, PortConfig portConfig,
+                         String publicAddressConfig, ILogger logger, JavaIPvXProperties javaNetProps) {
         this.logger = logger;
         this.isReuseAddress = isReuseAddress;
         this.isPortAutoIncrement = isPortAutoIncrement;
-        this.port = port;
-        this.portCount = portCount;
+        this.port = portConfig.port();
+        this.portCount = portConfig.count();
         this.endpointQualifier = endpointQualifier;
         this.interfacesConfig = interfacesConfig;
         this.tcpIpConfig = tcpIpConfig;
         this.publicAddressConfig = publicAddressConfig;
         this.hazelcastProperties = new HazelcastProperties(config);
         this.config = config;
+        this.javaNetProps = javaNetProps;
     }
 
     @Override
@@ -124,7 +130,7 @@ class DefaultAddressPicker
                 logger.info("Using public address: " + publicAddress);
             } else {
                 publicAddress = bindAddress;
-                logger.finest("Using public address the same as the bind address: " + publicAddress);
+                logger.finest("Using public address the same as the bind address: %s", publicAddress);
             }
         } catch (Exception e) {
             ServerSocketChannel serverSocketChannel = getServerSocketChannel(endpointQualifier);
@@ -203,7 +209,7 @@ class DefaultAddressPicker
         }
 
         if (logger.isFineEnabled()) {
-            logger.fine("Prefer IPv4 stack is " + preferIPv4Stack() + ", prefer IPv6 addresses is " + preferIPv6Addresses());
+            logger.fine("Prefer IPv4 stack is %s, prefer IPv6 addresses is %s", preferIPv4Stack(), preferIPv6Addresses());
         }
 
         if (!interfaces.isEmpty()) {
@@ -214,8 +220,7 @@ class DefaultAddressPicker
         }
 
         if (interfacesConfig.isEnabled()) {
-            String msg = "Hazelcast CANNOT start on this node. No matching network interface found.\n"
-                    + "Interface matching must be either disabled or updated in the hazelcast.xml config file.";
+            String msg = errorMsgForNoMatchingInterface();
             logger.severe(msg);
             throw new RuntimeException(msg);
         }
@@ -223,6 +228,15 @@ class DefaultAddressPicker
             logger.warning("Could not find a matching address to start with! Picking one of non-loopback addresses.");
         }
         return pickMatchingAddress(null);
+    }
+
+    private String errorMsgForNoMatchingInterface() {
+        File file = config.getConfigurationFile();
+        String configSource = file != null && file.exists() && file.isFile()
+                ? "the " + file.getName() + " config file." : "the member configuration.";
+        return """
+               Hazelcast CANNOT start on this node. No matching network interface found.
+               Interface matching must be either disabled or updated in %s""".formatted(configSource);
     }
 
     private List<InterfaceDefinition> getInterfaces() {
@@ -323,7 +337,10 @@ class DefaultAddressPicker
         }
         if (address != null) {
             address = address.trim();
-            if ("127.0.0.1".equals(address) || "localhost".equals(address)) {
+            if (address.isEmpty()) {
+                throw new IllegalArgumentException("Public address cannot be blank. Configure it to a"
+                        + " non-blank value or remove it from configuration.");
+            } else if ("127.0.0.1".equals(address) || "localhost".equals(address)) {
                 return pickLoopbackAddress(address, port);
             } else {
                 // allow port to be defined in same string in the form of <host>:<port>, e.g. 10.0.0.0:1234
@@ -369,37 +386,59 @@ class DefaultAddressPicker
                 if (address == null) {
                     continue;
                 }
-                matchingAddress = address;
-
-                if (preferIPv6Addresses) {
-                    // IPv6 address is preferred, return if address is IPv6.
-                    if (inetAddress instanceof Inet6Address) {
-                        return matchingAddress;
-                    }
-                } else if (inetAddress instanceof Inet4Address) {
-                    // No IPv6 address preference, return if address is IPv4.
-                    return matchingAddress;
+                if (getPriority(address, preferIPv6Addresses) > getPriority(matchingAddress, preferIPv6Addresses)) {
+                    matchingAddress = address;
                 }
             }
         }
-        // nothing matched to IP version preference, return what we have.
         return matchingAddress;
+    }
+
+    /**
+     * The priority in desc-order:
+     * <ol>
+     * <li>IPv6-preference
+     * <li>global address
+     * <li>site-local address
+     * <li>link-local address
+     * <li>loopback address
+     * </ol>
+     */
+    @SuppressWarnings("checkstyle:MagicNumber")
+    private int getPriority(AddressDefinition address, boolean preferIPv6Addresses) {
+        if (address == null) {
+            return 0;
+        }
+        InetAddress ia = address.inetAddress;
+        boolean isIpv6 = ia instanceof Inet6Address;
+        int priority;
+        if (ia.isLoopbackAddress()) {
+            priority = 1;
+        } else if (ia.isLinkLocalAddress()) {
+            priority = 2;
+        } else if (ia.isSiteLocalAddress()) {
+            priority = 3;
+        } else {
+            priority = 5;
+        }
+        if (isIpv6 ^ !preferIPv6Addresses) {
+            priority += 10;
+        }
+        return priority;
     }
 
     private AddressDefinition getMatchingAddress(Collection<InterfaceDefinition> interfaces, InetAddress inetAddress) {
         if (isNotEmpty(interfaces)) {
             return match(inetAddress, interfaces);
-        } else if (!inetAddress.isLoopbackAddress()) {
-            return new AddressDefinition(inetAddress);
         }
-        return null;
+        return new AddressDefinition(inetAddress);
     }
 
     /**
      * Checks given network interface and returns true when it should not be used for picking address. Reasons for skipping are
      * the interface is: down, virtual or loopback.
      */
-    private boolean skipInterface(NetworkInterfaceInfo ni) throws SocketException {
+    private boolean skipInterface(NetworkInterfaceInfo ni) {
         boolean skipInterface = !ni.isUp() || ni.isVirtual() || ni.isLoopback();
         if (skipInterface && logger.isFineEnabled()) {
             logger.fine("Skipping NetworkInterface '" + ni.getName() + "': isUp=" + ni.isUp() + ", isVirtual=" + ni.isVirtual()
@@ -418,12 +457,12 @@ class DefaultAddressPicker
     }
 
     private boolean preferIPv4Stack() {
-        return Boolean.getBoolean(PREFER_IPV4_STACK)
+        return javaNetProps.preferIPv4Stack()
                 || hazelcastProperties.getBoolean(ClusterProperty.PREFER_IPv4_STACK);
     }
 
     private boolean preferIPv6Addresses() {
-        return !preferIPv4Stack() && Boolean.getBoolean(PREFER_IPV6_ADDRESSES);
+        return !preferIPv4Stack() && javaNetProps.preferIPv6Addresses();
     }
 
     @Override

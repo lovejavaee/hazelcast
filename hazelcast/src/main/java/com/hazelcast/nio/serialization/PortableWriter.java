@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,11 @@ import java.time.OffsetDateTime;
 /**
  * Provides means for writing portable fields to binary data in the form of java primitives,
  * arrays of java primitives, nested portable fields and arrays of portable fields.
+ *
+ * @deprecated Portable Serialization has been deprecated. We recommend you use Compact Serialization as Portable Serialization
+ * will be removed as of version 7.0.
  */
+@Deprecated(since = "5.4", forRemoval = true)
 public interface PortableWriter {
 
     /**
@@ -52,18 +56,18 @@ public interface PortableWriter {
     void writeLong(@Nonnull String fieldName, long value) throws IOException;
 
     /**
-     * Writes an UTF string.
+     * Writes a UTF string.
      *
      * @param fieldName name of the field
      * @param value     utf string value to be written
      * @throws IOException in case of any exceptional case
      * @deprecated for the sake of better naming. Use {@link #writeString(String, String)} instead.
      */
-    @Deprecated
+    @Deprecated(since = "4.2", forRemoval = true)
     void writeUTF(@Nonnull String fieldName, @Nullable String value) throws IOException;
 
     /**
-     * Writes an UTF string.
+     * Writes a UTF string.
      *
      * @param fieldName name of the field
      * @param value     utf string value to be written
@@ -272,7 +276,7 @@ public interface PortableWriter {
      * @throws IOException in case of any exceptional case
      * @deprecated for the sake of better naming. Use {@link #writeStringArray(String, String[])} instead.
      */
-    @Deprecated
+    @Deprecated(since = "4.2", forRemoval = true)
     void writeUTFArray(@Nonnull String fieldName, @Nullable String[] values) throws IOException;
 
     /**

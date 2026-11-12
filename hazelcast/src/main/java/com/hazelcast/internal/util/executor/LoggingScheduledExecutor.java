@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import com.hazelcast.logging.ILogger;
 
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ScheduledFuture;
@@ -49,10 +48,8 @@ import static java.util.logging.Level.SEVERE;
  * (e.g. transactions in combination with LockResource eviction), it is best that tasks are
  * removed from the scheduler on cancellation.
  * <p>
- * In Java 7+ the there is a method {@code ScheduledThreadPoolExecutor#setRemoveOnCancelPolicy(boolean)}
- * which removes the runnable on cancellation. Removal of tasks is done in logarithmic time
- * (see ScheduledThreadPoolExecutor.DelayedWorkQueue.indexOf where there is a direct lookup
- * instead of a linear scan over the queue).
+ * Removal of tasks is done in logarithmic time (see ScheduledThreadPoolExecutor.DelayedWorkQueue.indexOf
+ * where there is a direct lookup instead of a linear scan over the queue).
  */
 public class LoggingScheduledExecutor extends ScheduledThreadPoolExecutor {
 
@@ -77,9 +74,9 @@ public class LoggingScheduledExecutor extends ScheduledThreadPoolExecutor {
         super.afterExecute(runnable, throwable);
 
         Level level = FINE;
-        if (throwable == null && runnable instanceof ScheduledFuture && ((ScheduledFuture) runnable).isDone()) {
+        if (throwable == null && runnable instanceof ScheduledFuture future && future.isDone()) {
             try {
-                ((Future) runnable).get();
+                future.get();
             } catch (CancellationException ce) {
                 throwable = ce;
             } catch (ExecutionException ee) {

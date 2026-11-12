@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ public enum DeleteOpSteps implements IMapOpStep {
             MapContainer mapContainer = recordStore.getMapContainer();
             MapServiceContext mapServiceContext = mapContainer.getMapServiceContext();
 
-            Record record = recordStore.getRecordOrNull(state.getKey());
+            Record record = recordStore.getRecordOrNull(state.getKey(), false, true);
             state.setOldValue(record == null ? null : record.getValue());
             state.setRecordExistsInMemory(record != null);
 
@@ -64,13 +64,17 @@ public enum DeleteOpSteps implements IMapOpStep {
             if (recordStore.persistenceEnabledFor(state.getCallerProvenance())) {
                 MapDataStore mapDataStore = recordStore.getMapDataStore();
                 mapDataStore.remove(state.getKey(), state.getNow(), state.getTxnId());
+
+                if (state.getOldValue() != null) {
+                    recordStore.updateStatsOnRemove(state.getNow());
+                }
             }
         }
 
         @Override
         public Step nextStep(State state) {
             return state.isRecordExistsInMemory()
-                    ? DeleteOpSteps.ON_DELETE : UtilSteps.SEND_RESPONSE;
+                    ? DeleteOpSteps.ON_DELETE : UtilSteps.FINAL_STEP;
         }
     },
 
@@ -78,14 +82,13 @@ public enum DeleteOpSteps implements IMapOpStep {
         @Override
         public void runStep(State state) {
             DefaultRecordStore recordStore = (DefaultRecordStore) state.getRecordStore();
-            Record record = recordStore.getRecord(state.getKey());
-            recordStore.removeRecord0(state.getKey(), record, false);
-            recordStore.onStore(record);
+            recordStore.onStore(recordStore.getRecord(state.getKey()));
+            recordStore.removeByKey(state.getKey(), false);
         }
 
         @Override
         public Step nextStep(State state) {
-            return UtilSteps.SEND_RESPONSE;
+            return UtilSteps.FINAL_STEP;
         }
     };
 

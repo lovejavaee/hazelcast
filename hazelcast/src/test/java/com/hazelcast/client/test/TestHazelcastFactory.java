@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ import com.hazelcast.client.impl.clientside.HazelcastClientInstanceImpl;
 import com.hazelcast.client.impl.clientside.HazelcastClientProxy;
 import com.hazelcast.client.impl.connection.AddressProvider;
 import com.hazelcast.client.impl.connection.Addresses;
-import com.hazelcast.client.impl.management.ClientConnectionProcessListenerRunner;
+import com.hazelcast.client.impl.management.ClientConnectionProcessListenerRegistry;
 import com.hazelcast.client.properties.ClientProperty;
 import com.hazelcast.client.util.AddressHelper;
 import com.hazelcast.cluster.Address;
@@ -74,6 +74,8 @@ public class TestHazelcastFactory extends TestHazelcastInstanceFactory {
 
     public HazelcastInstance newHazelcastClient(ClientConfig config, String sourceIp) {
         if (!mockNetwork) {
+            config = config == null ? ClientConfig.load() : config;
+            setDefaultCompactSerializationRestrictions(config.getSerializationConfig());
             HazelcastInstance client = HazelcastClient.newHazelcastClient(config);
             registerJvmNameAndPidMetric(((HazelcastClientProxy) client).client);
             return client;
@@ -82,6 +84,7 @@ public class TestHazelcastFactory extends TestHazelcastInstanceFactory {
         if (config == null) {
             config = new XmlClientConfigBuilder().build();
         }
+        setDefaultCompactSerializationRestrictions(config.getSerializationConfig());
 
         ClientConnectionManagerFactory connectionManagerFactory = clientRegistry.createClientServiceFactory(sourceIp);
         AddressProvider addressProvider = createAddressProvider(config);
@@ -105,7 +108,7 @@ public class TestHazelcastFactory extends TestHazelcastInstanceFactory {
         return clients.get(clientName);
     }
 
-    private AddressProvider createAddressProvider(ClientConfig config) {
+    public AddressProvider createAddressProvider(ClientConfig config) {
         boolean discoveryEnabled = new HazelcastProperties(config.getProperties())
                 .getBoolean(ClientProperty.DISCOVERY_SPI_ENABLED);
 
@@ -124,7 +127,7 @@ public class TestHazelcastFactory extends TestHazelcastInstanceFactory {
 
         return new AddressProvider() {
             @Override
-            public Addresses loadAddresses(ClientConnectionProcessListenerRunner listenerRunner) {
+            public Addresses loadAddresses(ClientConnectionProcessListenerRegistry listenerRunner) {
                 Addresses possibleAddresses = new Addresses();
                 for (Address address : getKnownAddresses()) {
                     Addresses addresses = AddressHelper.getPossibleSocketAddresses(address.getPort(),
@@ -174,5 +177,10 @@ public class TestHazelcastFactory extends TestHazelcastInstanceFactory {
             HazelcastClient.shutdownAll();
         }
         super.terminateAll();
+    }
+
+    @Override
+    public TestHazelcastFactory withSerializationRestrictionsDisabled() {
+        return (TestHazelcastFactory) super.withSerializationRestrictionsDisabled();
     }
 }

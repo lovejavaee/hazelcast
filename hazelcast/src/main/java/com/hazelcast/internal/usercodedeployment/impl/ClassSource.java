@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,23 +22,23 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Classloader created on a local member to define a class from a bytecode loaded from a remote source.
- *
+ * <p>
  * We use a classloader per each class loaded from a remote source as it allows us to discard the classloader
  * and reload the class via another classloader as we see fit.
- *
+ * <p>
  * Bytecode of inner/anonymous classes is kept with their parent classes. If there is nested inner classes,
  * they are also kept in the same class loader.
- *
+ * <p>
  * Delegation model:
  * 1. When the request matches the specific class name then it will provide the class on its own
  * 2. Then it delegates to the parent classloader - that's usually a regular classloader loading classes
  * from a local classpath only
- * 3. Finally it delegates to {@link ClassLocator} which may initiate a remote lookup
+ * 3. Finally, it delegates to {@link ClassLocator} which may initiate a remote lookup
  */
 public final class ClassSource extends ClassLoader {
 
-    private final Map<String, Class> classes = new ConcurrentHashMap<String, Class>();
-    private final Map<String, byte[]> classDefinitions = new ConcurrentHashMap<String, byte[]>();
+    private final Map<String, Class> classes = new ConcurrentHashMap<>();
+    private final Map<String, byte[]> classDefinitions = new ConcurrentHashMap<>();
     private final Map<String, byte[]> bundledClassDefinitions;
     private final ClassLocator classLocator;
 
@@ -93,11 +93,11 @@ public final class ClassSource extends ClassLoader {
 
     ClassData getClassData(String className) {
         ClassData classData = new ClassData();
-        HashMap<String, byte[]> innerClassDefinitions = new HashMap<String, byte[]>(this.classDefinitions);
+        HashMap<String, byte[]> innerClassDefinitions = new HashMap<>(this.classDefinitions);
         byte[] mainClassDefinition = innerClassDefinitions.remove(className);
         if (mainClassDefinition == null) {
             // sometimes an inner class may be cached within its main class.
-            // However it does not mean another inner class within the same main class is cached too.
+            // However, it does not mean another inner class within the same main class is cached too.
             return null;
         }
         classData.setInnerClassDefinitions(innerClassDefinitions);

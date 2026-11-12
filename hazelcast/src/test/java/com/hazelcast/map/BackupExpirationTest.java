@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,7 +35,6 @@ import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
@@ -97,7 +96,7 @@ public class BackupExpirationTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void all_backups_should_be_empty_eventually() throws Exception {
+    public void all_backups_should_be_empty_eventually() {
         configureAndStartNodes(3, 11, 1);
 
         IMap map = nodes[0].getMap(MAP_NAME);
@@ -201,7 +200,7 @@ public class BackupExpirationTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void dont_collect_expired_keys_if_expiration_reason_is_TTL() throws Exception {
+    public void dont_collect_expired_keys_if_expiration_reason_is_TTL() {
         configureAndStartNodes(30, 1, 5);
 
         IMap map = nodes[0].getMap(MAP_NAME);
@@ -213,7 +212,6 @@ public class BackupExpirationTest extends HazelcastTestSupport {
     // This EP mimics TTL expiration process by creating a record
     // which expires after 100 millis. TTL expired key should not be added to the expiration queue
     // after `recordStore.get`.
-    @SuppressFBWarnings("SE_NO_SERIALVERSIONID")
     public static final class BackupExpirationQueueLengthFinder
             implements HazelcastInstanceAware, EntryProcessor {
 

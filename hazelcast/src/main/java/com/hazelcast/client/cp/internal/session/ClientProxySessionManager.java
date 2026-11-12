@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -88,6 +88,7 @@ public class ClientProxySessionManager extends AbstractProxySessionManager {
         return new ClientDelegatingFuture<>(future, client.getSerializationService(), CPSessionCloseSessionCodec::decodeResponse);
     }
 
+    @Override
     public void shutdownAndAwait() {
         Map<RaftGroupId, InternalCompletableFuture<Object>> futures = super.shutdown();
 
@@ -105,7 +106,7 @@ public class ClientProxySessionManager extends AbstractProxySessionManager {
                     closed++;
                     try {
                         f.get();
-                        logger.fine("Session closed for " + groupId);
+                        logger.fine("Session closed for %s", groupId);
                     } catch (Exception e) {
                         logger.warning("Close session failed for " + groupId, e);
 

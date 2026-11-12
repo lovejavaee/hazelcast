@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,9 @@
 
 package com.hazelcast.kubernetes;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.ObjectWriter;
+import tools.jackson.databind.ObjectWriter;
 import com.github.tomakehurst.wiremock.client.MappingBuilder;
 import com.github.tomakehurst.wiremock.junit.WireMockRule;
-import com.hazelcast.instance.impl.ClusterTopologyIntentTracker;
 import com.hazelcast.kubernetes.KubernetesClient.Endpoint;
 import com.hazelcast.kubernetes.KubernetesConfig.ExposeExternallyMode;
 import com.hazelcast.spi.exception.RestClientException;
@@ -36,14 +33,17 @@ import io.fabric8.kubernetes.api.model.PodBuilder;
 import io.fabric8.kubernetes.api.model.PodList;
 import io.fabric8.kubernetes.api.model.PodSpecBuilder;
 import io.fabric8.kubernetes.api.model.PodStatusBuilder;
+
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import java.net.HttpURLConnection;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
@@ -73,13 +73,14 @@ import static com.hazelcast.kubernetes.KubernetesFakeUtils.podsListMultiplePorts
 import static com.hazelcast.kubernetes.KubernetesFakeUtils.service;
 import static com.hazelcast.kubernetes.KubernetesFakeUtils.serviceLb;
 import static com.hazelcast.kubernetes.KubernetesFakeUtils.serviceLbHost;
+import static com.hazelcast.kubernetes.KubernetesFakeUtils.serviceLbWithMultiplePorts;
+import static com.hazelcast.kubernetes.KubernetesFakeUtils.serviceLbWithoutAddr;
 import static com.hazelcast.kubernetes.KubernetesFakeUtils.servicePort;
+import static com.hazelcast.kubernetes.KubernetesFakeUtils.servicePortWithName;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonMap;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.containsInAnyOrder;
-import static org.hamcrest.Matchers.instanceOf;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -87,10 +88,9 @@ import static org.junit.Assert.assertTrue;
 public class KubernetesClientTest {
     private static final String KUBERNETES_MASTER_IP = "localhost";
     private static final String TOKEN = "sample-token";
-    private static final String CA_CERTIFICATE = "sample-ca-certificate";
     private static final String NAMESPACE = "sample-namespace";
     private static final int RETRIES = 3;
-    private static final ObjectWriter WRITER = new ObjectMapper().writer();
+    private static final ObjectWriter WRITER = new JsonMapper().writer();
 
     @Rule
     public WireMockRule wireMockRule = new WireMockRule(wireMockConfig().dynamicPort());
@@ -104,40 +104,48 @@ public class KubernetesClientTest {
     public void setUp() {
         kubernetesClient = newKubernetesClient();
         stubFor(get(urlMatching("/api/.*")).atPriority(5)
-                .willReturn(aResponse().withStatus(401).withBody("\"reason\":\"Forbidden\"")));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_UNAUTHORIZED).withBody("\"reason\":\"Forbidden\"")));
+    }
+
+    @After
+    public void cleanUpClient() {
+        if (kubernetesClient != null) {
+            kubernetesClient.destroy();
+        }
     }
 
     @Test
     public void buildKubernetesApiUrlProviderReturnsEndpointProvider() {
         //language=JSON
-        String endpointSlicesResponse = "{\n"
-                + "  \"kind\": \"Status\",\n"
-                + "  \"apiVersion\": \"v1\",\n"
-                + "  \"metadata\": {\n"
-                + "    \n"
-                + "  },\n"
-                + "  \"status\": \"Failure\",\n"
-                + "  \"message\": \"the server could not find the requested resource\",\n"
-                + "  \"reason\":\"NotFound\",\n"
-                + "  \"details\": {\n"
-                + "    \n"
-                + "  },\n"
-                + "  \"code\": 404\n"
-                + "}";
+        String endpointSlicesResponse = """
+                {
+                  "kind": "Status",
+                  "apiVersion": "v1",
+                  "metadata": {
+                   \s
+                  },
+                  "status": "Failure",
+                  "message": "the server could not find the requested resource",
+                  "reason":"NotFound",
+                  "details": {
+                   \s
+                  },
+                  "code": 404
+                }""";
         stub(String.format("/apis/discovery.k8s.io/v1/namespaces/%s/endpointslices", NAMESPACE),
-                404, endpointSlicesResponse);
-        assertThat(kubernetesClient.buildKubernetesApiUrlProvider(), instanceOf(KubernetesApiEndpointProvider.class));
+                HttpURLConnection.HTTP_NOT_FOUND, endpointSlicesResponse);
+        assertThat(kubernetesClient.buildKubernetesApiUrlProvider()).isInstanceOf(KubernetesApiEndpointProvider.class);
     }
 
     @Test
-    public void buildKubernetesApiUrlProviderReturnsEndpointSlicesProvider() throws JsonProcessingException {
+    public void buildKubernetesApiUrlProviderReturnsEndpointSlicesProvider() {
         stub(String.format("/apis/discovery.k8s.io/v1/namespaces/%s/endpointslices", NAMESPACE),
                 endpointSliceList(Collections.singletonList(443), "34.68.96.71"));
-        assertThat(kubernetesClient.buildKubernetesApiUrlProvider(), instanceOf(KubernetesApiEndpointSlicesProvider.class));
+        assertThat(kubernetesClient.buildKubernetesApiUrlProvider()).isInstanceOf(KubernetesApiEndpointSlicesProvider.class);
     }
 
     @Test
-    public void endpointsByNamespace() throws JsonProcessingException {
+    public void endpointsByNamespace() {
         // given
         stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), podsList(
                 pod("hazelcast-0", NAMESPACE, "node-name-1", "192.168.0.25", 5701),
@@ -152,12 +160,11 @@ public class KubernetesClientTest {
         List<Endpoint> result = kubernetesClient.endpoints();
 
         // then
-        assertThat(formatPrivate(result),
-                containsInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702), notReady("172.17.0.7", null)));
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702), notReady("172.17.0.7", null));
     }
 
     @Test
-    public void endpointsByNamespaceAndServiceLabel() throws JsonProcessingException {
+    public void endpointsByNamespaceAndServiceLabel() {
         // given
         String serviceLabel = "sample-service-label";
         String serviceLabelValue = "sample-service-label-value";
@@ -166,7 +173,7 @@ public class KubernetesClientTest {
                 endpointsList(
                         endpoints("192.168.0.25", "hazelcast-1",
                                 endpointPort("some-port", 5701),
-                                endpointPort("hazelcast-service-port", 5702)),
+                                endpointPort("hazelcast", 5702)),
                         endpoints("172.17.0.5", "172.17.0.6", "hazelcast-1", 5701)
                 ));
         stub(String.format("/api/v1/namespaces/%s/pods/hazelcast-0", NAMESPACE),
@@ -179,12 +186,11 @@ public class KubernetesClientTest {
         List<Endpoint> result = kubernetesClient.endpointsByServiceLabel(serviceLabel, serviceLabelValue);
 
         // then
-        assertThat(formatPrivate(result),
-                containsInAnyOrder(ready("192.168.0.25", 5702), ready("172.17.0.5", 5701), notReady("172.17.0.6", 5701)));
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5702), ready("172.17.0.5", 5701), notReady("172.17.0.6", 5701));
     }
 
     @Test
-    public void endpointsByNamespaceAndMultipleServiceLabels() throws JsonProcessingException {
+    public void endpointsByNamespaceAndMultipleServiceLabels() {
         // given
         String serviceLabels = "service-label-1,service-label-2";
         String serviceLabelValues = "service-label-value-1,service-label-value-2";
@@ -193,7 +199,7 @@ public class KubernetesClientTest {
                 endpointsList(
                         endpoints("192.168.0.25", "hazelcast-1",
                                 endpointPort("some-port", 5701),
-                                endpointPort("hazelcast-service-port", 5702)),
+                                endpointPort("hazelcast", 5702)),
                         endpoints("172.17.0.5", "172.17.0.6", "hazelcast-1", 5701)
                 ));
         stub(String.format("/api/v1/namespaces/%s/pods/hazelcast-0", NAMESPACE),
@@ -205,12 +211,11 @@ public class KubernetesClientTest {
         List<Endpoint> result = kubernetesClient.endpointsByServiceLabel(serviceLabels, serviceLabelValues);
 
         // then
-        assertThat(formatPrivate(result),
-                containsInAnyOrder(ready("192.168.0.25", 5702), ready("172.17.0.5", 5701), notReady("172.17.0.6", 5701)));
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5702), ready("172.17.0.5", 5701), notReady("172.17.0.6", 5701));
     }
 
     @Test
-    public void endpointsByNamespaceAndServiceName() throws JsonProcessingException {
+    public void endpointsByNamespaceAndServiceName() {
         // given
         String serviceName = "service-name";
         stub(String.format("/api/v1/namespaces/%s/endpoints/%s", NAMESPACE, serviceName),
@@ -224,11 +229,11 @@ public class KubernetesClientTest {
         List<Endpoint> result = kubernetesClient.endpointsByName(serviceName);
 
         // then
-        assertThat(formatPrivate(result), containsInAnyOrder(ready("192.168.0.25", 5702), ready("172.17.0.5", 5702)));
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5702), ready("172.17.0.5", 5702));
     }
 
     @Test
-    public void endpointsByNamespaceAndPodLabel() throws JsonProcessingException {
+    public void endpointsByNamespaceAndPodLabel() {
         // given
         String podLabel = "sample-pod-label";
         String podLabelValue = "sample-pod-label-value";
@@ -246,13 +251,12 @@ public class KubernetesClientTest {
         List<Endpoint> result = kubernetesClient.endpointsByPodLabel(podLabel, podLabelValue);
 
         // then
-        assertThat(formatPrivate(result),
-                containsInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702)));
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702));
     }
 
 
     @Test
-    public void endpointsByNamespaceAndMultiplePodLabels() throws JsonProcessingException {
+    public void endpointsByNamespaceAndMultiplePodLabels() {
         // given
         String podLabel = "pod-label-1,pod-label-2";
         String podLabelValue = "pod-label-value-1,pod-label-value-2";
@@ -270,26 +274,26 @@ public class KubernetesClientTest {
         List<Endpoint> result = kubernetesClient.endpointsByPodLabel(podLabel, podLabelValue);
 
         // then
-        assertThat(formatPrivate(result),
-                containsInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702)));
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702));
     }
 
     @Test
-    public void zoneBeta() throws JsonProcessingException {
+    public void zoneBeta() {
         // given
         String podName = "pod-name";
         stub(String.format("/api/v1/namespaces/%s/pods/%s", NAMESPACE, podName), pod("hazelcast-0", NAMESPACE, "node-name"));
 
         //language=JSON
-        String nodeResponse = "{\n"
-                + "  \"kind\": \"Node\",\n"
-                + "  \"metadata\": {\n"
-                + "    \"labels\": {\n"
-                + "      \"failure-domain.beta.kubernetes.io/region\": \"us-central1\",\n"
-                + "      \"failure-domain.beta.kubernetes.io/zone\": \"us-central1-a\"\n"
-                + "    }\n"
-                + "  }\n"
-                + "}";
+        String nodeResponse = """
+                {
+                  "kind": "Node",
+                  "metadata": {
+                    "labels": {
+                      "failure-domain.beta.kubernetes.io/region": "us-central1",
+                      "failure-domain.beta.kubernetes.io/zone": "us-central1-a"
+                    }
+                  }
+                }""";
         stub("/api/v1/nodes/node-name", nodeResponse);
 
         // when
@@ -300,23 +304,24 @@ public class KubernetesClientTest {
     }
 
     @Test
-    public void zoneFailureDomain() throws JsonProcessingException {
+    public void zoneFailureDomain() {
         // given
         String podName = "pod-name";
         stub(String.format("/api/v1/namespaces/%s/pods/%s", NAMESPACE, podName), pod("hazelcast-0", NAMESPACE, "node-name"));
 
         //language=JSON
-        String nodeResponse = "{\n"
-                + "  \"kind\": \"Node\",\n"
-                + "  \"metadata\": {\n"
-                + "    \"labels\": {\n"
-                + "      \"failure-domain.beta.kubernetes.io/region\": \"deprecated-region\",\n"
-                + "      \"failure-domain.beta.kubernetes.io/zone\": \"deprecated-zone\",\n"
-                + "      \"failure-domain.kubernetes.io/region\": \"us-central1\",\n"
-                + "      \"failure-domain.kubernetes.io/zone\": \"us-central1-a\"\n"
-                + "    }\n"
-                + "  }\n"
-                + "}";
+        String nodeResponse = """
+                {
+                  "kind": "Node",
+                  "metadata": {
+                    "labels": {
+                      "failure-domain.beta.kubernetes.io/region": "deprecated-region",
+                      "failure-domain.beta.kubernetes.io/zone": "deprecated-zone",
+                      "failure-domain.kubernetes.io/region": "us-central1",
+                      "failure-domain.kubernetes.io/zone": "us-central1-a"
+                    }
+                  }
+                }""";
         stub("/api/v1/nodes/node-name", nodeResponse);
 
         // when
@@ -328,7 +333,7 @@ public class KubernetesClientTest {
 
 
     @Test
-    public void nodeName() throws JsonProcessingException {
+    public void nodeName() {
         // given
         String podName = "pod-name";
         stub(String.format("/api/v1/namespaces/%s/pods/%s", NAMESPACE, podName), pod("hazelcast-0", NAMESPACE, "kubernetes-node-f0bbd602-f7cw"));
@@ -341,23 +346,24 @@ public class KubernetesClientTest {
     }
 
     @Test
-    public void zone() throws JsonProcessingException {
+    public void zone() {
         // given
         String podName = "pod-name";
         stub(String.format("/api/v1/namespaces/%s/pods/%s", NAMESPACE, podName), pod("hazelcast-0", NAMESPACE, "node-name"));
 
         //language=JSON
-        String nodeResponse = "{\n"
-                + "  \"kind\": \"Node\",\n"
-                + "  \"metadata\": {\n"
-                + "    \"labels\": {\n"
-                + "      \"failure-domain.beta.kubernetes.io/region\": \"deprecated-region\",\n"
-                + "      \"failure-domain.beta.kubernetes.io/zone\": \"deprecated-zone\",\n"
-                + "      \"topology.kubernetes.io/region\": \"us-central1\",\n"
-                + "      \"topology.kubernetes.io/zone\": \"us-central1-a\"\n"
-                + "    }\n"
-                + "  }\n"
-                + "}";
+        String nodeResponse = """
+                {
+                  "kind": "Node",
+                  "metadata": {
+                    "labels": {
+                      "failure-domain.beta.kubernetes.io/region": "deprecated-region",
+                      "failure-domain.beta.kubernetes.io/zone": "deprecated-zone",
+                      "topology.kubernetes.io/region": "us-central1",
+                      "topology.kubernetes.io/zone": "us-central1-a"
+                    }
+                  }
+                }""";
         stub("/api/v1/nodes/node-name", nodeResponse);
 
         // when
@@ -368,25 +374,25 @@ public class KubernetesClientTest {
     }
 
     @Test
-    public void endpointsByNamespaceWithLoadBalancerPublicIp() throws JsonProcessingException {
+    public void endpointsByNamespaceWithLoadBalancerPublicIp() {
         // given
         stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), podsListResponse());
         stub(String.format("/api/v1/namespaces/%s/endpoints", NAMESPACE), endpointsListResponse());
         stub(String.format("/api/v1/namespaces/%s/services/hazelcast-0", NAMESPACE),
                 serviceLb(servicePort(32123, 5701, 31916), "35.232.226.200"));
         stub(String.format("/api/v1/namespaces/%s/services/service-1", NAMESPACE),
-                serviceLb(servicePort(32124, 5701, 31916), "35.232.226.201"));
+                serviceLb(servicePort(32124, 5701, 31917), "35.232.226.201"));
 
         // when
         List<Endpoint> result = kubernetesClient.endpoints();
 
         // then
-        assertThat(formatPrivate(result), containsInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702)));
-        assertThat(formatPublic(result), containsInAnyOrder(ready("35.232.226.200", 32123), ready("35.232.226.201", 32124)));
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702));
+        assertThat(formatPublic(result)).containsExactlyInAnyOrder(ready("35.232.226.200", 32123), ready("35.232.226.201", 32124));
     }
 
     @Test
-    public void endpointsByNamespaceWithLoadBalancerHostname() throws JsonProcessingException {
+    public void endpointsByNamespaceWithLoadBalancerHostname() {
         // given
         stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), podsListResponse());
         stub(String.format("/api/v1/namespaces/%s/endpoints", NAMESPACE), endpointsListResponse());
@@ -399,17 +405,16 @@ public class KubernetesClientTest {
         stub(String.format("/api/v1/namespaces/%s/pods/hazelcast-1", NAMESPACE),
                 pod("hazelcast-1", NAMESPACE, "node-name-2", 5701));
 
-
         // when
         List<Endpoint> result = kubernetesClient.endpoints();
 
         // then
-        assertThat(formatPrivate(result), containsInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702)));
-        assertThat(formatPublic(result), containsInAnyOrder(ready("abc.hostname", 32123), ready("abc2.hostname", 32124)));
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702));
+        assertThat(formatPublic(result)).containsExactlyInAnyOrder(ready("abc.hostname", 32123), ready("abc2.hostname", 32124));
     }
 
     @Test
-    public void endpointsByNamespaceWithNodePortPublicIp() throws JsonProcessingException {
+    public void endpointsByNamespaceWithNodePortPublicIp() {
         // given
         stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), podsListResponse());
         stub(String.format("/api/v1/namespaces/%s/endpoints", NAMESPACE), endpointsListResponse());
@@ -417,7 +422,7 @@ public class KubernetesClientTest {
         stub(String.format("/api/v1/namespaces/%s/services/hazelcast-0", NAMESPACE), service(servicePort(32123, 5701, 31916)));
         stub(String.format("/api/v1/namespaces/%s/services/service-1", NAMESPACE), service(servicePort(32124, 5701, 31917)));
         stub("/api/v1/nodes/node-name-1", node("node-name-1", "10.240.0.21", "35.232.226.200"));
-        stub("/api/v1/nodes/node-name-2", node("node-name-1", "10.240.0.22", "35.232.226.201"));
+        stub("/api/v1/nodes/node-name-2", node("node-name-2", "10.240.0.22", "35.232.226.201"));
         stub(String.format("/api/v1/namespaces/%s/pods/hazelcast-0", NAMESPACE),
                 pod("hazelcast-0", NAMESPACE, "node-name-1", 5701));
         stub(String.format("/api/v1/namespaces/%s/pods/hazelcast-1", NAMESPACE),
@@ -427,12 +432,45 @@ public class KubernetesClientTest {
         List<Endpoint> result = kubernetesClient.endpoints();
 
         // then
-        assertThat(formatPrivate(result), containsInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702)));
-        assertThat(formatPublic(result), containsInAnyOrder(ready("35.232.226.200", 31916), ready("35.232.226.201", 31917)));
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702));
+        assertThat(formatPublic(result)).containsExactlyInAnyOrder(ready("35.232.226.200", 31916), ready("35.232.226.201", 31917));
+        assertFalse(kubernetesClient.isNodePortWarningAlreadyLogged());
     }
 
     @Test
-    public void endpointsByNamespaceWithMultipleNodePortPublicIpMatchByName() throws JsonProcessingException {
+    public void endpointsByNamespaceWithNodePortPublicIpPrintWarningLog() {
+        // given
+        kubernetesClient = newKubernetesClient(ExposeExternallyMode.ENABLED, false, null, null);
+
+        stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), podsListResponse());
+        stub(String.format("/api/v1/namespaces/%s/endpoints", NAMESPACE), endpointsListResponse());
+
+        stub(String.format("/api/v1/namespaces/%s/services/service-0", NAMESPACE),
+                service(servicePort(0, 1, 2)));
+        stub(String.format("/api/v1/namespaces/%s/services/hazelcast-0", NAMESPACE),
+                service(servicePort(0, 1, 2)));
+        stub(String.format("/api/v1/namespaces/%s/services/service-1", NAMESPACE),
+                service(servicePort(0, 1, 2)));
+
+        stub(String.format("/api/v1/namespaces/%s/pods/hazelcast-0", NAMESPACE),
+                pod("hazelcast-0", NAMESPACE, "node-name-1", 5701));
+        stub(String.format("/api/v1/namespaces/%s/pods/hazelcast-1", NAMESPACE),
+                pod("hazelcast-1", NAMESPACE, "node-name-2", 5701));
+
+        stub("/api/v1/nodes/node-name-1", node("node-name-1", "10.240.0.21", "35.232.226.200"));
+        stub("/api/v1/nodes/node-name-2", node("node-name-2", "10.240.0.22", "35.232.226.201"));
+
+        // when
+        List<Endpoint> result = kubernetesClient.endpoints();
+
+        // then
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702));
+        assertThat(formatPublic(result)).containsExactlyInAnyOrder(ready("35.232.226.200", 2), ready("35.232.226.201", 2));
+        assertTrue(kubernetesClient.isNodePortWarningAlreadyLogged());
+    }
+
+    @Test
+    public void endpointsByNamespaceWithMultipleNodePortPublicIpMatchByName() {
         // given
         stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), podsListResponse());
         stub(String.format("/api/v1/namespaces/%s/endpoints", NAMESPACE), endpointsListResponse());
@@ -443,26 +481,26 @@ public class KubernetesClientTest {
         stub(String.format("/api/v1/namespaces/%s/services/service-1", NAMESPACE),
                 service(servicePort(32124, 5701, 31917)));
         stub("/api/v1/nodes/node-name-1", node("node-name-1", "10.240.0.21", "35.232.226.200"));
-        stub("/api/v1/nodes/node-name-2", node("node-name-1", "10.240.0.22", "35.232.226.201"));
+        stub("/api/v1/nodes/node-name-2", node("node-name-2", "10.240.0.22", "35.232.226.201"));
         stub(String.format("/api/v1/namespaces/%s/pods/hazelcast-0", NAMESPACE),
                 pod("hazelcast-0", NAMESPACE, "node-name-1", 5701));
         stub(String.format("/api/v1/namespaces/%s/pods/hazelcast-1", NAMESPACE),
                 pod("hazelcast-1", NAMESPACE, "node-name-2", 5701));
 
-
         // when
         List<Endpoint> result = kubernetesClient.endpoints();
 
         // then
-        assertThat(formatPrivate(result), containsInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702)));
-        assertThat(formatPublic(result), containsInAnyOrder(ready("35.232.226.200", 31916), ready("35.232.226.201", 31917)));
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702));
+        assertThat(formatPublic(result)).containsExactlyInAnyOrder(ready("35.232.226.200", 31916), ready("35.232.226.201", 31917));
     }
 
     @Test
-    public void endpointsByNamespaceWithMultipleNodePortPublicIpMatchByServicePerPodLabel() throws JsonProcessingException {
+    public void endpointsByNamespaceWithMultipleNodePortPublicIpMatchByServicePerPodLabel() {
         // given
         String servicePerPodLabel = "sample-service-per-pod-service-label";
         String servicePerPodLabelValue = "sample-service-per-pod-service-label-value";
+        cleanUpClient();
         kubernetesClient = newKubernetesClient(false, servicePerPodLabel, servicePerPodLabelValue);
 
         stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), podsListResponse());
@@ -472,25 +510,25 @@ public class KubernetesClientTest {
         stub(String.format("/api/v1/namespaces/%s/services/hazelcast-0", NAMESPACE), service(servicePort(32123, 5701, 31916)));
         stub(String.format("/api/v1/namespaces/%s/services/service-1", NAMESPACE), service(servicePort(32124, 5701, 31917)));
         stub("/api/v1/nodes/node-name-1", node("node-name-1", "10.240.0.21", "35.232.226.200"));
-        stub("/api/v1/nodes/node-name-2", node("node-name-1", "10.240.0.22", "35.232.226.201"));
+        stub("/api/v1/nodes/node-name-2", node("node-name-2", "10.240.0.22", "35.232.226.201"));
         stub(String.format("/api/v1/namespaces/%s/pods/hazelcast-0", NAMESPACE),
                 pod("hazelcast-0", NAMESPACE, "node-name-1", 5701));
         stub(String.format("/api/v1/namespaces/%s/pods/hazelcast-1", NAMESPACE),
                 pod("hazelcast-1", NAMESPACE, "node-name-2", 5701));
 
-
         // when
         List<Endpoint> result = kubernetesClient.endpoints();
 
         // then
-        assertThat(formatPrivate(result), containsInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702)));
-        assertThat(formatPublic(result), containsInAnyOrder(ready("35.232.226.200", 31916), ready("35.232.226.201", 31917)));
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702));
+        assertThat(formatPublic(result)).containsExactlyInAnyOrder(ready("35.232.226.200", 31916), ready("35.232.226.201", 31917));
     }
 
     @Test
-    public void endpointsByNamespaceWithNodeName() throws JsonProcessingException {
+    public void endpointsByNamespaceWithNodeName() {
         // given
         // create KubernetesClient with useNodeNameAsExternalAddress=true
+        cleanUpClient();
         kubernetesClient = newKubernetesClient(true);
 
         stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), podsListResponse());
@@ -503,21 +541,42 @@ public class KubernetesClientTest {
         stub(String.format("/api/v1/namespaces/%s/pods/hazelcast-1", NAMESPACE),
                 pod("hazelcast-1", NAMESPACE, "node-name-1", 5701));
 
-
         String forbiddenBody = "\"reason\":\"Forbidden\"";
-        stub("/api/v1/nodes/node-name-1", 403, forbiddenBody);
-        stub("/api/v1/nodes/node-name-2", 403, forbiddenBody);
+        stub("/api/v1/nodes/node-name-1", HttpURLConnection.HTTP_FORBIDDEN, forbiddenBody);
+        stub("/api/v1/nodes/node-name-2", HttpURLConnection.HTTP_FORBIDDEN, forbiddenBody);
 
         // when
         List<Endpoint> result = kubernetesClient.endpoints();
 
         // then
-        assertThat(formatPrivate(result), containsInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702)));
-        assertThat(formatPublic(result), containsInAnyOrder(ready("node-name-1", 31916), ready("node-name-2", 31917)));
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702));
+        assertThat(formatPublic(result)).containsExactlyInAnyOrder(ready("node-name-1", 31916), ready("node-name-2", 31917));
     }
 
     @Test
-    public void endpointsIgnoreNoPublicAccess() throws JsonProcessingException {
+    public void endpointsByNamespaceWithPublicIpExposingMultiplePorts() {
+        // given
+        stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), podsListResponse());
+        stub(String.format("/api/v1/namespaces/%s/endpoints", NAMESPACE), endpointsListResponse());
+        stub(String.format("/api/v1/namespaces/%s/services/hazelcast-0", NAMESPACE),
+                serviceLbWithMultiplePorts("hazelcast-0", List.of(
+                        servicePortWithName("hazelcast", 5701, 5701, 31916),
+                        servicePortWithName("wan-port", 5710, 5710, 31926)), "35.232.226.200"));
+        stub(String.format("/api/v1/namespaces/%s/services/service-1", NAMESPACE),
+                serviceLbWithMultiplePorts("service-1", List.of(
+                        servicePortWithName("hazelcast", 5701, 5701, 31917),
+                        servicePortWithName("wan-port", 5701, 5701, 31916)), "35.232.226.201"));
+
+        // when
+        List<Endpoint> result = kubernetesClient.endpoints();
+
+        // then
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702));
+        assertThat(formatPublic(result)).containsExactlyInAnyOrder(ready("35.232.226.200", 5701), ready("35.232.226.201", 5701));
+    }
+
+    @Test
+    public void endpointsIgnoreNoPublicAccess() {
         // given
         stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), podsListResponse());
         stub(String.format("/api/v1/namespaces/%s/endpoints", NAMESPACE), endpointsListResponse());
@@ -529,18 +588,41 @@ public class KubernetesClientTest {
         stub(String.format("/api/v1/namespaces/%s/services/service-1", NAMESPACE),
                 service(servicePort(0, 0, 0), servicePort(1, 1, 2)));
         stub("/api/v1/nodes/node-name-1", node("node-name-1", "10.240.0.21", "35.232.226.200"));
-        stub("/api/v1/nodes/node-name-2", node("node-name-1", "10.240.0.22", "35.232.226.201"));
+        stub("/api/v1/nodes/node-name-2", node("node-name-2", "10.240.0.22", "35.232.226.201"));
 
         // when
         List<Endpoint> result = kubernetesClient.endpoints();
 
         // then
-        assertThat(formatPrivate(result), containsInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702)));
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702));
+        assertTrue(kubernetesClient.isNoPublicIpAlreadyLogged());
+    }
+
+    @Test
+    public void endpointsIgnoreLbServiceHasNoPublicAddress() {
+        // given
+        stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), podsListResponse());
+        stub(String.format("/api/v1/namespaces/%s/endpoints", NAMESPACE), endpointsListResponse());
+
+        stub(String.format("/api/v1/namespaces/%s/services/service-0", NAMESPACE),
+                serviceLbWithoutAddr(servicePort(0, 0, 0)));
+        stub(String.format("/api/v1/namespaces/%s/services/hazelcast-0", NAMESPACE),
+                serviceLbWithoutAddr(servicePort(0, 0, 0)));
+        stub(String.format("/api/v1/namespaces/%s/services/service-1", NAMESPACE),
+                serviceLbWithoutAddr(servicePort(0, 0, 0)));
+
+        // when
+        List<Endpoint> result = kubernetesClient.endpoints();
+
+        // then
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702));
+        assertTrue(kubernetesClient.isNoPublicIpAlreadyLogged());
     }
 
     @Test(expected = KubernetesClientException.class)
-    public void endpointsFailFastWhenNoPublicAccess() throws JsonProcessingException {
+    public void endpointsFailFastWhenNoPublicAccess() {
         // given
+        cleanUpClient();
         kubernetesClient = newKubernetesClient(ExposeExternallyMode.ENABLED, false, null, null);
 
         stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), podsListResponse());
@@ -553,7 +635,52 @@ public class KubernetesClientTest {
         stub(String.format("/api/v1/namespaces/%s/services/service-1", NAMESPACE),
                 service(servicePort(0, 0, 0), servicePort(1, 1, 2)));
         stub("/api/v1/nodes/node-name-1", node("node-name-1", "10.240.0.21", "35.232.226.200"));
-        stub("/api/v1/nodes/node-name-2", node("node-name-1", "10.240.0.22", "35.232.226.201"));
+        stub("/api/v1/nodes/node-name-2", node("node-name-2", "10.240.0.22", "35.232.226.201"));
+
+        // when
+        List<Endpoint> result = kubernetesClient.endpoints();
+
+        // then
+        // exception
+    }
+
+    @Test(expected = KubernetesClientException.class)
+    public void endpointsFailFastWhenLbServiceHasNoPublicAddress() {
+        // given
+        kubernetesClient = newKubernetesClient(ExposeExternallyMode.ENABLED, false, null, null);
+
+        stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), podsListResponse());
+        stub(String.format("/api/v1/namespaces/%s/endpoints", NAMESPACE), endpointsListResponse());
+
+        stub(String.format("/api/v1/namespaces/%s/services/service-0", NAMESPACE),
+                serviceLbWithoutAddr(servicePort(0, 0, 0)));
+        stub(String.format("/api/v1/namespaces/%s/services/hazelcast-0", NAMESPACE),
+                serviceLbWithoutAddr(servicePort(0, 0, 0)));
+        stub(String.format("/api/v1/namespaces/%s/services/service-1", NAMESPACE),
+                serviceLbWithoutAddr(servicePort(0, 0, 0)));
+
+        // when
+        List<Endpoint> result = kubernetesClient.endpoints();
+
+        // then
+        // exception
+    }
+
+    @Test(expected = KubernetesClientException.class)
+    public void endpointsFailFastWhenLbServiceHasNoHazelcastPort() {
+        // given
+        kubernetesClient = newKubernetesClient(ExposeExternallyMode.ENABLED, false, null, null);
+
+        stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), podsListResponse());
+        stub(String.format("/api/v1/namespaces/%s/endpoints", NAMESPACE), endpointsListResponse());
+        stub(String.format("/api/v1/namespaces/%s/services/hazelcast-0", NAMESPACE),
+                serviceLbWithMultiplePorts("hazelcast-0", List.of(
+                        servicePortWithName("hz-port", 5701, 5701, 31916),
+                        servicePortWithName("wan-port", 5710, 5710, 31926)), "35.232.226.200"));
+        stub(String.format("/api/v1/namespaces/%s/services/service-1", NAMESPACE),
+                serviceLbWithMultiplePorts("service-1", List.of(
+                        servicePortWithName("hz-port", 5701, 5701, 31917),
+                        servicePortWithName("wan-port", 5701, 5701, 31916)), "35.232.226.201"));
 
         // when
         List<Endpoint> result = kubernetesClient.endpoints();
@@ -566,51 +693,52 @@ public class KubernetesClientTest {
     public void apiAccessWithTokenRefresh() throws IOException {
         // Token is read from the file, first token value is value-1
         File file = testFolder.newFile("token");
-        Files.write(file.toPath(), "value-1".getBytes(StandardCharsets.UTF_8), StandardOpenOption.TRUNCATE_EXISTING);
+        Files.writeString(file.toPath(), "value-1", StandardOpenOption.TRUNCATE_EXISTING);
 
         stubFor(get(urlMatching("/apis/.*")).atPriority(1)
                 .withHeader("Authorization", equalTo("Bearer value-1"))
-                .willReturn(aResponse().withStatus(200).withBody("{}")));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_OK).withBody("{}")));
         stubFor(get(urlMatching("/api/.*")).atPriority(1)
                 .withHeader("Authorization", equalTo("Bearer value-1"))
-                .willReturn(aResponse().withStatus(200).withBody("{}")));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_OK).withBody("{}")));
         stubFor(get(urlMatching("/api/.*")).atPriority(1)
                 .withHeader("Authorization", equalTo("Bearer value-2"))
-                .willReturn(aResponse().withStatus(402).withBody("{}")));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_PAYMENT_REQUIRED).withBody("{}")));
         stubFor(get(urlMatching("/apis/.*")).atPriority(1)
                 .withHeader("Authorization", equalTo("Bearer value-2"))
-                .willReturn(aResponse().withStatus(402).withBody("{}")));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_PAYMENT_REQUIRED).withBody("{}")));
 
-        KubernetesClient client = newKubernetesClient(new FileReaderTokenProvider(file.toString()));
-        client.endpoints();
-        assertFalse(client.isKnownExceptionAlreadyLogged());
+        cleanUpClient();
+        kubernetesClient = newKubernetesClient(new FileReaderTokenProvider(file.toString()));
+        kubernetesClient.endpoints();
+        assertFalse(kubernetesClient.isKnownExceptionAlreadyLogged());
 
         // Token is rotated
-        Files.write(file.toPath(), "value-2".getBytes(StandardCharsets.UTF_8), StandardOpenOption.TRUNCATE_EXISTING);
+        Files.writeString(file.toPath(), "value-2", StandardOpenOption.TRUNCATE_EXISTING);
 
         // Api server will not accept token with old value
         stubFor(get(urlMatching("/apis/.*")).atPriority(1)
                 .withHeader("Authorization", equalTo("Bearer value-1"))
-                .willReturn(aResponse().withStatus(402).withBody("{}")));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_PAYMENT_REQUIRED).withBody("{}")));
         stubFor(get(urlMatching("/api/.*")).atPriority(1)
                 .withHeader("Authorization", equalTo("Bearer value-1"))
-                .willReturn(aResponse().withStatus(402).withBody("{}")));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_PAYMENT_REQUIRED).withBody("{}")));
         stubFor(get(urlMatching("/api/.*")).atPriority(1)
                 .withHeader("Authorization", equalTo("Bearer value-2"))
-                .willReturn(aResponse().withStatus(200).withBody("{}")));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_OK).withBody("{}")));
         stubFor(get(urlMatching("/apis/.*")).atPriority(1)
                 .withHeader("Authorization", equalTo("Bearer value-2"))
-                .willReturn(aResponse().withStatus(200).withBody("{}")));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_OK).withBody("{}")));
 
-        client.endpoints();
-        assertFalse(client.isKnownExceptionAlreadyLogged());
+        kubernetesClient.endpoints();
+        assertFalse(kubernetesClient.isKnownExceptionAlreadyLogged());
     }
 
     @Test
     public void forbidden() {
         // given
         String forbiddenBody = "\"reason\":\"Forbidden\"";
-        stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), 403, forbiddenBody);
+        stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), HttpURLConnection.HTTP_FORBIDDEN, forbiddenBody);
 
         // when
         List<Endpoint> result = kubernetesClient.endpoints();
@@ -623,7 +751,7 @@ public class KubernetesClientTest {
     public void wrongApiToken() {
         // given
         String unauthorizedBody = "\"reason\":\"Unauthorized\"";
-        stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), 401, unauthorizedBody);
+        stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), HttpURLConnection.HTTP_UNAUTHORIZED, unauthorizedBody);
 
         // when
         List<Endpoint> result = kubernetesClient.endpoints();
@@ -651,7 +779,7 @@ public class KubernetesClientTest {
     }
 
     @Test
-    public void endpointsWithoutNodeName() throws JsonProcessingException {
+    public void endpointsWithoutNodeName() {
         stub(String.format("/api/v1/namespaces/%s/services/hazelcast-0", NAMESPACE),
                 serviceLb(servicePort(32124, 5701, 31916), "35.232.226.200"));
         stub(String.format("/api/v1/namespaces/%s/services/service-1", NAMESPACE),
@@ -663,19 +791,20 @@ public class KubernetesClientTest {
         stub(String.format("/api/v1/namespaces/%s/pods/hazelcast-1", NAMESPACE),
                 pod("hazelcast-1", NAMESPACE, "node-name-2", 5701));
         stub("/api/v1/nodes/node-name-1", node("node-name-1", "10.240.0.21", "35.232.226.200"));
-        stub("/api/v1/nodes/node-name-2", node("node-name-1", "10.240.0.22", "35.232.226.201"));
+        stub("/api/v1/nodes/node-name-2", node("node-name-2", "10.240.0.22", "35.232.226.201"));
 
         List<Endpoint> result = kubernetesClient.endpoints();
 
-        assertThat(formatPrivate(result), containsInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702)));
-        assertThat(formatPublic(result), containsInAnyOrder(ready("35.232.226.200", 32124), ready("35.232.226.201", 32124)));
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5702));
+        assertThat(formatPublic(result)).containsExactlyInAnyOrder(ready("35.232.226.200", 32124), ready("35.232.226.201", 32124));
     }
 
     @Test
-    public void advancedNetworkExternalIpServicePerPod() throws JsonProcessingException {
+    public void advancedNetworkExternalIpServicePerPod() {
         // given
         String servicePerPodLabel = "hazelcast.com/service-per-pod";
         String servicePerPodLabelValue = "true";
+        cleanUpClient();
         kubernetesClient = newKubernetesClient(false, servicePerPodLabel, servicePerPodLabelValue);
 
         String serviceName = "service-name";
@@ -690,23 +819,22 @@ public class KubernetesClientTest {
         stub(String.format("/api/v1/namespaces/%s/services/hazelcast-0", NAMESPACE), service(servicePort(32123, 5701, 31916)));
         stub(String.format("/api/v1/namespaces/%s/services/service-1", NAMESPACE), service(servicePort(32124, 5701, 31917)));
         stub("/api/v1/nodes/node-name-1", node("node-name-1", "10.240.0.21", "35.232.226.200"));
-        stub("/api/v1/nodes/node-name-2", node("node-name-1", "10.240.0.22", "35.232.226.201"));
+        stub("/api/v1/nodes/node-name-2", node("node-name-2", "10.240.0.22", "35.232.226.201"));
         stub(String.format("/api/v1/namespaces/%s/pods/hazelcast-0", NAMESPACE),
                 pod("hazelcast-0", NAMESPACE, "node-name-1", 5701));
         stub(String.format("/api/v1/namespaces/%s/pods/hazelcast-1", NAMESPACE),
                 pod("hazelcast-1", NAMESPACE, "node-name-2", 5701));
 
-
         // when
         List<Endpoint> result = kubernetesClient.endpoints();
 
         // then
-        assertThat(formatPrivate(result), containsInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5701)));
-        assertThat(formatPublic(result), containsInAnyOrder(ready("35.232.226.200", 31916), ready("35.232.226.201", 31917)));
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("192.168.0.25", 5701), ready("172.17.0.5", 5701));
+        assertThat(formatPublic(result)).containsExactlyInAnyOrder(ready("35.232.226.200", 31916), ready("35.232.226.201", 31917));
     }
 
     @Test
-    public void portValuesForPodWithMultipleContainer() throws JsonProcessingException {
+    public void portValuesForPodWithMultipleContainer() {
         PodList podList = new PodList();
         List<Pod> pods = new ArrayList<>();
         for (int i = 0; i <= 1; i++) {
@@ -738,15 +866,15 @@ public class KubernetesClientTest {
             pods.add(pod);
         }
         podList.setItems(pods);
-        ObjectMapper mapper = new ObjectMapper();
+        JsonMapper mapper = new JsonMapper();
         String prodsJsonResponse = mapper.writeValueAsString(podList);
 
         stub(String.format("/api/v1/namespaces/%s/pods", NAMESPACE), prodsJsonResponse);
         List<Endpoint> result = kubernetesClient.endpoints();
-        assertThat(formatPrivate(result), containsInAnyOrder(ready("172.17.0.5", 5701), ready("172.17.1.5", 5701)));
+        assertThat(formatPrivate(result)).containsExactlyInAnyOrder(ready("172.17.0.5", 5701), ready("172.17.1.5", 5701));
     }
 
-    private static PodList podsListResponse() throws JsonProcessingException {
+    private static PodList podsListResponse() {
         return podsList(
                 Arrays.asList(new KubernetesClient.EndpointAddress("192.168.0.25", 5701),
                         new KubernetesClient.EndpointAddress("172.17.0.5", 5702)));
@@ -754,35 +882,35 @@ public class KubernetesClientTest {
 
     private static EndpointsList endpointsListResponse() {
         return endpointsList(
-                endpoints("my-release-hazelcast", new HashMap<String, String>() {{
+                endpoints("my-release-hazelcast", new HashMap<>() {{
                     put("192.168.0.25", "node-name-1");
                     put("172.17.0.5", "node-name-2");
                 }}),
-                endpoints("service-0", new HashMap<String, String>() {{
+                endpoints("service-0", new HashMap<>() {{
                     put("192.168.0.25", "node-name-1");
                 }}),
-                endpoints("hazelcast-0", new HashMap<String, String>() {{
+                endpoints("hazelcast-0", new HashMap<>() {{
                     put("192.168.0.25", "node-name-1");
                 }}),
-                endpoints("service-1", new HashMap<String, String>() {{
+                endpoints("service-1", new HashMap<>() {{
                     put("172.17.0.5", "node-name-2");
                 }}, Collections.singletonList(5702))
         );
     }
 
-    private static String endpointsListResponseWithoutNodeName() throws JsonProcessingException {
+    private static String endpointsListResponseWithoutNodeName() {
         return WRITER.writeValueAsString(endpointsList(
-                endpoints("my-release-hazelcast", new HashMap<String, String>() {{
+                endpoints("my-release-hazelcast", new HashMap<>() {{
                     put("172.17.0.5", null);
                     put("192.168.0.25", null);
                 }}),
-                endpoints("service-0", new HashMap<String, String>() {{
+                endpoints("service-0", new HashMap<>() {{
                     put("192.168.0.25", null);
                 }}),
-                endpoints("hazelcast-0", new HashMap<String, String>() {{
+                endpoints("hazelcast-0", new HashMap<>() {{
                     put("192.168.0.25", null);
                 }}),
-                endpoints("service-1", new HashMap<String, String>() {{
+                endpoints("service-1", new HashMap<>() {{
                     put("172.17.0.5", null);
                 }}, Collections.singletonList(5702))
         ));
@@ -794,25 +922,36 @@ public class KubernetesClientTest {
 
     private KubernetesClient newKubernetesClient(KubernetesTokenProvider tokenProvider) {
         String kubernetesMasterUrl = String.format("http://%s:%d", KUBERNETES_MASTER_IP, wireMockRule.port());
-        return new KubernetesClient(NAMESPACE, kubernetesMasterUrl, tokenProvider, CA_CERTIFICATE, RETRIES,
-                ExposeExternallyMode.AUTO, true, null, null, (ClusterTopologyIntentTracker) null);
+        return new KubernetesClient(NAMESPACE, "hazelcast-0", kubernetesMasterUrl, tokenProvider, null,
+                RETRIES, ExposeExternallyMode.AUTO, true, null,
+                null, null, null);
     }
 
     private KubernetesClient newKubernetesClient(boolean useNodeNameAsExternalAddress) {
         return newKubernetesClient(useNodeNameAsExternalAddress, null, null);
     }
 
-    private KubernetesClient newKubernetesClient(boolean useNodeNameAsExternalAddress, String servicePerPodLabelName, String servicePerPodLabelValue) {
-        return newKubernetesClient(ExposeExternallyMode.AUTO, useNodeNameAsExternalAddress, servicePerPodLabelName, servicePerPodLabelValue);
+    private KubernetesClient newKubernetesClient(boolean useNodeNameAsExternalAddress, String servicePerPodLabelName,
+                                                 String servicePerPodLabelValue) {
+        return newKubernetesClient(ExposeExternallyMode.AUTO, useNodeNameAsExternalAddress, servicePerPodLabelName,
+                servicePerPodLabelValue);
     }
 
-    private KubernetesClient newKubernetesClient(ExposeExternallyMode exposeExternally, boolean useNodeNameAsExternalAddress, String servicePerPodLabelName, String servicePerPodLabelValue) {
-        return newKubernetesClient(exposeExternally, useNodeNameAsExternalAddress, servicePerPodLabelName, servicePerPodLabelValue, new KubernetesApiEndpointProvider());
+    private KubernetesClient newKubernetesClient(ExposeExternallyMode exposeExternally,
+                                                 boolean useNodeNameAsExternalAddress,
+                                                 String servicePerPodLabelName, String servicePerPodLabelValue) {
+        return newKubernetesClient(exposeExternally, useNodeNameAsExternalAddress, servicePerPodLabelName,
+                servicePerPodLabelValue, new KubernetesApiEndpointProvider());
     }
 
-    private KubernetesClient newKubernetesClient(ExposeExternallyMode exposeExternally, boolean useNodeNameAsExternalAddress, String servicePerPodLabelName, String servicePerPodLabelValue, KubernetesApiProvider urlProvider) {
+    private KubernetesClient newKubernetesClient(ExposeExternallyMode exposeExternally,
+                                                 boolean useNodeNameAsExternalAddress,
+                                                 String servicePerPodLabelName, String servicePerPodLabelValue,
+                                                 KubernetesApiProvider urlProvider) {
         String kubernetesMasterUrl = String.format("http://%s:%d", KUBERNETES_MASTER_IP, wireMockRule.port());
-        return new KubernetesClient(NAMESPACE, kubernetesMasterUrl, new StaticTokenProvider(TOKEN), CA_CERTIFICATE, RETRIES, exposeExternally, useNodeNameAsExternalAddress, servicePerPodLabelName, servicePerPodLabelValue, urlProvider);
+        return new KubernetesClient(NAMESPACE, "hazelcast-0", kubernetesMasterUrl, new StaticTokenProvider(TOKEN),
+                null, RETRIES, exposeExternally, useNodeNameAsExternalAddress, servicePerPodLabelName,
+                servicePerPodLabelValue, null, urlProvider);
     }
 
     private static List<String> formatPrivate(List<Endpoint> addresses) {
@@ -837,12 +976,12 @@ public class KubernetesClientTest {
         return result;
     }
 
-    private static void stub(String url, KubernetesResource response) throws JsonProcessingException {
-        stub(url, 200, WRITER.writeValueAsString(response));
+    private static void stub(String url, KubernetesResource response) {
+        stub(url, HttpURLConnection.HTTP_OK, WRITER.writeValueAsString(response));
     }
 
     private static void stub(String url, String response) {
-        stub(url, 200, response);
+        stub(url, HttpURLConnection.HTTP_OK, response);
     }
 
     private static void stub(String url, int status, String response) {
@@ -851,7 +990,7 @@ public class KubernetesClientTest {
                 .willReturn(aResponse().withStatus(status).withBody(response)));
     }
 
-    private static void stub(String url, Map<String, String> queryParams, KubernetesResource response) throws JsonProcessingException {
+    private static void stub(String url, Map<String, String> queryParams, KubernetesResource response) {
         stub(url, queryParams, WRITER.writeValueAsString(response));
     }
 
@@ -862,7 +1001,7 @@ public class KubernetesClientTest {
         }
         stubFor(mappingBuilder
                 .withHeader("Authorization", equalTo(String.format("Bearer %s", TOKEN)))
-                .willReturn(aResponse().withStatus(200).withBody(response)));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_OK).withBody(response)));
     }
 
     private static String ready(String ip, Integer port) {

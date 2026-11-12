@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,12 +26,9 @@ import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
 import static com.hazelcast.query.impl.predicates.PredicateTestUtils.entry;
-import static org.hamcrest.CoreMatchers.equalTo;
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.not;
-import static org.hamcrest.CoreMatchers.sameInstance;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
 @RunWith(HazelcastParallelClassRunner.class)
@@ -46,10 +43,10 @@ public class GreaterLessPredicateTest {
         GreaterLessPredicate original = new GreaterLessPredicate(attribute, value, true, true);
         GreaterLessPredicate negate = (GreaterLessPredicate) original.negate();
 
-        assertThat(negate, not(sameInstance(original)));
-        assertThat(negate.attributeName, equalTo(attribute));
-        assertThat(negate.equal, is(false));
-        assertThat(negate.less, is(false));
+        assertThat(negate).isNotSameAs(original);
+        assertThat(negate.attributeName).isEqualTo(attribute);
+        assertThat(negate.equal).isFalse();
+        assertThat(negate.less).isFalse();
     }
 
     @Test
@@ -60,10 +57,10 @@ public class GreaterLessPredicateTest {
         GreaterLessPredicate original = new GreaterLessPredicate(attribute, value, false, false);
         GreaterLessPredicate negate = (GreaterLessPredicate) original.negate();
 
-        assertThat(negate, not(sameInstance(original)));
-        assertThat(negate.attributeName, equalTo(attribute));
-        assertThat(negate.equal, is(true));
-        assertThat(negate.less, is(true));
+        assertThat(negate).isNotSameAs(original);
+        assertThat(negate.attributeName).isEqualTo(attribute);
+        assertThat(negate.equal).isTrue();
+        assertThat(negate.less).isTrue();
     }
 
     @Test
@@ -74,10 +71,10 @@ public class GreaterLessPredicateTest {
         GreaterLessPredicate original = new GreaterLessPredicate(attribute, value, true, false);
         GreaterLessPredicate negate = (GreaterLessPredicate) original.negate();
 
-        assertThat(negate, not(sameInstance(original)));
-        assertThat(negate.attributeName, equalTo(attribute));
-        assertThat(negate.equal, is(false));
-        assertThat(negate.less, is(true));
+        assertThat(negate).isNotSameAs(original);
+        assertThat(negate.attributeName).isEqualTo(attribute);
+        assertThat(negate.equal).isFalse();
+        assertThat(negate.less).isTrue();
     }
 
     @Test
@@ -88,10 +85,10 @@ public class GreaterLessPredicateTest {
         GreaterLessPredicate original = new GreaterLessPredicate(attribute, value, false, true);
         GreaterLessPredicate negate = (GreaterLessPredicate) original.negate();
 
-        assertThat(negate, not(sameInstance(original)));
-        assertThat(negate.attributeName, equalTo(attribute));
-        assertThat(negate.equal, is(true));
-        assertThat(negate.less, is(false));
+        assertThat(negate).isNotSameAs(original);
+        assertThat(negate.attributeName).isEqualTo(attribute);
+        assertThat(negate.equal).isTrue();
+        assertThat(negate.less).isFalse();
     }
 
     @Test
@@ -108,10 +105,10 @@ public class GreaterLessPredicateTest {
         assertFalse(new GreaterLessPredicate("this", 0.0d, equal, less).apply(entry(-0.0)));
 
         // whereas in Java
-        assertTrue(0.0 == -0.0);
-        assertTrue(0.0d == -0.0d);
-        assertTrue(0.0 == -0.0d);
-        assertTrue(0.0d == -0.0);
+        assertEquals(0.0, -0.0, 0.0);
+        assertEquals(0.0d, -0.0d, 0.0);
+        assertEquals(0.0, -0.0d, 0.0);
+        assertEquals(0.0d, -0.0, 0.0);
     }
 
     @Test

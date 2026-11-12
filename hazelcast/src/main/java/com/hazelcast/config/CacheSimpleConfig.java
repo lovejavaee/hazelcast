@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,12 +25,14 @@ import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.nio.serialization.impl.Versioned;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
+import static com.hazelcast.internal.cluster.Versions.V5_4;
 import static com.hazelcast.internal.serialization.impl.SerializationUtil.readNullableList;
 import static com.hazelcast.internal.serialization.impl.SerializationUtil.writeNullableList;
 import static com.hazelcast.internal.util.Preconditions.checkAsyncBackupCount;
@@ -43,7 +45,9 @@ import static com.hazelcast.internal.util.Preconditions.isNotNull;
  * CacheConfig depends on the JCache API. If the JCache API is not in the classpath,
  * you can use CacheSimpleConfig as a communicator between the code and CacheConfig.
  */
-public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfig, Versioned {
+@SuppressWarnings("MethodCount")
+public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfig, Versioned,
+                                          UserCodeNamespaceAwareConfig<CacheSimpleConfig> {
 
     /**
      * The minimum number of backups.
@@ -113,6 +117,7 @@ public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfi
      * Full-flush invalidation means the invalidation of events for all entries when clear is called.
      */
     private boolean disablePerEntryInvalidationEvents;
+    private @Nullable String userCodeNamespace = DEFAULT_NAMESPACE;
 
     @SuppressWarnings("checkstyle:executablestatementcount")
     public CacheSimpleConfig(CacheSimpleConfig cacheSimpleConfig) {
@@ -147,6 +152,7 @@ public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfi
         this.dataPersistenceConfig = new DataPersistenceConfig(cacheSimpleConfig.dataPersistenceConfig);
         this.eventJournalConfig = new EventJournalConfig(cacheSimpleConfig.eventJournalConfig);
         this.disablePerEntryInvalidationEvents = cacheSimpleConfig.disablePerEntryInvalidationEvents;
+        this.userCodeNamespace = cacheSimpleConfig.userCodeNamespace;
     }
 
     /**
@@ -166,6 +172,7 @@ public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfi
      *
      * @return the name of the {@link com.hazelcast.cache.ICache}
      */
+    @Override
     public String getName() {
         return name;
     }
@@ -176,6 +183,7 @@ public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfi
      * @param name the name to set for this {@link com.hazelcast.cache.ICache}
      * @return the current cache config instance
      */
+    @Override
     public CacheSimpleConfig setName(String name) {
         this.name = name;
         return this;
@@ -670,9 +678,9 @@ public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfi
      * @param hotRestartConfig hot restart config
      * @return this {@code CacheSimpleConfig} instance
      *
-     * @deprecated since 5.0 use {@link CacheSimpleConfig#setDataPersistenceConfig(DataPersistenceConfig)}
+     * @deprecated use {@link CacheSimpleConfig#setDataPersistenceConfig(DataPersistenceConfig)}
      */
-    @Deprecated
+    @Deprecated(since = "5.0")
     public CacheSimpleConfig setHotRestartConfig(HotRestartConfig hotRestartConfig) {
         this.hotRestartConfig = hotRestartConfig;
 
@@ -755,6 +763,31 @@ public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfi
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    @Nullable
+    public String getUserCodeNamespace() {
+        return userCodeNamespace;
+    }
+
+    /**
+     * Associates the provided Namespace Name with this structure for {@link ClassLoader} awareness.
+     * <p>
+     * The behaviour of setting this to {@code null} is outlined in the documentation for
+     * {@link UserCodeNamespaceAwareConfig#DEFAULT_NAMESPACE}.
+     *
+     * @param userCodeNamespace The ID of the Namespace to associate with this structure.
+     * @return the updated {@link CacheSimpleConfig} instance
+     * @since 5.4
+     */
+    @Override
+    public CacheSimpleConfig setUserCodeNamespace(@Nullable String userCodeNamespace) {
+        this.userCodeNamespace = userCodeNamespace;
+        return this;
+    }
+
     @Override
     public int getFactoryId() {
         return ConfigDataSerializerHook.F_ID;
@@ -794,6 +827,11 @@ public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfi
 
         out.writeObject(merkleTreeConfig);
         out.writeObject(dataPersistenceConfig);
+
+        // RU_COMPAT_5_3
+        if (out.getVersion().isGreaterOrEqual(V5_4)) {
+            out.writeString(userCodeNamespace);
+        }
     }
 
     @Override
@@ -825,6 +863,11 @@ public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfi
 
         merkleTreeConfig = in.readObject();
         setDataPersistenceConfig(in.readObject());
+
+        // RU_COMPAT_5_3
+        if (in.getVersion().isGreaterOrEqual(V5_4)) {
+            userCodeNamespace = in.readString();
+        }
     }
 
     @Override
@@ -833,11 +876,9 @@ public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfi
         if (this == o) {
             return true;
         }
-        if (!(o instanceof CacheSimpleConfig)) {
+        if (!(o instanceof CacheSimpleConfig that)) {
             return false;
         }
-
-        CacheSimpleConfig that = (CacheSimpleConfig) o;
 
         if (statisticsEnabled != that.statisticsEnabled) {
             return false;
@@ -914,6 +955,9 @@ public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfi
         if (!Objects.equals(dataPersistenceConfig, that.dataPersistenceConfig)) {
             return false;
         }
+        if (!Objects.equals(userCodeNamespace, that.userCodeNamespace)) {
+            return false;
+        }
 
         return Objects.equals(hotRestartConfig, that.hotRestartConfig);
     }
@@ -947,6 +991,7 @@ public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfi
         result = 31 * result + (dataPersistenceConfig != null ? dataPersistenceConfig.hashCode() : 0);
         result = 31 * result + (eventJournalConfig != null ? eventJournalConfig.hashCode() : 0);
         result = 31 * result + (disablePerEntryInvalidationEvents ? 1 : 0);
+        result = 31 * result + (userCodeNamespace != null ? userCodeNamespace.hashCode() : 0);
         return result;
     }
 
@@ -978,6 +1023,7 @@ public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfi
                 + ", hotRestartConfig=" + hotRestartConfig
                 + ", dataPersistenceConfig=" + dataPersistenceConfig
                 + ", eventJournal=" + eventJournalConfig
+                + ", userCodeNamespace=" + userCodeNamespace
                 + '}';
     }
 
@@ -1043,12 +1089,10 @@ public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfi
 
             ExpiryPolicyFactoryConfig that = (ExpiryPolicyFactoryConfig) o;
 
-            if (className != null ? !className.equals(that.className) : that.className != null) {
+            if (!Objects.equals(className, that.className)) {
                 return false;
             }
-            return timedExpiryPolicyFactoryConfig != null
-                    ? timedExpiryPolicyFactoryConfig.equals(that.timedExpiryPolicyFactoryConfig)
-                    : that.timedExpiryPolicyFactoryConfig == null;
+            return Objects.equals(timedExpiryPolicyFactoryConfig, that.timedExpiryPolicyFactoryConfig);
         }
 
         @Override
@@ -1143,7 +1187,7 @@ public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfi
                 private static final int MAX_ID = ETERNAL.id;
                 private static final ExpiryPolicyType[] CACHED_VALUES = values();
 
-                private int id;
+                private final int id;
 
                 ExpiryPolicyType(int id) {
                     this.id = id;
@@ -1272,7 +1316,7 @@ public class CacheSimpleConfig implements IdentifiedDataSerializable, NamedConfi
             public String toString() {
                 return "DurationConfig{"
                         + "durationAmount=" + durationAmount
-                        + ", timeUnit" + timeUnit
+                        + ", timeUnit=" + timeUnit
                         + '}';
             }
         }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,16 +28,13 @@ public class JsonGetterContextCache {
     public JsonGetterContextCache(int maxContexts, int cleanupRemoveAtLeastItems) {
         this.maxContexts = maxContexts;
         this.cleanupRemoveAtLeastItems = cleanupRemoveAtLeastItems;
-        this.internalCache = new SampleableConcurrentHashMap<String, JsonGetterContext>(maxContexts);
+        this.internalCache = new SampleableConcurrentHashMap<>(maxContexts);
     }
 
     /**
      * Returns an existing or newly created context for given query path.
      * If maximum cache size is reached, then some entries are evicted.
      * The newly created entry is not evicted.
-     *
-     * @param queryPath
-     * @return
      */
     public JsonGetterContext getContext(String queryPath) {
         JsonGetterContext context = internalCache.get(queryPath);
@@ -47,7 +44,7 @@ public class JsonGetterContextCache {
         context = new JsonGetterContext(queryPath);
         JsonGetterContext previousContextValue = internalCache.putIfAbsent(queryPath, context);
         if (previousContextValue == null) {
-            cleanupIfNeccessary(context);
+            cleanupIfNecessary(context);
             return context;
         } else {
             return previousContextValue;
@@ -58,10 +55,8 @@ public class JsonGetterContextCache {
      * Cleanup on best effort basis. Concurrent calls to this method may
      * leave the cache empty. In that case, lost entries are re-cached
      * at a later call to {@link #getContext(String)}.
-     *
-     * @param excluded
      */
-    private void cleanupIfNeccessary(JsonGetterContext excluded) {
+    private void cleanupIfNecessary(JsonGetterContext excluded) {
         int cacheCount;
         while ((cacheCount = internalCache.size()) > maxContexts) {
             int sampleCount = Math.max(cacheCount - maxContexts, cleanupRemoveAtLeastItems) + 1;

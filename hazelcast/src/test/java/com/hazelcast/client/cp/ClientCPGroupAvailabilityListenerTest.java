@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,29 +17,48 @@
 package com.hazelcast.client.cp;
 
 import com.hazelcast.client.config.ClientConfig;
+import com.hazelcast.client.config.RoutingMode;
 import com.hazelcast.client.test.TestHazelcastFactory;
+import com.hazelcast.client.util.ConfigRoutingUtil;
 import com.hazelcast.config.ListenerConfig;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.cp.CPGroupAvailabilityListenerTest.CountingDownCPGroupAvailabilityListener;
+import com.hazelcast.cp.CPGroupAvailabilityListenerTest.GracefulShutdownAvailabilityListener;
 import com.hazelcast.cp.internal.HazelcastRaftTestSupport;
-import com.hazelcast.test.HazelcastParallelClassRunner;
+import com.hazelcast.test.HazelcastParallelParametersRunnerFactory;
+import com.hazelcast.test.HazelcastParametrizedRunner;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
+import static com.hazelcast.client.config.RoutingMode.ALL_MEMBERS;
+import static com.hazelcast.client.config.RoutingMode.MULTI_MEMBER;
+import static com.hazelcast.client.config.RoutingMode.SINGLE_MEMBER;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-@RunWith(HazelcastParallelClassRunner.class)
+@RunWith(HazelcastParametrizedRunner.class)
+@Parameterized.UseParametersRunnerFactory(HazelcastParallelParametersRunnerFactory.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class ClientCPGroupAvailabilityListenerTest extends HazelcastRaftTestSupport {
+
+    @Parameterized.Parameter
+    public RoutingMode routingMode;
+
+    @Parameterized.Parameters(name = "{index}: routingMode={0}")
+    public static Iterable<?> parameters() {
+        return Arrays.asList(SINGLE_MEMBER, ALL_MEMBERS, MULTI_MEMBER);
+    }
 
     private final TestHazelcastFactory factory = new TestHazelcastFactory();
 
@@ -50,10 +69,12 @@ public class ClientCPGroupAvailabilityListenerTest extends HazelcastRaftTestSupp
 
     @Test
     public void whenRegisteredInConfig_thenReceiveEvents() {
+        Assume.assumeTrue(routingMode == ALL_MEMBERS);
         HazelcastInstance[] instances = newInstances(3);
 
-        CountingDownCPGroupAvailabilityListener listener = new CountingDownCPGroupAvailabilityListener(1, 1);
-        ClientConfig config = new ClientConfig();
+        CountingDownCPGroupAvailabilityListener listener
+                = new CountingDownCPGroupAvailabilityListener(1, 1);
+        ClientConfig config = newClientConfig();
         config.addListenerConfig(new ListenerConfig().setImplementation(listener));
         factory.newHazelcastClient(config);
 
@@ -63,10 +84,12 @@ public class ClientCPGroupAvailabilityListenerTest extends HazelcastRaftTestSupp
 
     @Test
     public void whenGroupMemberTerminated_thenReceiveGroupAvailabilityEvents() throws Exception {
+        Assume.assumeTrue(routingMode == ALL_MEMBERS);
         CountingDownCPGroupAvailabilityListener listener = new CountingDownCPGroupAvailabilityListener(1, 1);
 
         HazelcastInstance[] instances = newInstances(3);
-        HazelcastInstance client = factory.newHazelcastClient();
+        ClientConfig clientConfig = newClientConfig();
+        HazelcastInstance client = factory.newHazelcastClient(clientConfig);
         client.getCPSubsystem().addGroupAvailabilityListener(listener);
 
         instances[0].getLifecycleService().terminate();
@@ -79,10 +102,13 @@ public class ClientCPGroupAvailabilityListenerTest extends HazelcastRaftTestSupp
 
     @Test
     public void whenMemberTerminated_thenReceiveCpSubsystemAvailabilityEvents() throws Exception {
+        Assume.assumeTrue(routingMode == ALL_MEMBERS);
+
         CountingDownCPGroupAvailabilityListener listener = new CountingDownCPGroupAvailabilityListener(1, 1);
 
         HazelcastInstance[] instances = newInstances(5);
-        HazelcastInstance client = factory.newHazelcastClient();
+        ClientConfig clientConfig = newClientConfig();
+        HazelcastInstance client = factory.newHazelcastClient(clientConfig);
         client.getCPSubsystem().addGroupAvailabilityListener(listener);
 
         instances[0].getLifecycleService().terminate();
@@ -100,10 +126,13 @@ public class ClientCPGroupAvailabilityListenerTest extends HazelcastRaftTestSupp
 
     @Test
     public void whenListenerDeregistered_thenNoEventsReceived() {
+        Assume.assumeTrue(routingMode == ALL_MEMBERS);
+
         CountingDownCPGroupAvailabilityListener listener = new CountingDownCPGroupAvailabilityListener(1, 1);
 
         HazelcastInstance[] instances = newInstances(3);
-        HazelcastInstance client = factory.newHazelcastClient();
+        ClientConfig clientConfig = newClientConfig();
+        HazelcastInstance client = factory.newHazelcastClient(clientConfig);
         UUID id = client.getCPSubsystem().addGroupAvailabilityListener(listener);
 
         instances[0].getLifecycleService().terminate();
@@ -117,8 +146,11 @@ public class ClientCPGroupAvailabilityListenerTest extends HazelcastRaftTestSupp
 
     @Test
     public void whenMultipleListenersRegistered_thenAllReceiveEvents() {
+        Assume.assumeTrue(routingMode == ALL_MEMBERS);
+
         HazelcastInstance[] instances = newInstances(3);
-        HazelcastInstance client = factory.newHazelcastClient();
+        ClientConfig clientConfig = newClientConfig();
+        HazelcastInstance client = factory.newHazelcastClient(clientConfig);
 
         CountingDownCPGroupAvailabilityListener listener1 = new CountingDownCPGroupAvailabilityListener(1, 1);
         client.getCPSubsystem().addGroupAvailabilityListener(listener1);
@@ -130,5 +162,33 @@ public class ClientCPGroupAvailabilityListenerTest extends HazelcastRaftTestSupp
         assertOpenEventually(listener2.availabilityLatch);
         assertEquals(1, listener1.availabilityEventCount.get());
         assertEquals(1, listener2.availabilityEventCount.get());
+    }
+
+    @Test
+    public void whenShutdown_receiveAvailabilityEvents() {
+        Assume.assumeTrue(routingMode == ALL_MEMBERS);
+
+        HazelcastInstance[] instances = newInstances(5);
+        ClientConfig clientConfig = newClientConfig();
+        HazelcastInstance client = factory.newHazelcastClient(clientConfig);
+
+        GracefulShutdownAvailabilityListener listener = new GracefulShutdownAvailabilityListener();
+        client.getCPSubsystem().addGroupAvailabilityListener(listener);
+
+        long secondsToAssertInvariant = 3;
+        instances[0].getLifecycleService().shutdown();
+        assertTrueAllTheTime(() -> assertEquals(1, listener.availabilityDecreased.get()), secondsToAssertInvariant);
+
+        instances[1].getLifecycleService().shutdown();
+        assertTrueAllTheTime(() -> assertEquals(2, listener.availabilityDecreased.get()), secondsToAssertInvariant);
+
+        instances[2].getLifecycleService().shutdown();
+        assertTrueAllTheTime(() -> assertEquals(3, listener.availabilityDecreased.get()), secondsToAssertInvariant);
+    }
+
+    private ClientConfig newClientConfig() {
+        ClientConfig clientConfig = ConfigRoutingUtil.newClientConfig(routingMode);
+        clientConfig.getConnectionStrategyConfig().getConnectionRetryConfig().setClusterConnectTimeoutMillis(Long.MAX_VALUE);
+        return clientConfig;
     }
 }

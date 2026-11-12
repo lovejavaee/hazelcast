@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,14 +21,12 @@ import com.hazelcast.config.InMemoryFormat;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.internal.util.RandomPicker;
 import com.hazelcast.internal.util.RuntimeAvailableProcessors;
-import com.hazelcast.map.EntryProcessor;
 import com.hazelcast.map.IMap;
 import com.hazelcast.map.MapStoreAdapter;
-import com.hazelcast.test.HazelcastParallelParametersRunnerFactory;
 import com.hazelcast.test.HazelcastParametrizedRunner;
+import com.hazelcast.test.HazelcastSerialParametersRunnerFactory;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
-import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
@@ -46,13 +44,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.hazelcast.map.IMapAccessors.getPendingOffloadedOpCount;
 import static com.hazelcast.spi.impl.operationservice.impl.OperationServiceAccessor.getAsyncOperationsCount;
+import static com.hazelcast.spi.impl.operationservice.impl.OperationServiceAccessor.toStringAsyncOperations;
+import static java.lang.String.format;
 import static java.util.Arrays.asList;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.assertEquals;
 
 @RunWith(HazelcastParametrizedRunner.class)
-@Parameterized.UseParametersRunnerFactory(HazelcastParallelParametersRunnerFactory.class)
-@Category({ParallelJVMTest.class, QuickTest.class})
+@Parameterized.UseParametersRunnerFactory(HazelcastSerialParametersRunnerFactory.class)
+@Category({QuickTest.class})
 public class MapStoreOffloadingBouncingNodeTest extends HazelcastTestSupport {
 
     @Parameterized.Parameters(name = "writeBehindEnabled: {0}")
@@ -68,6 +68,65 @@ public class MapStoreOffloadingBouncingNodeTest extends HazelcastTestSupport {
 
     private static final int TEST_RUN_SECONDS = 20;
 
+    @Test(timeout = 5 * 60 * 1000)
+    public void stress() throws InterruptedException {
+        final String mapName = "map-name";
+        final int keySpace = 1_000;
+
+        final Config config = getConfig(mapName);
+
+        TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(2);
+        final HazelcastInstance node1 = factory.newHazelcastInstance(config);
+        factory.newHazelcastInstance(config);
+
+        IMap<String, String> map = node1.getMap(mapName);
+
+        AtomicBoolean stop = new AtomicBoolean();
+        int availableProcessors = Math.min(6, RuntimeAvailableProcessors.get());
+        ExecutorService executorService = Executors.newFixedThreadPool(availableProcessors);
+
+        for (int i = 0; i < availableProcessors - 1; i++) {
+            executorService.submit(() -> {
+                while (!stop.get()) {
+                    OpType[] values = OpType.values();
+                    OpType op = values[RandomPicker.getInt(values.length)];
+                    op.doOp(map, RandomPicker.getInt(2, keySpace));
+                }
+            });
+        }
+
+        executorService.submit(() -> {
+            while (!stop.get()) {
+                HazelcastInstance node3 = factory.newHazelcastInstance(config);
+                sleepSeconds(2);
+                node3.shutdown();
+            }
+        });
+
+        sleepSeconds(TEST_RUN_SECONDS);
+
+        stop.set(true);
+        executorService.shutdown();
+        if (!executorService.awaitTermination(60, SECONDS)) {
+            executorService.shutdownNow();
+        }
+
+        assertTrueEventually(() -> {
+            Collection<HazelcastInstance> instances = factory.getAllHazelcastInstances();
+            for (HazelcastInstance node : instances) {
+                if (node.getLifecycleService().isRunning()) {
+                    int asyncOperationsCount = getAsyncOperationsCount(node);
+                    int pendingOffloadedOpCount = getPendingOffloadedOpCount(node.getMap(mapName));
+
+                    assertEquals(format("Found asyncOperationsCount=%d {%s}",
+                            asyncOperationsCount, toStringAsyncOperations(node)), 0, asyncOperationsCount);
+                    assertEquals(format("Found pendingOffloadedOpCount=%d", pendingOffloadedOpCount),
+                            0, pendingOffloadedOpCount);
+                }
+            }
+        });
+    }
+
     protected Config getConfig(String mapName) {
         Config config = smallInstanceConfigWithoutJetAndMetrics();
         config.getMapConfig(mapName)
@@ -78,7 +137,7 @@ public class MapStoreOffloadingBouncingNodeTest extends HazelcastTestSupport {
                 .setEnabled(true)
                 .setOffload(true)
                 .setWriteDelaySeconds(writeBehindEnabled ? 3 : 0)
-                .setImplementation(new MapStoreAdapter() {
+                .setImplementation(new MapStoreAdapter<>() {
 
                     @Override
                     public void store(Object key, Object value) {
@@ -112,58 +171,6 @@ public class MapStoreOffloadingBouncingNodeTest extends HazelcastTestSupport {
 
     private static void sleepRandomMillis() {
         sleepMillis(RandomPicker.getInt(0, 3));
-    }
-
-    @Test(timeout = 5 * 60 * 1000)
-    public void stress() throws InterruptedException {
-        final String mapName = "map-name";
-        final int keySpace = 1_000;
-
-        final Config config = getConfig(mapName);
-
-        TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(2);
-        final HazelcastInstance node1 = factory.newHazelcastInstance(config);
-        factory.newHazelcastInstance(config);
-
-        IMap<String, String> map = node1.getMap(mapName);
-
-        AtomicBoolean stop = new AtomicBoolean(false);
-        int availableProcessors = Math.min(6, RuntimeAvailableProcessors.get());
-        ExecutorService executorService = Executors.newFixedThreadPool(availableProcessors);
-
-        for (int i = 0; i < availableProcessors - 1; i++) {
-            executorService.submit(() -> {
-                while (!stop.get()) {
-                    OpType[] values = OpType.values();
-                    OpType op = values[RandomPicker.getInt(values.length)];
-                    op.doOp(map, RandomPicker.getInt(2, keySpace));
-                }
-            });
-        }
-
-        executorService.submit(() -> {
-            while (!stop.get()) {
-                HazelcastInstance node3 = factory.newHazelcastInstance(config);
-                sleepSeconds(2);
-                node3.shutdown();
-            }
-        });
-
-        sleepSeconds(TEST_RUN_SECONDS);
-
-        stop.set(true);
-        executorService.shutdown();
-        if (!executorService.awaitTermination(60, SECONDS)) {
-            executorService.shutdownNow();
-        }
-
-        assertTrueEventually(() -> {
-            Collection<HazelcastInstance> instances = factory.getAllHazelcastInstances();
-            for (HazelcastInstance node : instances) {
-                assertEquals(0, getAsyncOperationsCount(node));
-                assertEquals(0, getPendingOffloadedOpCount(node.getMap(mapName)));
-            }
-        });
     }
 
     private enum OpType {
@@ -219,7 +226,7 @@ public class MapStoreOffloadingBouncingNodeTest extends HazelcastTestSupport {
             @Override
             void doOp(IMap<String, String> map, int keySpace) {
                 for (int i = 0; i < keySpace; i++) {
-                    map.executeOnKey(toKey(i), (EntryProcessor) entry -> {
+                    map.executeOnKey(toKey(i), entry -> {
                         entry.setValue(null);
                         return null;
                     });
@@ -235,7 +242,7 @@ public class MapStoreOffloadingBouncingNodeTest extends HazelcastTestSupport {
                     keys.add(toKey(i));
                 }
 
-                map.executeOnKeys(keys, (EntryProcessor) entry -> {
+                map.executeOnKeys(keys, entry -> {
                     entry.setValue(null);
                     return null;
                 });
@@ -246,7 +253,7 @@ public class MapStoreOffloadingBouncingNodeTest extends HazelcastTestSupport {
             @Override
             void doOp(IMap<String, String> map, int keySpace) {
                 for (int i = 0; i < keySpace; i++) {
-                    map.executeOnKey(toKey(i), (EntryProcessor) entry -> {
+                    map.executeOnKey(toKey(i), entry -> {
                         entry.setValue(randomString());
                         return null;
                     });
@@ -262,7 +269,7 @@ public class MapStoreOffloadingBouncingNodeTest extends HazelcastTestSupport {
                     keys.add(toKey(i));
                 }
 
-                map.executeOnKeys(keys, (EntryProcessor) entry -> {
+                map.executeOnKeys(keys, entry -> {
                     entry.setValue(randomString());
                     return null;
                 });

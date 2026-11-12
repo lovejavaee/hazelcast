@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,8 @@
 
 package com.hazelcast.internal.serialization.impl;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.JsonParser;
+import tools.jackson.core.json.JsonFactory;
+import tools.jackson.core.JsonParser;
 import com.hazelcast.internal.json.JsonReducedValueParser;
 import com.hazelcast.internal.json.JsonValue;
 import com.hazelcast.query.impl.getters.JsonPathCursor;
@@ -32,7 +32,6 @@ public abstract class NavigableJsonInputAdapter {
 
     /**
      * Sets the position of underlying data input.
-     * @param position
      */
     public abstract void position(int position);
 
@@ -58,7 +57,6 @@ public abstract class NavigableJsonInputAdapter {
      * any position further forward than where it was prior to this
      * method.
      *
-     * @param cursor
      * @return {@code true} if the given attributeName matches the one
      *          in underlying data input
      */
@@ -68,8 +66,6 @@ public abstract class NavigableJsonInputAdapter {
      * Tries to parse a single JsonValue from the input. The {@code offset}
      * must be pointing to the beginning of a scalar Json value.
      *
-     * @param parser
-     * @param offset
      * @return either null or a scalar JsonValue.
      * @throws IOException if offset is pointing to a non-scalar
      *                      or invalid Json input
@@ -79,7 +75,6 @@ public abstract class NavigableJsonInputAdapter {
     /**
      * Creates a parser from given factory
      *
-     * @param factory
      * @return the parser
      * @throws IOException
      */

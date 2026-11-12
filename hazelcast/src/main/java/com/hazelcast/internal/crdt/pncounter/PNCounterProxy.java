@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import com.hazelcast.internal.cluster.ClusterService;
 import com.hazelcast.internal.crdt.pncounter.operations.AddOperation;
 import com.hazelcast.internal.crdt.pncounter.operations.CRDTTimestampedLong;
 import com.hazelcast.internal.crdt.pncounter.operations.GetOperation;
+import com.hazelcast.internal.tpcengine.util.ReflectionUtil;
 import com.hazelcast.internal.util.ThreadLocalRandomProvider;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.cluster.Address;
@@ -36,24 +37,23 @@ import com.hazelcast.spi.impl.operationservice.InvocationBuilder;
 import com.hazelcast.spi.impl.operationservice.Operation;
 import com.hazelcast.spi.impl.operationservice.impl.InvocationFuture;
 
+import java.lang.invoke.VarHandle;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
 import static com.hazelcast.internal.crdt.pncounter.PNCounterService.SERVICE_NAME;
+import static com.hazelcast.spi.impl.operationservice.OperationAccessor.cloneAndReset;
 
 /**
  * Member proxy implementation for a {@link PNCounter}.
  */
 public class PNCounterProxy extends AbstractDistributedObject<PNCounterService> implements PNCounter {
-    /**
-     * Atomic field updater for the observed clock field
-     */
-    private static final AtomicReferenceFieldUpdater<PNCounterProxy, VectorClock> OBSERVED_TIMESTAMPS_UPDATER =
-            AtomicReferenceFieldUpdater.newUpdater(PNCounterProxy.class, VectorClock.class, "observedClock");
+    /** @see #observedClock */
+    private static final VarHandle OBSERVED_TIMESTAMPS =
+            ReflectionUtil.findVarHandle("observedClock", VectorClock.class);
     private static final List<Address> EMPTY_ADDRESS_LIST = Collections.emptyList();
     /** The counter name */
     private final String name;
@@ -199,9 +199,10 @@ public class PNCounterProxy extends AbstractDistributedObject<PNCounterService> 
         } catch (HazelcastException e) {
             logger.fine("Exception occurred while invoking operation on target " + target + ", choosing different target", e);
             if (excludedAddresses == EMPTY_ADDRESS_LIST) {
-                excludedAddresses = new ArrayList<Address>();
+                excludedAddresses = new ArrayList<>();
             }
             excludedAddresses.add(target);
+            operation = cloneAndReset(operation, getNodeEngine().getSerializationService());
             return invokeInternal(operation, excludedAddresses, e);
         }
     }
@@ -220,7 +221,7 @@ public class PNCounterProxy extends AbstractDistributedObject<PNCounterService> 
             if (currentClock != null && currentClock.isAfter(receivedVectorClock)) {
                 break;
             }
-            if (OBSERVED_TIMESTAMPS_UPDATER.compareAndSet(this, currentClock, receivedVectorClock)) {
+            if (OBSERVED_TIMESTAMPS.compareAndSet(this, currentClock, receivedVectorClock)) {
                 break;
             }
         }
@@ -290,7 +291,7 @@ public class PNCounterProxy extends AbstractDistributedObject<PNCounterService> 
                                                               .getMembers(MemberSelectors.DATA_MEMBER_SELECTOR);
         final int maxConfiguredReplicaCount = getNodeEngine().getConfig().findPNCounterConfig(name).getReplicaCount();
         final int currentReplicaCount = Math.min(maxConfiguredReplicaCount, dataMembers.size());
-        final ArrayList<Address> replicaAddresses = new ArrayList<Address>(currentReplicaCount);
+        final ArrayList<Address> replicaAddresses = new ArrayList<>(currentReplicaCount);
         final Iterator<Member> dataMemberIterator = dataMembers.iterator();
 
         for (int i = 0; i < currentReplicaCount; i++) {

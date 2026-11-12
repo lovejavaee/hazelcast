@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,8 +20,8 @@ import com.hazelcast.internal.metrics.MetricConsumer;
 import com.hazelcast.internal.metrics.MetricDescriptor;
 import com.hazelcast.internal.metrics.MetricTarget;
 import com.hazelcast.internal.metrics.ProbeUnit;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+import javax.annotation.Nonnull;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -65,7 +65,7 @@ import static java.lang.Math.multiplyExact;
  * <p>
  * After both the metrics and the dictionary blob is constructed, they
  * are copied into a final blob in the following structure:
- *
+ * <p>
  * +--------------------------------+--------------------+
  * | Compressor version             |   2 bytes (short)  |
  * +--------------------------------+--------------------+
@@ -116,12 +116,16 @@ public class MetricsCompressor {
     private MetricsDictionary dictionary;
 
     // output streams for the blob containing the dictionary
+    @Nonnull
     private DataOutputStream dictionaryDos;
+    @Nonnull
     private Deflater dictionaryCompressor;
     private MorePublicByteArrayOutputStream dictionaryBaos = new MorePublicByteArrayOutputStream(INITIAL_BUFFER_SIZE_DICTIONARY);
 
     // output streams for the blob containing the metrics
+    @Nonnull
     private DataOutputStream metricDos;
+    @Nonnull
     private Deflater metricsCompressor;
     private MorePublicByteArrayOutputStream metricBaos = new MorePublicByteArrayOutputStream(INITIAL_BUFFER_SIZE_METRICS);
 
@@ -260,6 +264,9 @@ public class MetricsCompressor {
         return dictionary.getDictionaryId(word);
     }
 
+    /**
+     * Gets data and prepares for next compression cycle.
+     */
     public byte[] getBlobAndReset() {
         byte[] blob = getRenderedBlob();
 
@@ -267,6 +274,13 @@ public class MetricsCompressor {
         int estimatedBytesMetrics = metricBaos.size() * SIZE_FACTOR_NUMERATOR / SIZE_FACTOR_DENOMINATOR;
         reset(estimatedBytesDictionary, estimatedBytesMetrics);
         return blob;
+    }
+
+    /**
+     * Gets data without preparing for next compression cycle.
+     */
+    public byte[] getBlobAndClose() {
+        return getRenderedBlob();
     }
 
     private void writeDictionary() throws IOException {
@@ -329,13 +343,26 @@ public class MetricsCompressor {
         lastDescriptor = null;
     }
 
-    private byte[] getRenderedBlob() {
+    /**
+     * Frees resources associated with this compressor. Needed to avoid keeping
+     * memory allocated by {@link Deflater} for a long time, until finalization.
+     */
+    public void close() {
         try {
-            writeDictionary();
             dictionaryDos.close();
             dictionaryCompressor.end();
             metricDos.close();
             metricsCompressor.end();
+        } catch (IOException e) {
+            // should never be thrown
+            throw new RuntimeException(e);
+        }
+    }
+
+    private byte[] getRenderedBlob() {
+        try {
+            writeDictionary();
+            close();
         } catch (IOException e) {
             // should never be thrown
             throw new RuntimeException(e);
@@ -368,7 +395,6 @@ public class MetricsCompressor {
         extractMetrics(blob, consumer, DEFAULT_DESCRIPTOR_SUPPLIER);
     }
 
-    @SuppressFBWarnings("RR_NOT_CHECKED")
     public static void extractMetrics(byte[] blob, MetricConsumer consumer, Supplier<? extends MetricDescriptor> supplier) {
         ByteArrayInputStream bais = new ByteArrayInputStream(blob);
         int version = (bais.read() << BITS_IN_BYTE) + bais.read();

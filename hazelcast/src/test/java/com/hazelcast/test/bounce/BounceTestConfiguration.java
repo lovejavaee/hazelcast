@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,19 +18,23 @@ package com.hazelcast.test.bounce;
 
 import com.hazelcast.config.Config;
 
+import java.util.function.Supplier;
+
 /**
  * Configuration for a member bounce test.
  */
 public class BounceTestConfiguration {
 
     private final int clusterSize;
-    private final DriverType driverType;
-    private final Config memberConfig;
-    private final int driverCount;
-    private final DriverFactory driverFactory;
+    private final Supplier<Config> memberConfigSupplier;
+    private final DriverConfiguration driverConfig;
     private final boolean useTerminate;
+    private final boolean avoidOverlappingTerminations;
     private final int bouncingIntervalSeconds;
     private final long maximumStaleSeconds;
+    private final boolean hasSteadyMember;
+    private final boolean shouldFailOnIncompleteTask;
+    private final int testTaskTimeoutSecs;
 
     /**
      * Indicates whether the test will be driven by member or client HazelcastInstances
@@ -45,46 +49,70 @@ public class BounceTestConfiguration {
          */
         MEMBER,
         /**
+         * Setup separate lite members as test drivers. Lite members do not affect
+         * partition distribution.
+         */
+        LITE_MEMBER,
+        /**
          * Setup clients as test drivers
          */
         CLIENT,
     }
 
-    BounceTestConfiguration(int clusterSize, DriverType driverType,
-                            Config memberConfig, int driverCount, DriverFactory driverFactory, boolean useTerminate,
-                            int bouncingIntervalSeconds, long maximumStaleSeconds) {
+    record DriverConfiguration(DriverType type, int count, DriverFactory factory) {
+    }
+
+    BounceTestConfiguration(int clusterSize, DriverConfiguration driverConfig, Supplier<Config> memberConfigSupplier,
+                            boolean useTerminate, boolean avoidOverlappingTerminations, int bouncingIntervalSeconds,
+                            long maximumStaleSeconds, boolean hasSteadyMember, boolean shouldFailOnIncompleteTask,
+                            int testTaskTimeoutSecs) {
         this.clusterSize = clusterSize;
-        this.driverType = driverType;
-        this.memberConfig = memberConfig;
-        this.driverCount = driverCount;
-        this.driverFactory = driverFactory;
+        this.driverConfig = driverConfig;
+        this.memberConfigSupplier = memberConfigSupplier;
         this.useTerminate = useTerminate;
+        this.avoidOverlappingTerminations = avoidOverlappingTerminations;
         this.bouncingIntervalSeconds = bouncingIntervalSeconds;
         this.maximumStaleSeconds = maximumStaleSeconds;
+        this.hasSteadyMember = hasSteadyMember;
+        this.shouldFailOnIncompleteTask = shouldFailOnIncompleteTask;
+        this.testTaskTimeoutSecs = testTaskTimeoutSecs;
     }
 
     public int getClusterSize() {
         return clusterSize;
     }
 
-    public DriverType getDriverType() {
-        return driverType;
+    /**
+     * @return actual cluster size, including both requested members ({@link #getClusterSize()}
+     *         and test drivers is applicable
+     */
+    public int getEffectiveClusterSize() {
+        return clusterSize
+                + (getDriverType() == DriverType.MEMBER || getDriverType() == DriverType.LITE_MEMBER ? getDriverCount() : 0);
     }
 
-    public Config getMemberConfig() {
-        return memberConfig;
+    public DriverType getDriverType() {
+        return driverConfig.type();
+    }
+
+    public Supplier<Config> getMemberConfigSupplier() {
+        return memberConfigSupplier;
     }
 
     public int getDriverCount() {
-        return driverCount;
+        return driverConfig.count;
     }
 
     public DriverFactory getDriverFactory() {
-        return driverFactory;
+        return driverConfig.factory();
     }
 
     public boolean isUseTerminate() {
         return useTerminate;
+    }
+
+    public boolean avoidOverlappingTerminations() {
+        return avoidOverlappingTerminations;
     }
 
     public int getBouncingIntervalSeconds() {
@@ -93,5 +121,17 @@ public class BounceTestConfiguration {
 
     public long getMaximumStaleSeconds() {
         return maximumStaleSeconds;
+    }
+
+    public boolean hasSteadyMember() {
+        return hasSteadyMember;
+    }
+
+    public boolean shouldFailOnIncompleteTask() {
+        return shouldFailOnIncompleteTask;
+    }
+
+    public int getTestTaskTimeoutSecs() {
+        return testTaskTimeoutSecs;
     }
 }

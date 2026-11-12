@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,10 +40,8 @@ import com.hazelcast.transaction.TransactionOptions;
 import com.hazelcast.transaction.TransactionalMap;
 import com.hazelcast.transaction.TransactionalQueue;
 import org.junit.Ignore;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import java.util.Collection;
@@ -59,16 +57,13 @@ import static com.hazelcast.test.Accessors.getNodeEngineImpl;
 import static com.hazelcast.transaction.TransactionOptions.TransactionType.ONE_PHASE;
 import static com.hazelcast.transaction.TransactionOptions.TransactionType.TWO_PHASE;
 import static java.util.concurrent.TimeUnit.SECONDS;
-import static org.hamcrest.core.Is.isA;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class TransactionsWithWriteBehind_whenNoCoalescingQueueIsFullTest extends HazelcastTestSupport {
-
-    @Rule
-    public ExpectedException expectedException = ExpectedException.none();
 
     @Test
     public void get_for_update_does_not_increment_node_wide_used_capacity() {
@@ -99,7 +94,7 @@ public class TransactionsWithWriteBehind_whenNoCoalescingQueueIsFullTest extends
         Config config = getConfig(mapName, maxWbqCapacity);
         HazelcastInstance node = createHazelcastInstance(config);
 
-        IMap entries = node.getMap(mapName);
+        IMap<Integer, Integer> entries = node.getMap(mapName);
         for (int i = 0; i < 100; i++) {
             entries.set(i, i);
         }
@@ -121,24 +116,25 @@ public class TransactionsWithWriteBehind_whenNoCoalescingQueueIsFullTest extends
 
     @Test
     public void prepare_step_throws_reached_max_size_exception_when_two_phase() {
-        expectedException.expect(TransactionException.class);
-        expectedException.expectCause(isA(ReachedMaxSizeException.class));
+        assertThatThrownBy(() -> {
+            String mapName = "map";
+            long maxWbqCapacity = 100;
 
-        String mapName = "map";
-        long maxWbqCapacity = 100;
+            Config config = getConfig(mapName, maxWbqCapacity);
+            HazelcastInstance node = createHazelcastInstance(config);
 
-        Config config = getConfig(mapName, maxWbqCapacity);
-        HazelcastInstance node = createHazelcastInstance(config);
+            TransactionContext context = newTransactionContext(node, TWO_PHASE);
+            context.beginTransaction();
 
-        TransactionContext context = newTransactionContext(node, TWO_PHASE);
-        context.beginTransaction();
+            TransactionalMap<String, String> map = context.getMap(mapName);
 
-        TransactionalMap map = context.getMap(mapName);
-
-        for (int i = 0; i < 101; i++) {
-            map.put("item-" + i, "value");
-        }
-        context.commitTransaction();
+            for (int i = 0; i < 101; i++) {
+                map.put("item-" + i, "value");
+            }
+            context.commitTransaction();
+        })
+                .isInstanceOf(TransactionException.class)
+                .hasCauseInstanceOf(ReachedMaxSizeException.class);
     }
 
     private static TransactionContext newTransactionContext(HazelcastInstance node,
@@ -212,8 +208,6 @@ public class TransactionsWithWriteBehind_whenNoCoalescingQueueIsFullTest extends
 
     @Test
     public void throws_reached_max_size_exception_when_one_phase() {
-        expectedException.expect(ReachedMaxSizeException.class);
-
         String mapName = "map";
         Config config = getConfig(mapName, 100);
         HazelcastInstance node = createHazelcastInstance(config);
@@ -221,13 +215,13 @@ public class TransactionsWithWriteBehind_whenNoCoalescingQueueIsFullTest extends
         TransactionContext context = newTransactionContext(node, ONE_PHASE);
         context.beginTransaction();
 
-        TransactionalMap map = context.getMap("map");
+        TransactionalMap<String, String> map = context.getMap("map");
 
         for (int i = 0; i < 101; i++) {
             map.put("item-" + i, "value");
         }
 
-        context.commitTransaction();
+        assertThrows(ReachedMaxSizeException.class, context::commitTransaction);
     }
 
     @Ignore
@@ -304,7 +298,7 @@ public class TransactionsWithWriteBehind_whenNoCoalescingQueueIsFullTest extends
         final HazelcastInstance node1 = factory.newHazelcastInstance(config);
         factory.newHazelcastInstance(config);
 
-        AtomicBoolean stop = new AtomicBoolean(false);
+        AtomicBoolean stop = new AtomicBoolean();
         int availableProcessors = Math.min(6, RuntimeAvailableProcessors.get());
         ExecutorService executorService = Executors.newFixedThreadPool(availableProcessors);
 
@@ -382,7 +376,7 @@ public class TransactionsWithWriteBehind_whenNoCoalescingQueueIsFullTest extends
                 TransactionContext context = newTransactionContext(node, TWO_PHASE);
                 context.beginTransaction();
 
-                TransactionalMap map = context.getMap(mapName);
+                TransactionalMap<String, String> map = context.getMap(mapName);
 
                 for (int i = 0; i < keySpace; i++) {
                     map.put("item-" + i, "value");
@@ -402,7 +396,7 @@ public class TransactionsWithWriteBehind_whenNoCoalescingQueueIsFullTest extends
                 TransactionContext context = newTransactionContext(node, TWO_PHASE);
                 context.beginTransaction();
 
-                TransactionalMap map = context.getMap(mapName);
+                TransactionalMap<String, String> map = context.getMap(mapName);
 
                 for (int i = 0; i < keySpace; i++) {
                     map.remove("item-" + i);
@@ -422,7 +416,7 @@ public class TransactionsWithWriteBehind_whenNoCoalescingQueueIsFullTest extends
                 TransactionContext context = newTransactionContext(node, TWO_PHASE);
                 context.beginTransaction();
 
-                TransactionalMap map = context.getMap(mapName);
+                TransactionalMap<String, Integer> map = context.getMap(mapName);
 
                 for (int i = 0; i < keySpace; i++) {
                     map.put("item-" + i, i);
@@ -459,7 +453,7 @@ public class TransactionsWithWriteBehind_whenNoCoalescingQueueIsFullTest extends
             TransactionContext context = newTransactionContext(node1, TWO_PHASE);
             context.beginTransaction();
 
-            TransactionalMap map = context.getMap("map");
+            TransactionalMap<String, String> map = context.getMap("map");
 
             for (int i = 0; i < 51; i++) {
                 map.put("item-" + i, "value");

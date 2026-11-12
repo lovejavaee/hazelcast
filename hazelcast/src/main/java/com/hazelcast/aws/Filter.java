@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ import java.util.Map;
  */
 final class Filter {
 
-    private Map<String, String> filters = new HashMap<>();
+    private final Map<String, String> filters = new HashMap<>();
 
     private int index = 1;
 
@@ -36,7 +36,7 @@ final class Filter {
     }
 
     void addMulti(String name, Collection<String> values) {
-        if (values.size() > 0) {
+        if (!values.isEmpty()) {
             filters.put("Filter." + index + ".Name", name);
             int valueIndex = 1;
             for (String value : values) {

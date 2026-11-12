@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,10 +20,8 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static com.hazelcast.internal.tpcengine.TpcTestSupport.assertEqualsEventually;
 import static com.hazelcast.internal.tpcengine.TpcTestSupport.assertTrueEventually;
 import static com.hazelcast.internal.tpcengine.TpcTestSupport.terminate;
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -62,17 +60,5 @@ public abstract class EventloopTest {
         public void run() {
             count.incrementAndGet();
         }
-    }
-
-    @Test
-    public void test_sleep() {
-        AtomicInteger executedCount = new AtomicInteger();
-        long startMs = System.currentTimeMillis();
-        reactor.offer(() -> reactor.eventloop().sleep(1, SECONDS)
-                .then((o, ex) -> executedCount.incrementAndGet()));
-
-        assertEqualsEventually(1, executedCount);
-        long duration = System.currentTimeMillis() - startMs;
-        System.out.println("duration:" + duration + " ms");
     }
 }

@@ -69,7 +69,7 @@ public class JsonArray extends JsonValue implements Iterable<JsonValue> {
    * Creates a new empty JsonArray.
    */
   public JsonArray() {
-    values = new ArrayList<JsonValue>();
+    values = new ArrayList<>();
   }
 
   /**
@@ -89,7 +89,7 @@ public class JsonArray extends JsonValue implements Iterable<JsonValue> {
     if (unmodifiable) {
       values = Collections.unmodifiableList(array.values);
     } else {
-      values = new ArrayList<JsonValue>(array.values);
+      values = new ArrayList<>(array.values);
     }
   }
 
@@ -387,15 +387,16 @@ public class JsonArray extends JsonValue implements Iterable<JsonValue> {
     return Collections.unmodifiableList(values);
   }
 
-  /**
-   * Returns an iterator over the values of this array in document order. The returned iterator
-   * cannot be used to modify this array.
-   *
-   * @return an iterator over the values of this array
-   */
-  public Iterator<JsonValue> iterator() {
+    /**
+     * Returns an iterator over the values of this array in document order. The returned iterator
+     * cannot be used to modify this array.
+     *
+     * @return an iterator over the values of this array
+     */
+    @Override
+    public Iterator<JsonValue> iterator() {
     final Iterator<JsonValue> iterator = values.iterator();
-    return new Iterator<JsonValue>() {
+    return new Iterator<>() {
 
       public boolean hasNext() {
         return iterator.hasNext();
@@ -405,6 +406,7 @@ public class JsonArray extends JsonValue implements Iterable<JsonValue> {
         return iterator.next();
       }
 
+      @Override
       public void remove() {
         throw new UnsupportedOperationException();
       }

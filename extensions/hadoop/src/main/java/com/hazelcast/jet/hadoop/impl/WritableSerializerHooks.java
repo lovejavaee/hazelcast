@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ import org.apache.hadoop.io.Writable;
 
 import java.io.IOException;
 
-import static com.hazelcast.jet.impl.util.ExceptionUtil.rethrow;
+import static com.hazelcast.jet.impl.util.JetExceptionUtil.rethrow;
 
 final class WritableSerializerHooks {
 
@@ -128,7 +128,7 @@ final class WritableSerializerHooks {
                         "Consider explicit type registration using WritableSerializerHook.");
                 warnedOnce = true;
             }
-            out.writeUTF(writable.getClass().getName());
+            out.writeString(writable.getClass().getName());
             writable.write(out);
         }
 
@@ -139,7 +139,7 @@ final class WritableSerializerHooks {
                         "Consider explicit type registration using WritableSerializerHook.");
                 warnedOnce = true;
             }
-            String className = in.readUTF();
+            String className = in.readString();
             try {
                 Writable instance = ClassLoaderUtil.newInstance(Thread.currentThread().getContextClassLoader(), className);
                 instance.readFields(in);

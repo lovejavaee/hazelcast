@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@ package com.hazelcast.internal.util.collection;
 
 import com.hazelcast.internal.serialization.SerializableByConvention;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+import java.io.Serial;
 import java.io.Serializable;
 import java.util.AbstractSet;
 import java.util.ArrayList;
@@ -57,6 +57,7 @@ import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 @SerializableByConvention
 public class InflatableSet<T> extends AbstractSet<T> implements Set<T>, Serializable, Cloneable {
 
+    @Serial
     private static final long serialVersionUID = 0L;
 
     enum State {
@@ -83,7 +84,7 @@ public class InflatableSet<T> extends AbstractSet<T> implements Set<T>, Serializ
     /**
      * This constructor is intended to be used by {@link com.hazelcast.internal.util.collection.InflatableSet.Builder} and
      * {@link com.hazelcast.internal.util.collection.ImmutableInflatableSet.ImmutableSetBuilder} only.
-     *
+     * <p>
      * The constructor is package-visible to support {@link com.hazelcast.internal.util.collection.ImmutableInflatableSet}
      *
      * @param compactList list of elements for the InflatableSet
@@ -99,20 +100,20 @@ public class InflatableSet<T> extends AbstractSet<T> implements Set<T>, Serializ
      * @param other other InflatableSet which should be cloned
      */
     private InflatableSet(InflatableSet<T> other) {
-        compactList = new ArrayList<T>(other.compactList.size());
+        compactList = new ArrayList<>(other.compactList.size());
         compactList.addAll(other.compactList);
         if (other.inflatedSet != null) {
-            inflatedSet = new HashSet<T>(other.inflatedSet);
+            inflatedSet = new HashSet<>(other.inflatedSet);
         }
         state = other.state;
     }
 
     public static <T> Builder<T> newBuilder(int initialCapacity) {
-        return new Builder<T>(initialCapacity);
+        return new Builder<>(initialCapacity);
     }
 
     public static <T> Builder<T> newBuilder(List<T> list) {
-        return new Builder<T>(list);
+        return new Builder<>(list);
     }
 
     @Override
@@ -190,15 +191,15 @@ public class InflatableSet<T> extends AbstractSet<T> implements Set<T>, Serializ
      * @return a shallow copy of this set
      */
     @Override
-    @SuppressFBWarnings(value = "CN_IDIOM", justification = "Deliberate, documented contract violation")
+    //@SuppressFBWarnings(value = "CN_IDIOM", justification = "Deliberate, documented contract violation")
     @SuppressWarnings({"checkstyle:superclone", "CloneDoesntCallSuperClone"})
     protected Object clone() {
-        return new InflatableSet<T>(this);
+        return new InflatableSet<>(this);
     }
 
     private void inflateIfNeeded() {
         if (inflatedSet == null) {
-            inflatedSet = new HashSet<T>(compactList);
+            inflatedSet = new HashSet<>(compactList);
         }
     }
 
@@ -222,7 +223,7 @@ public class InflatableSet<T> extends AbstractSet<T> implements Set<T>, Serializ
     }
 
     private void invalidateIterators() {
-        if (compactList.size() == 0) {
+        if (compactList.isEmpty()) {
             compactList.clear();
         } else {
             compactList.remove(0);
@@ -295,6 +296,7 @@ public class InflatableSet<T> extends AbstractSet<T> implements Set<T>, Serializ
             super(list);
         }
 
+        @Override
         public Builder<T> add(T item) {
             super.add(item);
             return this;

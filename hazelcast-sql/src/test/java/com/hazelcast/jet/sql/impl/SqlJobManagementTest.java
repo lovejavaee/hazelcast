@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,14 +19,22 @@ package com.hazelcast.jet.sql.impl;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.jet.Job;
 import com.hazelcast.jet.config.JobConfig;
+import com.hazelcast.jet.impl.JetClientInstanceImpl;
+import com.hazelcast.jet.impl.JobAndSqlSummary;
 import com.hazelcast.jet.sql.SqlTestSupport;
 import com.hazelcast.jet.sql.impl.connector.test.TestBatchSqlConnector;
 import com.hazelcast.sql.HazelcastSqlException;
 import com.hazelcast.sql.SqlService;
+import com.hazelcast.test.HazelcastSerialClassRunner;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+
+import java.util.List;
+import java.util.stream.Stream;
 
 import static com.hazelcast.jet.config.ProcessingGuarantee.EXACTLY_ONCE;
+import static com.hazelcast.jet.core.JobAssertions.assertThat;
 import static com.hazelcast.jet.core.JobStatus.COMPLETED;
 import static com.hazelcast.jet.core.JobStatus.RUNNING;
 import static com.hazelcast.jet.core.JobStatus.SUSPENDED;
@@ -38,6 +46,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
+@RunWith(HazelcastSerialClassRunner.class)
 public class SqlJobManagementTest extends SqlTestSupport {
 
     private static final String COMPLETED_JOB_NAME = "completedJob";
@@ -46,7 +55,7 @@ public class SqlJobManagementTest extends SqlTestSupport {
 
     @BeforeClass
     public static void beforeClass() {
-        initialize(1, null);
+        initializeWithClient(1, null, null);
         sqlService = instance().getSql();
     }
 
@@ -82,7 +91,7 @@ public class SqlJobManagementTest extends SqlTestSupport {
     @Test
     public void when_createJobUnknownOption_then_fail() {
         assertThatThrownBy(() -> sqlService.execute("CREATE JOB foo OPTIONS ('badOption'='value') AS "
-                        + "INSERT INTO t1 VALUES(1)"))
+                + "INSERT INTO t1 VALUES(1)"))
                 .hasMessage("From line 1, column 25 to line 1, column 35: Unknown job option: badOption");
     }
 
@@ -96,15 +105,23 @@ public class SqlJobManagementTest extends SqlTestSupport {
     @Test
     public void when_snapshotIntervalNotNumber_then_fail() {
         assertThatThrownBy(() -> sqlService.execute("CREATE JOB foo OPTIONS ('snapshotIntervalMillis'='foo') AS "
-                        + "INSERT INTO t1 VALUES(1)"))
-               .hasMessage("From line 1, column 50 to line 1, column 54: Invalid number for snapshotIntervalMillis: foo");
+                + "INSERT INTO t1 VALUES(1)"))
+                .hasMessage("From line 1, column 50 to line 1, column 54: Invalid number for snapshotIntervalMillis: foo");
     }
 
     @Test
     public void when_badProcessingGuarantee_then_fail() {
         assertThatThrownBy(() -> sqlService.execute("CREATE JOB foo OPTIONS ('processingGuarantee'='foo') AS "
-                        + "INSERT INTO t1 VALUES(1)"))
-               .hasMessage("From line 1, column 47 to line 1, column 51: Unsupported value for processingGuarantee: foo");
+                + "INSERT INTO t1 VALUES(1)"))
+                .hasMessage("From line 1, column 47 to line 1, column 51: Unsupported value for processingGuarantee: foo");
+    }
+
+    @Test
+    public void when_wrongProcessingGuaranteeForBatchJob_then_fail() {
+        createMapping("t1", Long.class, Long.class);
+        assertThatThrownBy(() -> sqlService.execute("CREATE JOB foo OPTIONS ('processingGuarantee'='exactlyOnce') "
+                + "AS INSERT INTO t1 VALUES(1, 1)"))
+                .hasMessage("Only NONE guarantee is allowed for batch job");
     }
 
     @Test
@@ -230,7 +247,8 @@ public class SqlJobManagementTest extends SqlTestSupport {
         createMapping("dest", Integer.class, String.class);
 
         sqlService.execute("CREATE JOB testJob AS INSERT INTO dest SELECT v * 2, 'value-' || v FROM src WHERE v < 2");
-        assertJobStatusEventually(instance().getJet().getJob("testJob"), COMPLETED);
+        Job job = instance().getJet().getJob("testJob");
+        assertThat(job).eventuallyHasStatus(COMPLETED);
 
         assertMapEventually(
                 "dest",
@@ -244,7 +262,8 @@ public class SqlJobManagementTest extends SqlTestSupport {
         createMapping("dest", Integer.class, String.class);
 
         sqlService.execute("CREATE JOB testJob AS INSERT INTO dest SELECT * FROM (VALUES (1, '1'))");
-        assertJobStatusEventually(instance().getJet().getJob("testJob"), COMPLETED);
+        Job job = instance().getJet().getJob("testJob");
+        assertThat(job).eventuallyHasStatus(COMPLETED);
 
         assertMapEventually(
                 "dest",
@@ -259,7 +278,8 @@ public class SqlJobManagementTest extends SqlTestSupport {
         createMapping("dest", Integer.class, String.class);
 
         sqlService.execute("CREATE JOB testJob AS SINK INTO dest SELECT v * 2, 'value-' || v FROM src WHERE v > 0");
-        assertJobStatusEventually(instance().getJet().getJob("testJob"), COMPLETED);
+        Job job = instance().getJet().getJob("testJob");
+        assertThat(job).eventuallyHasStatus(COMPLETED);
 
         assertMapEventually(
                 "dest",
@@ -273,7 +293,8 @@ public class SqlJobManagementTest extends SqlTestSupport {
         createMapping("dest", Integer.class, String.class);
 
         sqlService.execute("CREATE JOB testJob AS SINK INTO dest SELECT * FROM (VALUES (1, '1'), (2, '2'))");
-        assertJobStatusEventually(instance().getJet().getJob("testJob"), COMPLETED);
+        Job job = instance().getJet().getJob("testJob");
+        assertThat(job).eventuallyHasStatus(COMPLETED);
 
         assertMapEventually(
                 "dest",
@@ -309,7 +330,7 @@ public class SqlJobManagementTest extends SqlTestSupport {
         sqlService.execute("CREATE JOB testJob AS SINK INTO dest SELECT v, v FROM TABLE(GENERATE_STREAM(100))");
         Job job = instance().getJet().getJob("testJob");
         assertNotNull(job);
-        assertJobStatusEventually(job, RUNNING);
+        assertThat(job).eventuallyHasStatus(RUNNING);
 
         // When
         client.shutdown();
@@ -326,16 +347,16 @@ public class SqlJobManagementTest extends SqlTestSupport {
         sqlService.execute("CREATE JOB testJob AS SINK INTO dest SELECT v, v FROM TABLE(GENERATE_STREAM(100))");
 
         Job job = instance().getJet().getJob("testJob");
-        long executionId = assertJobRunningEventually(instance(), job, null);
+        long executionId = assertThat(job).eventuallyJobRunning(instance(), null);
 
         sqlService.execute("ALTER JOB testJob SUSPEND");
-        assertJobStatusEventually(job, SUSPENDED);
+        assertThat(job).eventuallyHasStatus(SUSPENDED);
 
         sqlService.execute("ALTER JOB testJob RESUME");
-        executionId = assertJobRunningEventually(instance(), job, executionId);
+        executionId = assertThat(job).eventuallyJobRunning(instance(), executionId);
 
         sqlService.execute("ALTER JOB testJob RESTART");
-        assertJobRunningEventually(instance(), job, executionId);
+        assertThat(job).eventuallyJobRunning(instance(), executionId);
     }
 
     @Test
@@ -369,6 +390,14 @@ public class SqlJobManagementTest extends SqlTestSupport {
         assertThatThrownBy(() -> sqlService.execute("ALTER JOB j SUSPEND", "param"))
                 .isInstanceOf(HazelcastSqlException.class)
                 .hasMessage("ALTER JOB does not support dynamic parameters");
+    }
+
+    @Test
+    public void when_alterJobWithUnsupportedOptions_then_fail() {
+        Stream.of("processingGuarantee", "initialSnapshotName").forEach(option ->
+                assertThatThrownBy(() -> sqlService.execute("ALTER JOB j OPTIONS ('" + option + "'='value')"))
+                        .isInstanceOf(HazelcastSqlException.class)
+                        .hasMessageContaining(option + " is not supported for ALTER JOB"));
     }
 
     @Test
@@ -439,6 +468,43 @@ public class SqlJobManagementTest extends SqlTestSupport {
 
         sqlService.execute("DROP MAPPING target");
         assertThat(planCache(instance()).size()).isZero();
+    }
+
+    @Test
+    public void test_listRunningJobWithSqlSummary() {
+        createMapping("dest", Long.class, Long.class);
+        final String sql = "CREATE JOB job as SINK INTO dest SELECT v, v from table(generate_stream(1))";
+        sqlService.execute(sql);
+
+        // When
+        List<JobAndSqlSummary> jobSummaries = ((JetClientInstanceImpl) client().getJet()).getJobAndSqlSummaryList();
+
+        // Then
+        assertThat(jobSummaries).hasOnlyOneElementSatisfying(
+                jobSummary -> {
+                    assertThat(jobSummary.getSqlSummary()).isNotNull();
+                    assertEquals(sql, jobSummary.getSqlSummary().getQuery());
+                    assertEquals(Boolean.TRUE, jobSummary.getSqlSummary().isUnbounded());
+                });
+    }
+
+    @Test
+    public void test_listFinishedJobWithSqlSummary() {
+        createMapping("dest", Long.class, Long.class);
+        final String sql = "CREATE JOB job as SINK INTO dest SELECT v, v from table(generate_series(1, 2))";
+        sqlService.execute(sql);
+        instance().getJet().getJob("job").join();
+
+        // When
+        List<JobAndSqlSummary> jobSummaries = ((JetClientInstanceImpl) client().getJet()).getJobAndSqlSummaryList();
+
+        // Then
+        assertThat(jobSummaries).hasOnlyOneElementSatisfying(
+                jobSummary -> {
+                    assertThat(jobSummary.getSqlSummary()).isNotNull();
+                    assertEquals(sql, jobSummary.getSqlSummary().getQuery());
+                    assertEquals(Boolean.FALSE, jobSummary.getSqlSummary().isUnbounded());
+                });
     }
 
     private void createCompletedJob() {

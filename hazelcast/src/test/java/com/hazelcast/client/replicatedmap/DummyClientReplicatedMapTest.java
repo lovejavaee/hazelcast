@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,11 @@ package com.hazelcast.client.replicatedmap;
 
 import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.client.config.ClientNetworkConfig;
+import com.hazelcast.client.config.RoutingMode;
 import com.hazelcast.client.test.TestHazelcastFactory;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.replicatedmap.ReplicatedMap;
 import com.hazelcast.cluster.Address;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
@@ -46,7 +46,7 @@ import static org.junit.Assert.assertTrue;
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class DummyClientReplicatedMapTest extends HazelcastTestSupport {
 
-    private TestHazelcastFactory hazelcastFactory = new TestHazelcastFactory();
+    private final TestHazelcastFactory hazelcastFactory = new TestHazelcastFactory();
 
     @After
     public void cleanup() {
@@ -81,12 +81,7 @@ public class DummyClientReplicatedMapTest extends HazelcastTestSupport {
         String value = randomString();
         map.put(key, value);
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertFalse(map.isEmpty());
-            }
-        });
+        assertTrueEventually(() -> assertFalse(map.isEmpty()));
     }
 
     @Test
@@ -104,13 +99,10 @@ public class DummyClientReplicatedMapTest extends HazelcastTestSupport {
 
         map.put(key, value);
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                Collection<String> keySet = map.keySet();
-                assertEquals(1, keySet.size());
-                assertEquals(key, keySet.iterator().next());
-            }
+        assertTrueEventually(() -> {
+            Collection<String> keySet = map.keySet();
+            assertEquals(1, keySet.size());
+            assertEquals(key, keySet.iterator().next());
         });
     }
 
@@ -129,15 +121,12 @@ public class DummyClientReplicatedMapTest extends HazelcastTestSupport {
 
         map.put(key, value);
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                Set<Map.Entry<String, String>> entries = map.entrySet();
-                assertEquals(1, entries.size());
-                Map.Entry<String, String> entry = entries.iterator().next();
-                assertEquals(key, entry.getKey());
-                assertEquals(value, entry.getValue());
-            }
+        assertTrueEventually(() -> {
+            Set<Map.Entry<String, String>> entries = map.entrySet();
+            assertEquals(1, entries.size());
+            Map.Entry<String, String> entry = entries.iterator().next();
+            assertEquals(key, entry.getKey());
+            assertEquals(value, entry.getValue());
         });
     }
 
@@ -156,13 +145,10 @@ public class DummyClientReplicatedMapTest extends HazelcastTestSupport {
 
         map.put(key, value);
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                Collection<String> values = map.values();
-                assertEquals(1, values.size());
-                assertEquals(value, values.iterator().next());
-            }
+        assertTrueEventually(() -> {
+            Collection<String> values = map.values();
+            assertEquals(1, values.size());
+            assertEquals(value, values.iterator().next());
         });
     }
 
@@ -195,12 +181,7 @@ public class DummyClientReplicatedMapTest extends HazelcastTestSupport {
         final String value = randomString();
         map.put(key, value);
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertTrue(map.containsValue(value));
-            }
-        });
+        assertTrueEventually(() -> assertTrue(map.containsValue(value)));
     }
 
     @Test
@@ -216,12 +197,7 @@ public class DummyClientReplicatedMapTest extends HazelcastTestSupport {
         String value = randomString();
         map.put(key, value);
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertEquals(1, map.size());
-            }
-        });
+        assertTrueEventually(() -> assertEquals(1, map.size()));
     }
 
     @Test
@@ -238,12 +214,7 @@ public class DummyClientReplicatedMapTest extends HazelcastTestSupport {
         map.put(key, value);
         map.clear();
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertEquals(0, map.size());
-            }
-        });
+        assertTrueEventually(() -> assertEquals(0, map.size()));
     }
 
     @Test
@@ -260,12 +231,7 @@ public class DummyClientReplicatedMapTest extends HazelcastTestSupport {
         map.put(key, value);
         map.remove(key);
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertEquals(0, map.size());
-            }
-        });
+        assertTrueEventually(() -> assertEquals(0, map.size()));
     }
 
     @Test
@@ -279,7 +245,7 @@ public class DummyClientReplicatedMapTest extends HazelcastTestSupport {
         int partitionId = instance1.getPartitionService().getPartition(key).getPartitionId();
         setPartitionId(map, partitionId);
         String value = randomString();
-        HashMap<String, String> m = new HashMap<String, String>();
+        HashMap<String, String> m = new HashMap<>();
         m.put(key, value);
         map.putAll(m);
 
@@ -291,7 +257,7 @@ public class DummyClientReplicatedMapTest extends HazelcastTestSupport {
         String addressString = address.getHost() + ":" + address.getPort();
         ClientConfig dummyClientConfig = new ClientConfig();
         ClientNetworkConfig networkConfig = new ClientNetworkConfig();
-        networkConfig.setSmartRouting(false);
+        networkConfig.getClusterRoutingConfig().setRoutingMode(RoutingMode.SINGLE_MEMBER);
         networkConfig.addAddress(addressString);
         dummyClientConfig.setNetworkConfig(networkConfig);
         return dummyClientConfig;

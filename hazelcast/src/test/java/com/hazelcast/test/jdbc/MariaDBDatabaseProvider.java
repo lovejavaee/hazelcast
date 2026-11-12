@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,26 +16,44 @@
 
 package com.hazelcast.test.jdbc;
 
-import org.testcontainers.jdbc.ContainerDatabaseDriver;
+import org.testcontainers.containers.MariaDBContainer;
 
-public class MariaDBDatabaseProvider implements TestDatabaseProvider {
+import javax.sql.CommonDataSource;
+import java.util.Arrays;
 
-    private static final int LOGIN_TIMEOUT = 120;
+import static java.util.stream.Collectors.joining;
 
-    private String jdbcUrl;
+public class MariaDBDatabaseProvider extends JdbcDatabaseProvider<MariaDBContainer<?>> {
+
+    public static final String TEST_MARIADB_VERSION = System.getProperty("test.mariadb.version", "10.3");
+
 
     @Override
-    public String createDatabase(String dbName) {
-        jdbcUrl = "jdbc:tc:mariadb:10.3:///" + dbName + "?TC_DAEMON=true&sessionVariables=sql_mode=ANSI";
-        waitForDb(jdbcUrl, LOGIN_TIMEOUT);
-        return jdbcUrl;
+    public CommonDataSource createDataSource(boolean xa) {
+        throw new RuntimeException("Not supported");
+    }
+
+    @SuppressWarnings("resource")
+    @Override
+    MariaDBContainer<?> createContainer(String dbName) {
+        return new MariaDBContainer<>("mariadb:" + TEST_MARIADB_VERSION)
+                .withDatabaseName(dbName)
+                .withUsername(user())
+                .withUrlParam("user", user())
+                .withUrlParam("password", password());
     }
 
     @Override
-    public void shutdown() {
-        if (jdbcUrl != null) {
-            ContainerDatabaseDriver.killContainer(jdbcUrl);
-            jdbcUrl = null;
-        }
+    public String user() {
+        return "user";
+    }
+
+
+    @Override
+    public String quote(String[] parts) {
+        return Arrays.stream(parts)
+                     .map(part -> '`' + part.replaceAll("`", "``") + '`')
+                     .collect(joining("."));
+
     }
 }

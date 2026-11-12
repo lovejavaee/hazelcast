@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ public class GetEntryViewOperation extends ReadonlyKeyBasedMapOperation implemen
 
     @Override
     protected void runInternal() {
-        Record record = recordStore.getRecordOrNull(dataKey);
+        Record record = recordStore.getRecordOrNull(dataKey, false);
         if (record != null) {
             Data value = mapServiceContext.toData(record.getValue());
             ExpiryMetadata expiryMetadata = recordStore.getExpirySystem().getExpiryMetadata(dataKey);
@@ -53,6 +53,7 @@ public class GetEntryViewOperation extends ReadonlyKeyBasedMapOperation implemen
         return new LockWaitNotifyKey(getServiceNamespace(), dataKey);
     }
 
+    @Override
     public boolean shouldWait() {
         return recordStore.isTransactionallyLocked(dataKey)
                 && !recordStore.canAcquireLock(dataKey, getCallerUuid(), getThreadId());

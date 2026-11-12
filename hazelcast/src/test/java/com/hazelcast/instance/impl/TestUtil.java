@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +19,11 @@ package com.hazelcast.instance.impl;
 import com.hazelcast.client.Client;
 import com.hazelcast.cluster.Endpoint;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.spi.impl.NodeEngineThreadLocalContext;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.serialization.SerializationService;
 import com.hazelcast.internal.serialization.impl.DefaultSerializationServiceBuilder;
+import com.hazelcast.internal.util.executor.HazelcastManagedThread;
 import com.hazelcast.jet.retry.IntervalFunction;
 import com.hazelcast.jet.retry.impl.IntervalFunctions;
 import com.hazelcast.partition.Partition;
@@ -36,8 +38,6 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
-import static com.hazelcast.internal.util.EmptyStatement.ignore;
-import static com.hazelcast.internal.util.JVMUtil.upcast;
 import static com.hazelcast.test.HazelcastTestSupport.sleepMillis;
 import static java.lang.reflect.Proxy.isProxyClass;
 import static org.junit.Assert.fail;
@@ -94,10 +94,9 @@ public final class TestUtil {
      *                                  e.g. when called with a Hazelcast client instance
      */
     public static HazelcastInstanceImpl getHazelcastInstanceImpl(HazelcastInstance hz) {
-        if (hz instanceof HazelcastInstanceImpl) {
-            return (HazelcastInstanceImpl) hz;
-        } else if (hz instanceof HazelcastInstanceProxy) {
-            HazelcastInstanceProxy proxy = (HazelcastInstanceProxy) hz;
+        if (hz instanceof HazelcastInstanceImpl impl) {
+            return impl;
+        } else if (hz instanceof HazelcastInstanceProxy proxy) {
             if (proxy.original != null) {
                 return proxy.original;
             }
@@ -160,7 +159,7 @@ public final class TestUtil {
             return;
         }
         final int maxRetryCount = 15;
-        IntervalFunction intervalFunction = IntervalFunctions.exponentialBackoffWithCap(10L, 2, 1000L);
+        IntervalFunction intervalFunction = IntervalFunctions.exponentialBackoffWithCap(10L, 2, 1500L);
         PartitionService ps = instance.getPartitionService();
 
         for (Partition partition : ps.getPartitions()) {
@@ -174,6 +173,32 @@ public final class TestUtil {
                 ++i;
             }
         }
+    }
+
+    /**
+     * Sets up current thread to be able to support User Code Namespaces for given instance.
+     * Useful when namespace-aware methods are invoked not on partition threads
+     * but directly in test thread. Should not be invoked from Hazelcast instance threads
+     * which should have this setup done automatically.
+     *
+     * @implNote This method is {@link com.hazelcast.test.annotation.CompatibilityTest}-aware and sets up
+     *           UCN thread locals from appropriate classloader.
+     *
+     * @param hz the Hazelcast instance
+     */
+    public static void setupNamespacesForCurrentThread(HazelcastInstance hz) {
+        assert !(Thread.currentThread() instanceof HazelcastManagedThread) : "Should not be invoked on Hazelcast threads";
+
+        if (isProxyClass(hz.getClass())) {
+            // This is a shortcut.
+            // Currently, onThreadStart only sets up the NodeEngineThreadLocalContext which is exactly what we need.
+            // If it starts doing too much, NodeEngineThreadLocalContext.declareNodeEngineReference
+            // from appropriate HazelcastAPIDelegatingClassloader will have to be invoked reflectively.
+            HazelcastStarter.getNode(hz).getNodeExtension().onThreadStart(Thread.currentThread());
+        } else {
+            NodeEngineThreadLocalContext.declareNodeEngineReference(getNode(hz).getNodeEngine());
+        }
+
     }
 
     /**
@@ -214,28 +239,15 @@ public final class TestUtil {
      * @return {@code true} if the port is available in UDP and TCP, {@code false} otherwise
      */
     public static boolean isPortAvailable(int port) {
-        ServerSocket ss = null;
-        DatagramSocket ds = null;
-        try {
-            ss = new ServerSocket(port);
+        try (ServerSocket ss = new ServerSocket(port)) {
             ss.setReuseAddress(true);
-            ds = new DatagramSocket(port);
-            ds.setReuseAddress(true);
-            return true;
+
+            try (DatagramSocket ds = new DatagramSocket(port)) {
+                ds.setReuseAddress(true);
+                return true;
+            }
         } catch (IOException e) {
             return false;
-        } finally {
-            // ServerSocket is not Closeable in Java 6, so we cannot use IOUtil.closeResource() yet
-            if (ds != null) {
-                ds.close();
-            }
-            try {
-                if (ss != null) {
-                    ss.close();
-                }
-            } catch (IOException e) {
-                ignore(e);
-            }
         }
     }
 
@@ -255,7 +267,7 @@ public final class TestUtil {
     }
 
     public static byte[] byteBufferToBytes(ByteBuffer buffer) {
-        upcast(buffer).flip();
+        buffer.flip();
         byte[] requestBytes = new byte[buffer.limit()];
         buffer.get(requestBytes);
         return requestBytes;

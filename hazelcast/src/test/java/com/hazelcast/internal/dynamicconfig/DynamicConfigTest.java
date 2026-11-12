@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,6 +30,11 @@ import com.hazelcast.config.CacheSimpleEntryListenerConfig;
 import com.hazelcast.config.CardinalityEstimatorConfig;
 import com.hazelcast.config.Config;
 import com.hazelcast.config.DataConnectionConfig;
+import com.hazelcast.config.NearCacheConfig;
+import com.hazelcast.config.NearCachePreloaderConfig;
+import com.hazelcast.internal.diagnostics.Diagnostics;
+import com.hazelcast.internal.diagnostics.DiagnosticsConfig;
+import com.hazelcast.internal.diagnostics.DiagnosticsOutputType;
 import com.hazelcast.config.DurableExecutorConfig;
 import com.hazelcast.config.EntryListenerConfig;
 import com.hazelcast.config.EventJournalConfig;
@@ -83,13 +88,16 @@ import com.hazelcast.test.annotation.QuickTest;
 import com.hazelcast.topic.Message;
 import com.hazelcast.topic.MessageListener;
 import com.hazelcast.topic.TopicOverloadPolicy;
+import org.assertj.core.api.Assertions;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
 import java.io.Serializable;
+import java.nio.file.Path;
 import java.util.Collections;
+import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -97,9 +105,12 @@ import java.util.function.BiFunction;
 
 import static com.hazelcast.config.MaxSizePolicy.ENTRY_COUNT;
 import static com.hazelcast.config.MultiMapConfig.ValueCollectionType.LIST;
+import static com.hazelcast.dataconnection.impl.DataConnectionTestUtil.DUMMY_TYPE;
 import static com.hazelcast.test.TestConfigUtils.NON_DEFAULT_BACKUP_COUNT;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
@@ -109,10 +120,10 @@ public class DynamicConfigTest extends HazelcastTestSupport {
     protected static final String NON_DEFAULT_MERGE_POLICY = "AnotherMergePolicy";
     protected static final int NON_DEFAULT_MERGE_BATCH_SIZE = 31415;
 
-    private String name = randomString();
+    private final String name = randomString();
     private HazelcastInstance[] members;
     // add***Config is invoked on driver instance
-    private HazelcastInstance driver;
+    protected HazelcastInstance driver;
 
     @Before
     public void setup() {
@@ -122,17 +133,23 @@ public class DynamicConfigTest extends HazelcastTestSupport {
 
     protected HazelcastInstance[] newInstances() {
         TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(INSTANCE_COUNT);
-        return factory.newInstances();
+        return factory.newInstances(smallInstanceConfig());
     }
 
     protected HazelcastInstance getDriver() {
         return members[members.length - 1];
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testAddWanReplicationConfigIsNotSupported() {
         WanReplicationConfig wanReplicationConfig = new WanReplicationConfig();
-        getDriver().getConfig().addWanReplicationConfig(wanReplicationConfig);
+        wanReplicationConfig.setName(name);
+
+        UnsupportedOperationException exception = Assertions.catchThrowableOfType(
+                () -> getDriver().getConfig().addWanReplicationConfig(wanReplicationConfig),
+                UnsupportedOperationException.class);
+        assertNotNull(exception);
+        assertThat(exception).hasMessage("Adding new WAN config is not supported.");
     }
 
     @Test
@@ -208,7 +225,7 @@ public class DynamicConfigTest extends HazelcastTestSupport {
 
     @Test
     public void testDurableExecutorConfig() {
-        DurableExecutorConfig config = new DurableExecutorConfig(name, 7, 3, 10, false);
+        DurableExecutorConfig config = new DurableExecutorConfig(name, 7, 3, 10, false, null);
 
         driver.getConfig().addDurableExecutorConfig(config);
 
@@ -219,7 +236,7 @@ public class DynamicConfigTest extends HazelcastTestSupport {
     public void testScheduledExecutorConfig() {
         ScheduledExecutorConfig config = new ScheduledExecutorConfig(name, 2, 3, 10, null,
                 new MergePolicyConfig(NON_DEFAULT_MERGE_POLICY, NON_DEFAULT_MERGE_BATCH_SIZE),
-                ScheduledExecutorConfig.CapacityPolicy.PER_NODE, false);
+                ScheduledExecutorConfig.CapacityPolicy.PER_NODE, false, null);
 
         driver.getConfig().addScheduledExecutorConfig(config);
 
@@ -445,6 +462,52 @@ public class DynamicConfigTest extends HazelcastTestSupport {
     public void testMapConfig_withMapPartitionLostListener_byImplementation() {
         MapConfig config = getMapConfig()
                 .addMapPartitionLostListenerConfig(getMapPartitionLostListenerConfig_byImplementation());
+
+        driver.getConfig().addMapConfig(config);
+
+        assertConfigurationsEqualOnAllMembers(config);
+    }
+
+    @Test
+    public void testMapConfig_withDifferentOrderOfIndexes() {
+        MapConfig config = new MapConfig(name);
+        IndexConfig idx1 = new IndexConfig(IndexType.SORTED, "foo");
+        idx1.setName("idx1");
+        IndexConfig idx2 = new IndexConfig(IndexType.SORTED, "bar");
+        idx2.setName("idx2");
+        config.setIndexConfigs(List.of(idx1, idx2));
+
+        MapConfig reordered = new MapConfig(name);
+        reordered.setIndexConfigs(List.of(idx2, idx1));
+
+        driver.getConfig().addMapConfig(config);
+        assertThatNoException().isThrownBy(() -> driver.getConfig().addMapConfig(reordered));
+
+        assertConfigurationsEqualOnAllMembers(config);
+        assertConfigurationsEqualOnAllMembers(reordered);
+    }
+
+    @Test
+    public void testMapConfig_withNearCacheConfig() {
+        MapConfig config = getMapConfig();
+        NearCacheConfig nearCacheConfig = new NearCacheConfig(name)
+                .setInMemoryFormat(InMemoryFormat.OBJECT)
+                .setSerializeKeys(true)
+                .setCacheLocalEntries(true)
+                .setInvalidateOnChange(true)
+                .setMaxIdleSeconds(100)
+                .setTimeToLiveSeconds(200)
+                .setLocalUpdatePolicy(NearCacheConfig.LocalUpdatePolicy.CACHE_ON_UPDATE)
+                .setEvictionConfig(new EvictionConfig()
+                        .setEvictionPolicy(EvictionPolicy.NONE)
+                        .setSize(1000)
+                        .setMaxSizePolicy(MaxSizePolicy.ENTRY_COUNT))
+                .setPreloaderConfig(new NearCachePreloaderConfig()
+                        .setEnabled(false)
+                        .setDirectory("/test")
+                        .setStoreInitialDelaySeconds(1)
+                        .setStoreIntervalSeconds(1));
+        config.setNearCacheConfig(nearCacheConfig);
 
         driver.getConfig().addMapConfig(config);
 
@@ -682,12 +745,42 @@ public class DynamicConfigTest extends HazelcastTestSupport {
         properties.setProperty("prop2", "val2");
         DataConnectionConfig dataConnectionConfig = new DataConnectionConfig()
                 .setName("some-name")
-                .setType("dummy")
+                .setType(DUMMY_TYPE)
                 .setProperties(properties);
 
 
         driver.getConfig().addDataConnectionConfig(dataConnectionConfig);
         assertConfigurationsEqualOnAllMembers(dataConnectionConfig);
+    }
+
+    /**
+     * Reproducer for <a href="https://github.com/hazelcast/hazelcast/issues/24533">GH issue</a>.
+     */
+    @Test
+    public void testDataConnectionConfig_missingType() {
+        DataConnectionConfig dataConnectionConfig = new DataConnectionConfig();
+
+        Exception ex = assertThrows(IllegalArgumentException.class,
+                () -> driver.getConfig().addDataConnectionConfig(dataConnectionConfig));
+        assertThat(ex.getMessage())
+                .contains("Data connection type must be non-null and contain text")
+                .contains("Data connection name must be non-null and contain text");
+    }
+
+    @Test
+    public void testDiagnosticsConfig() {
+        DiagnosticsConfig config = new DiagnosticsConfig()
+                .setEnabled(true)
+                .setMaxRolledFileSizeInMB(30)
+                .setMaxRolledFileCount(5)
+                .setIncludeEpochTime(false)
+                .setLogDirectory(Path.of(Diagnostics.DIRECTORY.getDefaultValue(), "logs").toString())
+                .setFileNamePrefix("fileNamePrefix")
+                .setAutoOffDurationInMinutes(5)
+                .setOutputType(DiagnosticsOutputType.STDOUT);
+
+        ((DynamicConfigurationAwareConfig) driver.getConfig()).setDiagnosticsConfig(config);
+        assertConfigurationsEqualOnAllMembers(config);
     }
 
     private void assertConfigurationsEqualOnAllMembers(DataConnectionConfig expectedConfig) {
@@ -754,6 +847,13 @@ public class DynamicConfigTest extends HazelcastTestSupport {
         assertConfigurationsEqualOnAllMembers(reliableTopicConfig, Config::getReliableTopicConfig);
     }
 
+    private void assertConfigurationsEqualOnAllMembers(DiagnosticsConfig diagnosticsConfig) {
+        for (HazelcastInstance instance : members) {
+            DiagnosticsConfig registeredConfig = ((DynamicConfigurationAwareConfig) instance.getConfig()).getDiagnosticsConfig();
+            assertThat(registeredConfig).isEqualTo(diagnosticsConfig);
+        }
+    }
+
     private <T extends NamedConfig> void assertConfigurationsEqualOnAllMembers(T expectedConfig, BiFunction<Config, String, T> getterByName) {
         for (HazelcastInstance instance : members) {
             T registeredConfig = getterByName.apply(instance.getConfig(), expectedConfig.getName());
@@ -799,12 +899,6 @@ public class DynamicConfigTest extends HazelcastTestSupport {
                 .setEvictionPolicy(EvictionPolicy.RANDOM);
     }
 
-    private EvictionConfig getEvictionConfigByClassName() {
-        return new EvictionConfig().setSize(39)
-                .setMaxSizePolicy(ENTRY_COUNT)
-                .setComparatorClassName("com.hazelcast.Comparator");
-    }
-
     private EvictionConfig getEvictionConfigByImplementation() {
         return new EvictionConfig().setSize(39)
                 .setMaxSizePolicy(ENTRY_COUNT)
@@ -841,7 +935,8 @@ public class DynamicConfigTest extends HazelcastTestSupport {
                 .setMetadataPolicy(MetadataPolicy.OFF)
                 .setReadBackupData(true)
                 .setStatisticsEnabled(false)
-                .setPerEntryStatsEnabled(true);
+                .setPerEntryStatsEnabled(true)
+                .setOversizedEntryThresholdBytes(2048);
 
         mapConfig.getEvictionConfig()
                 .setEvictionPolicy(EvictionPolicy.RANDOM)
@@ -1076,10 +1171,10 @@ public class DynamicConfigTest extends HazelcastTestSupport {
         }
     }
 
-    public static class SampleMessageListener implements MessageListener, Serializable {
+    private static class SampleMessageListener implements MessageListener<Object>, Serializable {
 
         @Override
-        public void onMessage(Message message) {
+        public void onMessage(Message<Object> message) {
         }
 
         @Override
@@ -1088,7 +1183,7 @@ public class DynamicConfigTest extends HazelcastTestSupport {
         }
     }
 
-    public static class SampleExecutor implements Executor, Serializable {
+    private static class SampleExecutor implements Executor, Serializable {
 
         @Override
         public void execute(Runnable command) {

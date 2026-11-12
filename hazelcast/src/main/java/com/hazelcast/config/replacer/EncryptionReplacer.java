@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,12 @@
 
 package com.hazelcast.config.replacer;
 
-import com.hazelcast.internal.nio.IOUtil;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
+import javax.annotation.Nullable;
 import javax.xml.namespace.NamespaceContext;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.xpath.XPath;
@@ -44,7 +44,7 @@ import static com.hazelcast.internal.nio.IOUtil.closeResource;
 import static com.hazelcast.internal.util.ExceptionUtil.rethrow;
 import static com.hazelcast.internal.util.Preconditions.checkFalse;
 import static com.hazelcast.internal.util.Preconditions.checkPositive;
-import static com.hazelcast.internal.util.StringUtil.trim;
+import static com.hazelcast.internal.util.StringUtil.strip;
 import static com.hazelcast.internal.util.XmlUtil.getNsAwareDocumentBuilderFactory;
 import static java.lang.String.format;
 
@@ -61,7 +61,7 @@ import static java.lang.String.format;
 public class EncryptionReplacer extends AbstractPbeReplacer {
 
     /**
-     * Replacer property name to configure {@code true}/{@code false} flag contolling if users properties should be used as part
+     * Replacer property name to configure {@code true}/{@code false} flag controlling if users properties should be used as part
      * of the encryption password.
      */
     public static final String PROPERTY_PASSWORD_USER_PROPERTIES = "passwordUserProperties";
@@ -103,11 +103,8 @@ public class EncryptionReplacer extends AbstractPbeReplacer {
         try {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             if (passwordFile != null) {
-                FileInputStream fis = new FileInputStream(passwordFile);
-                try {
-                    baos.write(IOUtil.toByteArray(fis));
-                } finally {
-                    IOUtil.closeResource(fis);
+                try (FileInputStream fis = new FileInputStream(passwordFile)) {
+                    fis.transferTo(baos);
                 }
             }
             if (passwordUserProperties) {
@@ -131,7 +128,7 @@ public class EncryptionReplacer extends AbstractPbeReplacer {
     public static final void main(String... args) throws Exception {
         if (args == null || args.length < 1 || args.length > 2) {
             System.err.println("Usage:");
-            System.err.println("\tjava -D<propertyName>=<propertyValue>  " + EncryptionReplacer.class.getName()
+            System.err.println("\tjava -D<propertyName>=<propertyValue> " + EncryptionReplacer.class.getName()
                     + " \"<String To Encrypt>\" [iterations]");
             System.err.println();
             System.err.println("The replacer configuration can be loaded either from hazelcast/hazelcast-client XML file:");
@@ -220,12 +217,13 @@ public class EncryptionReplacer extends AbstractPbeReplacer {
             String name = cleanNodeName(n);
             if ("property".equals(name)) {
                 String propertyName = getTextContent(n.getAttributes().getNamedItem("name"));
-                String value = trim(getTextContent(n));
+                String value = strip(getTextContent(n));
                 properties.setProperty(propertyName, value == null ? "" : value);
             }
         }
     }
 
+    @Nullable
     private static String getTextContent(Node node) {
         try {
             return node.getTextContent();
@@ -234,6 +232,7 @@ public class EncryptionReplacer extends AbstractPbeReplacer {
         }
     }
 
+    @Nullable
     private static String getTextContentOld(Node node) {
         Node child = node.getFirstChild();
         if (child != null) {

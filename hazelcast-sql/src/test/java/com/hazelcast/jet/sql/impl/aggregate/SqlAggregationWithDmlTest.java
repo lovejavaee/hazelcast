@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,11 +20,14 @@ import com.hazelcast.jet.Job;
 import com.hazelcast.jet.kafka.impl.KafkaTestSupport;
 import com.hazelcast.jet.sql.SqlTestSupport;
 import com.hazelcast.sql.SqlService;
+import com.hazelcast.test.HazelcastSerialClassRunner;
 import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 
+import static com.hazelcast.jet.core.JobAssertions.assertThat;
 import static com.hazelcast.jet.core.JobStatus.RUNNING;
 import static org.junit.Assert.assertNotNull;
 
@@ -36,6 +39,7 @@ import static org.junit.Assert.assertNotNull;
  for those. The reason is that we currently only support INSERT and SINK in CREATE
  JOB command, and a streaming DML must use CREATE JOB.
  */
+@RunWith(HazelcastSerialClassRunner.class)
 public class SqlAggregationWithDmlTest extends SqlTestSupport {
 
     private static KafkaTestSupport kafkaTestSupport;
@@ -54,7 +58,7 @@ public class SqlAggregationWithDmlTest extends SqlTestSupport {
     @Before
     public void before() {
         createMapping("foo_map", Long.class, Long.class);
-        sql.execute("CREATE MAPPING foo_topic(\n" +
+        sql.executeUpdate("CREATE MAPPING foo_topic(\n" +
                 "    tick BIGINT,\n" +
                 "    ticker VARCHAR,\n" +
                 "    price INT)\n" +
@@ -81,7 +85,7 @@ public class SqlAggregationWithDmlTest extends SqlTestSupport {
     }
 
     private void test_sink_insert(String command) {
-        sql.execute("CREATE JOB jobAVG AS " +
+        sql.executeUpdate("CREATE JOB jobAVG AS " +
                 command + " INTO foo_map" +
                 " SELECT window_start, window_end FROM " +
                 "TABLE(TUMBLE(" +
@@ -93,6 +97,6 @@ public class SqlAggregationWithDmlTest extends SqlTestSupport {
 
         Job job = instance().getJet().getJob("jobAVG");
         assertNotNull(job);
-        assertJobStatusEventually(job, RUNNING);
+        assertThat(job).eventuallyHasStatus(RUNNING);
     }
 }

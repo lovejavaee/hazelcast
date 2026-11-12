@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,12 +31,12 @@ import com.hazelcast.cp.internal.raftop.metadata.CreateRaftGroupOp;
 import com.hazelcast.cp.internal.raftop.metadata.GetActiveCPMembersOp;
 import com.hazelcast.cp.internal.raftop.metadata.GetRaftGroupOp;
 import com.hazelcast.cp.internal.raftop.metadata.TriggerDestroyRaftGroupOp;
+import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.instance.impl.Node;
 import com.hazelcast.instance.impl.NodeState;
 import com.hazelcast.internal.util.ExceptionUtil;
 import com.hazelcast.internal.util.RandomPicker;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
-import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.Test;
@@ -63,20 +63,16 @@ import static com.hazelcast.cp.internal.raft.impl.RaftUtil.getSnapshotEntry;
 import static com.hazelcast.internal.cluster.impl.ClusterDataSerializerHook.FINALIZE_JOIN;
 import static com.hazelcast.internal.cluster.impl.ClusterDataSerializerHook.F_ID;
 import static com.hazelcast.test.Accessors.getAddress;
-import static com.hazelcast.test.Accessors.getNode;
-import static com.hazelcast.test.Accessors.getNodeEngineImpl;
 import static com.hazelcast.test.PacketFiltersUtil.dropOperationsBetween;
 import static com.hazelcast.test.PacketFiltersUtil.dropOperationsToAddresses;
 import static com.hazelcast.test.PacketFiltersUtil.resetPacketFiltersFrom;
 import static java.util.Collections.singletonList;
-import static org.hamcrest.Matchers.hasItem;
-import static org.hamcrest.Matchers.not;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -84,7 +80,7 @@ import static org.junit.Assert.fail;
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class MetadataRaftGroupTest extends HazelcastRaftTestSupport {
 
-    private HazelcastInstance[] instances;
+    protected HazelcastInstance[] instances;
 
     @Test
     public void when_clusterStartsWithNonCPNodes_then_metadataClusterIsInitialized() {
@@ -544,34 +540,29 @@ public class MetadataRaftGroupTest extends HazelcastRaftTestSupport {
             }
         }
         assertNotNull(invocationService);
+        RaftInvocationManager finalInvocationService = invocationService;
 
         factory.getInstance(endpoint.getAddress()).shutdown();
 
         CPGroupId metadataGroupId = getMetadataGroupId(aliveInstance);
-        InternalCompletableFuture<List<CPMember>> f1 = invocationService.query(metadataGroupId, new GetActiveCPMembersOp(),
-                LINEARIZABLE);
 
-        List<CPMember> activeEndpoints = f1.get();
-        assertThat(activeEndpoints, not(hasItem(endpoint)));
+        assertTrueEventually(() -> {
+            List<CPMember> activeEndpoints = finalInvocationService
+                    .<List<CPMember>>query(metadataGroupId, new GetActiveCPMembersOp(), LINEARIZABLE).get();
+            assertThat(activeEndpoints).isNotEmpty().doesNotContain(endpoint);
 
-        InternalCompletableFuture<CPGroup> f2 = invocationService.query(metadataGroupId, new GetRaftGroupOp(metadataGroupId),
-                LINEARIZABLE);
+            CPGroup metadataGroup = finalInvocationService
+                    .<CPGroup>query(metadataGroupId, new GetRaftGroupOp(metadataGroupId), LINEARIZABLE).get();
+            assertThat(metadataGroup.members()).doesNotContain(endpoint).hasSize(metadataGroupSize);
 
-        InternalCompletableFuture<CPGroup> f3 = invocationService.query(metadataGroupId, new GetRaftGroupOp(groupId1),
-                LINEARIZABLE);
+            CPGroup atomicLongGroup1 = finalInvocationService
+                    .<CPGroup>query(metadataGroupId, new GetRaftGroupOp(groupId1), LINEARIZABLE).get();
+            assertThat(atomicLongGroup1.members()).doesNotContain(endpoint).hasSize(atomicLong1GroupSize);
 
-        InternalCompletableFuture<CPGroup> f4 = invocationService.query(metadataGroupId, new GetRaftGroupOp(groupId2),
-                LINEARIZABLE);
-
-        CPGroup metadataGroup = f2.get();
-        assertFalse(metadataGroup.members().contains(endpoint));
-        assertEquals(metadataGroupSize, metadataGroup.members().size());
-        CPGroup atomicLongGroup1 = f3.get();
-        assertFalse(atomicLongGroup1.members().contains(endpoint));
-        assertEquals(atomicLong1GroupSize, atomicLongGroup1.members().size());
-        CPGroup atomicLongGroup2 = f4.get();
-        assertFalse(atomicLongGroup2.members().contains(endpoint));
-        assertEquals(cpNodeCount - 1, atomicLongGroup2.members().size());
+            CPGroup atomicLongGroup2 = finalInvocationService
+                    .<CPGroup>query(metadataGroupId, new GetRaftGroupOp(groupId2), LINEARIZABLE).get();
+            assertThat(atomicLongGroup2.members()).doesNotContain(endpoint).hasSize(cpNodeCount - 1);
+        });
     }
 
     @Test
@@ -599,8 +590,8 @@ public class MetadataRaftGroupTest extends HazelcastRaftTestSupport {
         HazelcastInstance leader = getInstance(leaderNode.getLocalMember());
         CPGroup group3 = queryRaftGroupLocally(leader, groupId3);
         assertNotNull(group3);
-        assertThat(group3.members(), not(hasItem(endpoint3)));
-        assertThat(group3.members(), not(hasItem(endpoint4)));
+        assertThat(group3.members()).isNotEmpty().doesNotContain(endpoint3);
+        assertThat(group3.members()).isNotEmpty().doesNotContain(endpoint4);
 
         CPGroup group4 = queryRaftGroupLocally(leader, groupId4);
         assertNotNull(group4);
@@ -733,7 +724,7 @@ public class MetadataRaftGroupTest extends HazelcastRaftTestSupport {
         assertNotEquals(groupId1, groupId2);
     }
 
-    private CPGroupId createNewRaftGroup(HazelcastInstance instance, String name, int groupSize) {
+    protected CPGroupId createNewRaftGroup(HazelcastInstance instance, String name, int groupSize) {
         RaftInvocationManager invocationManager = getRaftService(instance).getInvocationManager();
         try {
             return invocationManager.createRaftGroup(name, groupSize).get();

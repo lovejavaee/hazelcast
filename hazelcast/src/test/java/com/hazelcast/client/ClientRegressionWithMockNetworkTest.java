@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.hazelcast.client;
 import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.client.config.ClientSecurityConfig;
 import com.hazelcast.client.config.ConnectionRetryConfig;
+import com.hazelcast.client.config.RoutingMode;
 import com.hazelcast.client.impl.spi.impl.ClientExecutionServiceImpl;
 import com.hazelcast.client.properties.ClientProperty;
 import com.hazelcast.client.test.TestHazelcastFactory;
@@ -36,7 +37,7 @@ import com.hazelcast.core.LifecycleEvent;
 import com.hazelcast.core.LifecycleListener;
 import com.hazelcast.logging.Logger;
 import com.hazelcast.map.IMap;
-import com.hazelcast.map.MapInterceptor;
+import com.hazelcast.map.MapInterceptorAdaptor;
 import com.hazelcast.map.listener.MapListener;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
@@ -54,14 +55,12 @@ import com.hazelcast.test.annotation.SlowTest;
 import com.hazelcast.topic.ITopic;
 import com.hazelcast.topic.MessageListener;
 import org.junit.After;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
-import org.junit.rules.TestName;
 import org.junit.runner.RunWith;
 
 import java.io.IOException;
+import java.io.Serial;
 import java.util.Collection;
 import java.util.LinkedList;
 import java.util.UUID;
@@ -90,19 +89,11 @@ import static org.mockito.Mockito.mock;
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class ClientRegressionWithMockNetworkTest extends HazelcastTestSupport {
 
-    @Rule
-    public ExpectedException expectedException = ExpectedException.none();
-
-    @Rule
-    public TestName name = new TestName();
-
     private final TestHazelcastFactory hazelcastFactory = new TestHazelcastFactory();
 
     @After
     public void cleanup() {
         hazelcastFactory.terminateAll();
-
-        assertNoRunningInstancesEventually(name.getMethodName(), hazelcastFactory);
     }
 
     @Test
@@ -134,13 +125,13 @@ public class ClientRegressionWithMockNetworkTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testOperationRedo_smartRoutingDisabled() {
+    public void testOperationRedo_allMembersRoutingDisabled() {
         HazelcastInstance hz1 = hazelcastFactory.newHazelcastInstance();
         hazelcastFactory.newHazelcastInstance();
 
         ClientConfig clientConfig = new ClientConfig();
         clientConfig.getNetworkConfig().setRedoOperation(true);
-        clientConfig.getNetworkConfig().setSmartRouting(false);
+        clientConfig.getNetworkConfig().getClusterRoutingConfig().setRoutingMode(RoutingMode.SINGLE_MEMBER);
         HazelcastInstance client = hazelcastFactory.newHazelcastClient(clientConfig);
 
         Thread thread = new Thread(() -> {
@@ -251,13 +242,13 @@ public class ClientRegressionWithMockNetworkTest extends HazelcastTestSupport {
                 Logger.getLogger(getClass()).info("stateChanged: " + event);
                 LifecycleState eventState = event.getState();
 
-                if (CLIENT_CONNECTED.equals(eventState)) {
+                if (CLIENT_CONNECTED == eventState) {
                     if (!stateAtomicReference.compareAndSet(CLIENT_DISCONNECTED, CLIENT_CONNECTED)) {
                         //fail the test
                         stateAtomicReference.set(FAILURE);
                     }
                     connectedLatch.countDown();
-                } else if (CLIENT_DISCONNECTED.equals(eventState)) {
+                } else if (CLIENT_DISCONNECTED == eventState) {
                     if (!stateAtomicReference.compareAndSet(CLIENT_CONNECTED, CLIENT_DISCONNECTED)) {
                         //fail the test
                         stateAtomicReference.set(FAILURE);
@@ -265,7 +256,7 @@ public class ClientRegressionWithMockNetworkTest extends HazelcastTestSupport {
                     disconnectedLatch.countDown();
                 } else {
                     LifecycleState state = list.poll();
-                    if (state != null && state.equals(eventState)) {
+                    if (state != null && state == eventState) {
                         latch.countDown();
                     }
                 }
@@ -326,39 +317,32 @@ public class ClientRegressionWithMockNetworkTest extends HazelcastTestSupport {
         assertEquals("removeIntercepted", map.remove("key3"));
     }
 
-    private static class MapInterceptorImpl implements MapInterceptor {
+    private static class MapInterceptorImpl extends MapInterceptorAdaptor {
+        @Serial
+        private static final long serialVersionUID = 1L;
 
-        MapInterceptorImpl() {
-        }
-
+        @Override
         public Object interceptGet(Object value) {
             if ("value1".equals(value)) {
                 return "getIntercepted";
             }
-            return null;
+            return super.interceptGet(value);
         }
 
-        public void afterGet(Object value) {
-        }
-
+        @Override
         public Object interceptPut(Object oldValue, Object newValue) {
             if ("oldValue".equals(oldValue) && "newValue".equals(newValue)) {
                 return "putIntercepted";
             }
-            return null;
+            return super.interceptPut(oldValue, newValue);
         }
 
-        public void afterPut(Object value) {
-        }
-
+        @Override
         public Object interceptRemove(Object removedValue) {
             if ("value2".equals(removedValue)) {
                 return "removeIntercepted";
             }
-            return null;
-        }
-
-        public void afterRemove(Object value) {
+            return super.interceptRemove(removedValue);
         }
     }
 
@@ -390,8 +374,7 @@ public class ClientRegressionWithMockNetworkTest extends HazelcastTestSupport {
         ClientSecurityConfig securityConfig = clientConfig.getSecurityConfig();
         securityConfig.setCredentials(new MyCredentials());
         // not null username/password credentials are not allowed when Security is disabled
-        expectedException.expect(IllegalStateException.class);
-        hazelcastFactory.newHazelcastClient(clientConfig);
+        assertThrows(IllegalStateException.class, () -> hazelcastFactory.newHazelcastClient(clientConfig));
     }
 
     public static class MyCredentials extends UsernamePasswordCredentials {
@@ -408,7 +391,8 @@ public class ClientRegressionWithMockNetworkTest extends HazelcastTestSupport {
         CountDownLatch latch = new CountDownLatch(2);
 
         IMap<Object, Object> m = client.getMap("m");
-        UUID id = m.addEntryListener(new EntryAdapter<Object, Object>() {
+        UUID id = m.addEntryListener(new EntryAdapter<>() {
+            @Override
             public void entryAdded(EntryEvent<Object, Object> event) {
                 latch.countDown();
             }
@@ -457,18 +441,22 @@ public class ClientRegressionWithMockNetworkTest extends HazelcastTestSupport {
         SamplePortable() {
         }
 
+        @Override
         public int getFactoryId() {
             return 5;
         }
 
+        @Override
         public int getClassId() {
             return 6;
         }
 
+        @Override
         public void writePortable(PortableWriter writer) throws IOException {
             writer.writeInt("a", a);
         }
 
+        @Override
         public void readPortable(PortableReader reader) throws IOException {
             a = reader.readInt("a");
         }
@@ -514,7 +502,7 @@ public class ClientRegressionWithMockNetworkTest extends HazelcastTestSupport {
         IMap<Object, Object> map1 = client.getMap(randomMapName());
         IMap<Object, Object> map2 = client.getMap(randomMapName());
 
-        map1.addEntryListener(new EntryAdapter<Object, Object>() {
+        map1.addEntryListener(new EntryAdapter<>() {
             @Override
             public void entryAdded(EntryEvent<Object, Object> event) {
                 map2.put(1, 1);
@@ -701,12 +689,11 @@ public class ClientRegressionWithMockNetworkTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testClientReconnect_thenCheckRequestsAreRetriedWithoutException() throws InterruptedException {
+    public void testClientReconnect_thenCheckRequestsAreRetriedWithoutException() {
         HazelcastInstance hazelcastInstance = hazelcastFactory.newHazelcastInstance();
 
         CountDownLatch clientStartedDoingRequests = new CountDownLatch(1);
-        CountDownLatch restartFinished = new CountDownLatch(1);
-        new Thread(() -> {
+        Thread restartThread = new Thread(() -> {
             try {
                 clientStartedDoingRequests.await();
             } catch (InterruptedException ignored) {
@@ -715,9 +702,8 @@ public class ClientRegressionWithMockNetworkTest extends HazelcastTestSupport {
             hazelcastInstance.shutdown();
 
             hazelcastFactory.newHazelcastInstance();
-            restartFinished.countDown();
-
-        }).start();
+        });
+        restartThread.start();
 
         ClientConfig clientConfig = new ClientConfig();
         //Retry all requests
@@ -741,7 +727,7 @@ public class ClientRegressionWithMockNetworkTest extends HazelcastTestSupport {
                 fail("Requests should not throw exception with this configuration. Last put key: " + i);
             }
         }
-        restartFinished.await();
+        assertJoinable(restartThread);
     }
 
     @Test
@@ -819,7 +805,7 @@ public class ClientRegressionWithMockNetworkTest extends HazelcastTestSupport {
 
         AtomicBoolean isClientDisconnected = new AtomicBoolean();
         client.getLifecycleService().addLifecycleListener(event -> {
-            if (CLIENT_DISCONNECTED.equals(event.getState())) {
+            if (CLIENT_DISCONNECTED == event.getState()) {
                 isClientDisconnected.set(true);
             }
         });
@@ -842,7 +828,7 @@ public class ClientRegressionWithMockNetworkTest extends HazelcastTestSupport {
     }
 
     @Test(timeout = 20000)
-    public void testClientShutdown_shouldNotWaitForNextConnectionAttempt() throws InterruptedException {
+    public void testClientShutdown_shouldNotWaitForNextConnectionAttempt() {
         HazelcastInstance server = hazelcastFactory.newHazelcastInstance();
 
         ClientConfig clientConfig = new ClientConfig();
@@ -858,7 +844,7 @@ public class ClientRegressionWithMockNetworkTest extends HazelcastTestSupport {
         //client will get into retry
         server.shutdown();
         // we expect this shutdown not to wait for 4 minutes (240000).
-        // Test will timeout in 20 seconds. Note that global executor shutdown in ClientExecutionServiceImpl timeout is 30 seconds
+        // Test will time out in 20 seconds. Note that global executor shutdown in ClientExecutionServiceImpl timeout is 30 seconds
         client.shutdown();
     }
 }

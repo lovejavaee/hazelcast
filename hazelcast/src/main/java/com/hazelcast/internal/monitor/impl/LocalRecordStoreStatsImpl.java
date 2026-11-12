@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.internal.monitor.impl;
 
 import com.hazelcast.internal.cluster.Versions;
 import com.hazelcast.internal.monitor.LocalRecordStoreStats;
+import com.hazelcast.internal.tpcengine.util.ReflectionUtil;
 import com.hazelcast.map.impl.MapDataSerializerHook;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
@@ -25,30 +26,31 @@ import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.nio.serialization.impl.Versioned;
 
 import java.io.IOException;
-import java.util.concurrent.atomic.AtomicLongFieldUpdater;
-
-import static java.util.concurrent.atomic.AtomicLongFieldUpdater.newUpdater;
+import java.lang.invoke.VarHandle;
 
 // written by single thread, can be read by multiple threads
 public class LocalRecordStoreStatsImpl
         implements LocalRecordStoreStats, IdentifiedDataSerializable, Versioned {
 
-    private static final AtomicLongFieldUpdater<LocalRecordStoreStatsImpl> HITS =
-            newUpdater(LocalRecordStoreStatsImpl.class, "hits");
-    private static final AtomicLongFieldUpdater<LocalRecordStoreStatsImpl> EVICTION_COUNT =
-            newUpdater(LocalRecordStoreStatsImpl.class, "evictionCount");
-    private static final AtomicLongFieldUpdater<LocalRecordStoreStatsImpl> EXPIRATION_COUNT =
-            newUpdater(LocalRecordStoreStatsImpl.class, "expirationCount");
-    private static final AtomicLongFieldUpdater<LocalRecordStoreStatsImpl> LAST_ACCESS_TIME =
-            newUpdater(LocalRecordStoreStatsImpl.class, "lastAccessTime");
-    private static final AtomicLongFieldUpdater<LocalRecordStoreStatsImpl> LAST_UPDATE_TIME =
-            newUpdater(LocalRecordStoreStatsImpl.class, "lastUpdateTime");
+    private static final VarHandle HITS = ReflectionUtil.findVarHandle("hits", long.class);
+    private static final VarHandle EVICTION_COUNT = ReflectionUtil.findVarHandle("evictionCount", long.class);
+    private static final VarHandle EXPIRATION_COUNT = ReflectionUtil.findVarHandle("expirationCount", long.class);
+    private static final VarHandle LAST_ACCESS_TIME = ReflectionUtil.findVarHandle("lastAccessTime", long.class);
+    private static final VarHandle LAST_UPDATE_TIME = ReflectionUtil.findVarHandle("lastUpdateTime", long.class);
+    private static final VarHandle OVERSIZED_ENTRIES_SEEN = ReflectionUtil.findVarHandle("oversizedEntriesSeen", long.class);
+    private static final VarHandle LAST_OVERSIZED_ENTRY_SIZE =
+            ReflectionUtil.findVarHandle("lastOversizedEntrySize", long.class);
+    private static final VarHandle LAST_OVERSIZED_ENTRY_TIME =
+            ReflectionUtil.findVarHandle("lastOversizedEntryTime", long.class);
 
     private volatile long hits;
     private volatile long lastAccessTime;
     private volatile long lastUpdateTime;
     private volatile long evictionCount;
     private volatile long expirationCount;
+    private volatile long oversizedEntriesSeen;
+    private volatile long lastOversizedEntrySize;
+    private volatile long lastOversizedEntryTime;
 
     public void copyFrom(LocalRecordStoreStats stats) {
         this.hits = stats.getHits();
@@ -56,6 +58,9 @@ public class LocalRecordStoreStatsImpl
         this.lastUpdateTime = stats.getLastUpdateTime();
         this.evictionCount = stats.getEvictionCount();
         this.expirationCount = stats.getExpirationCount();
+        this.oversizedEntriesSeen = stats.getOversizedEntriesSeen();
+        this.lastOversizedEntrySize = stats.getLastOversizedEntrySize();
+        this.lastOversizedEntryTime = stats.getLastOversizedEntryTime();
     }
 
     @Override
@@ -85,27 +90,49 @@ public class LocalRecordStoreStatsImpl
 
     @Override
     public void setLastAccessTime(long time) {
-        LAST_ACCESS_TIME.lazySet(this, Math.max(lastAccessTime, time));
+        LAST_ACCESS_TIME.setOpaque(this, Math.max(lastAccessTime, time));
     }
 
     @Override
     public void setLastUpdateTime(long time) {
-        LAST_UPDATE_TIME.lazySet(this, Math.max(lastUpdateTime, time));
+        LAST_UPDATE_TIME.setOpaque(this, Math.max(lastUpdateTime, time));
     }
 
     @Override
     public void increaseEvictions() {
-        EVICTION_COUNT.lazySet(this, evictionCount + 1);
+        EVICTION_COUNT.setOpaque(this, evictionCount + 1);
     }
 
     @Override
     public void increaseExpirations() {
-        EXPIRATION_COUNT.lazySet(this, expirationCount + 1);
+        EXPIRATION_COUNT.setOpaque(this, expirationCount + 1);
     }
 
     @Override
     public void increaseHits() {
-        HITS.lazySet(this, hits + 1);
+        HITS.setOpaque(this, hits + 1);
+    }
+
+    @Override
+    public long getOversizedEntriesSeen() {
+        return oversizedEntriesSeen;
+    }
+
+    @Override
+    public long getLastOversizedEntrySize() {
+        return lastOversizedEntrySize;
+    }
+
+    @Override
+    public long getLastOversizedEntryTime() {
+        return lastOversizedEntryTime;
+    }
+
+    @Override
+    public void recordOversizedEntry(long entrySize, long time) {
+        OVERSIZED_ENTRIES_SEEN.setOpaque(this, oversizedEntriesSeen + 1);
+        LAST_OVERSIZED_ENTRY_SIZE.setOpaque(this, entrySize);
+        LAST_OVERSIZED_ENTRY_TIME.setOpaque(this, time);
     }
 
     public void reset() {
@@ -114,6 +141,9 @@ public class LocalRecordStoreStatsImpl
         this.lastUpdateTime = 0;
         this.evictionCount = 0;
         this.expirationCount = 0;
+        this.oversizedEntriesSeen = 0;
+        this.lastOversizedEntrySize = 0;
+        this.lastOversizedEntryTime = 0;
     }
 
     @Override
@@ -127,6 +157,13 @@ public class LocalRecordStoreStatsImpl
             out.writeLong(evictionCount);
             out.writeLong(expirationCount);
         }
+
+        // RU_COMPAT_5_7
+        if (out.getVersion().isGreaterOrEqual(Versions.V6_0)) {
+            out.writeLong(oversizedEntriesSeen);
+            out.writeLong(lastOversizedEntrySize);
+            out.writeLong(lastOversizedEntryTime);
+        }
     }
 
     @Override
@@ -139,6 +176,13 @@ public class LocalRecordStoreStatsImpl
         if (in.getVersion().isGreaterOrEqual(Versions.V5_3)) {
             evictionCount = in.readLong();
             expirationCount = in.readLong();
+        }
+
+        // RU_COMPAT_5_7
+        if (in.getVersion().isGreaterOrEqual(Versions.V6_0)) {
+            oversizedEntriesSeen = in.readLong();
+            lastOversizedEntrySize = in.readLong();
+            lastOversizedEntryTime = in.readLong();
         }
     }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,12 +21,21 @@ import com.hazelcast.client.impl.clientside.HazelcastClientInstanceImpl;
 import com.hazelcast.client.impl.protocol.ClientMessage;
 import com.hazelcast.client.impl.protocol.codec.CPSubsystemAddGroupAvailabilityListenerCodec;
 import com.hazelcast.client.impl.protocol.codec.CPSubsystemAddMembershipListenerCodec;
+import com.hazelcast.client.impl.protocol.codec.CPSubsystemGetCPGroupIdsCodec;
+import com.hazelcast.client.impl.protocol.codec.CPSubsystemGetCPObjectInfosCodec;
 import com.hazelcast.client.impl.protocol.codec.CPSubsystemRemoveGroupAvailabilityListenerCodec;
 import com.hazelcast.client.impl.protocol.codec.CPSubsystemRemoveMembershipListenerCodec;
 import com.hazelcast.client.impl.spi.ClientContext;
 import com.hazelcast.client.impl.spi.EventHandler;
+import com.hazelcast.client.impl.spi.impl.ClientInvocation;
+import com.hazelcast.client.impl.spi.impl.ClientInvocationFuture;
 import com.hazelcast.client.impl.spi.impl.ListenerMessageCodec;
+import com.hazelcast.core.HazelcastException;
+import com.hazelcast.cp.CPDataStructureManagementService;
+import com.hazelcast.cp.CPGroupId;
+import com.hazelcast.cp.CPMap;
 import com.hazelcast.cp.CPMember;
+import com.hazelcast.cp.CPObjectInfo;
 import com.hazelcast.cp.CPSubsystem;
 import com.hazelcast.cp.CPSubsystemManagementService;
 import com.hazelcast.cp.IAtomicLong;
@@ -40,10 +49,12 @@ import com.hazelcast.cp.event.CPMembershipEvent.EventType;
 import com.hazelcast.cp.event.CPMembershipListener;
 import com.hazelcast.cp.event.impl.CPGroupAvailabilityEventImpl;
 import com.hazelcast.cp.event.impl.CPMembershipEventImpl;
+import com.hazelcast.cp.internal.CPObjectInfoImpl;
 import com.hazelcast.cp.internal.RaftGroupId;
 import com.hazelcast.cp.internal.datastructures.atomiclong.AtomicLongService;
 import com.hazelcast.cp.internal.datastructures.atomicref.AtomicRefService;
 import com.hazelcast.cp.internal.datastructures.countdownlatch.CountDownLatchService;
+import com.hazelcast.cp.internal.datastructures.cpmap.CPMapService;
 import com.hazelcast.cp.internal.datastructures.lock.LockService;
 import com.hazelcast.cp.internal.datastructures.semaphore.SemaphoreService;
 import com.hazelcast.cp.lock.FencedLock;
@@ -52,26 +63,31 @@ import com.hazelcast.internal.util.Clock;
 
 import javax.annotation.Nonnull;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
+import static com.hazelcast.internal.util.ConcurrencyUtil.CALLER_RUNS;
 import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 
 /**
  * Client-side impl of the CP subsystem to create CP data structure proxies
  */
-public class CPSubsystemImpl implements CPSubsystem {
+public class CPSubsystemImpl implements CPSubsystem, Consumer<ClientContext> {
 
-    private final ClientRaftProxyFactory proxyFactory;
+    protected final ClientRaftProxyFactory proxyFactory;
     private volatile ClientContext context;
 
-    public CPSubsystemImpl(HazelcastClientInstanceImpl client) {
-        this.proxyFactory = new ClientRaftProxyFactory(client);
+    public CPSubsystemImpl(ClientRaftProxyFactory proxyFactory) {
+        this.proxyFactory = proxyFactory;
     }
 
-    public void init(ClientContext context) {
+    @Override
+    public void accept(ClientContext context) {
         this.context = context;
         proxyFactory.init(context);
     }
@@ -111,6 +127,21 @@ public class CPSubsystemImpl implements CPSubsystem {
         return proxyFactory.createProxy(SemaphoreService.SERVICE_NAME, name);
     }
 
+    @Nonnull
+    @Override
+    public <K, V> CPMap<K, V> getMap(@Nonnull String name) {
+        checkNotNull(name, "Retrieving a CPMap instance with a null name is not allowed!");
+        return proxyFactory.createProxy(CPMapService.SERVICE_NAME, name);
+    }
+
+    /*
+    'map' is already taken in HazelcastNamespaceProvider for Spring support. When you create a 'hz:cpmap' type (see
+    fullConfig-applicationContext-hazelcast.xml) it will call this method as per the semantics of HazelcastNamespaceProvider.
+     */
+    protected <K, V> CPMap<K, V> getCpmap(@Nonnull String name) {
+        return getMap(name);
+    }
+
     @Override
     public CPMember getLocalCPMember() {
         throw new UnsupportedOperationException();
@@ -123,6 +154,16 @@ public class CPSubsystemImpl implements CPSubsystem {
 
     @Override
     public CPSessionManagementService getCPSessionManagementService() {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Accessible only by server-side proxies due
+     * to implementation constraints at the time.
+     * Client support can be added later if needed.
+     */
+    @Override
+    public CPDataStructureManagementService getCPDataStructureManagementService() {
         throw new UnsupportedOperationException();
     }
 
@@ -148,10 +189,72 @@ public class CPSubsystemImpl implements CPSubsystem {
         return context.getListenerService().deregisterListener(id);
     }
 
+    @Nonnull
+    @Override
+    public Collection<CPGroupId> getCPGroupIds() {
+        HazelcastClientInstanceImpl client = (HazelcastClientInstanceImpl) context.getHazelcastInstance();
+        ClientMessage clientMessage = CPSubsystemGetCPGroupIdsCodec.encodeRequest();
+
+        // Send request directly to METADATA leader if available
+        UUID metadataLeader = client.getCPGroupViewService().getLastKnownMetadataLeader();
+        ClientInvocation invocation;
+        if (metadataLeader != null) {
+            invocation = new ClientInvocation(client, clientMessage, null, metadataLeader);
+        } else {
+            invocation = new ClientInvocation(client, clientMessage, null);
+        }
+
+        ClientInvocationFuture future = invocation.invoke();
+        try {
+            return future.thenApplyAsync(cm ->
+                            List.<CPGroupId>copyOf(CPSubsystemGetCPGroupIdsCodec.decodeResponse(cm)),
+                    CALLER_RUNS
+            ).get();
+        } catch (InterruptedException | ExecutionException e) {
+            throw new HazelcastException("Could not retrieve CP group ids", e);
+        }
+    }
+
+    @Nonnull
+    @Override
+    public Iterable<CPObjectInfo> getObjectInfos(@Nonnull CPGroupId groupId, @Nonnull String serviceName) {
+        return internalGetObjectInfos(groupId, serviceName, false);
+    }
+
+    @Nonnull
+    @Override
+    public Iterable<CPObjectInfo> getTombstoneInfos(@Nonnull CPGroupId groupId, @Nonnull String serviceName) {
+        return internalGetObjectInfos(groupId, serviceName, true);
+    }
+
+    private List<CPObjectInfo> internalGetObjectInfos(CPGroupId groupId, String serviceName, boolean tombstone) {
+        ClientMessage clientMessage = CPSubsystemGetCPObjectInfosCodec.encodeRequest(
+                (RaftGroupId) groupId,
+                serviceName,
+                tombstone
+        );
+        ClientInvocation invocation = new ClientInvocation(
+                (HazelcastClientInstanceImpl) context.getHazelcastInstance(),
+                clientMessage,
+                null
+        );
+        ClientInvocationFuture future = invocation.invoke();
+        try {
+            return future.thenApplyAsync(CPSubsystemGetCPObjectInfosCodec::decodeResponse, CALLER_RUNS)
+                    .get()
+                    .stream()
+                    .map(name -> (CPObjectInfo) new CPObjectInfoImpl(name, serviceName, groupId))
+                    .toList();
+        } catch (InterruptedException | ExecutionException e) {
+            throw new HazelcastException("Could not retrieve CP object infos", e);
+        }
+    }
+
     private static class CPMembershipEventHandler extends CPSubsystemAddMembershipListenerCodec.AbstractEventHandler
             implements EventHandler<ClientMessage> {
 
         private final CPMembershipListener listener;
+
         CPMembershipEventHandler(CPMembershipListener listener) {
             this.listener = listener;
         }
@@ -180,12 +283,19 @@ public class CPSubsystemImpl implements CPSubsystem {
 
         @Override
         public void handleGroupAvailabilityEventEvent(RaftGroupId groupId, Collection<CPMember> members,
-                Collection<CPMember> unavailableMembers) {
+                                                      Collection<CPMember> unavailableMembers, boolean isIsShutdownExists,
+                                                      boolean isShutdown) {
+            boolean isShutdownValue = isIsShutdownExists && isShutdown;
+            handleGroupAvailabilityEventEvent(groupId, members, unavailableMembers, isShutdownValue);
+        }
+
+        public void handleGroupAvailabilityEventEvent(RaftGroupId groupId, Collection<CPMember> members,
+                                                      Collection<CPMember> unavailableMembers, boolean isShutdown) {
 
             long now = Clock.currentTimeMillis();
             recentEvents.values().removeIf(expirationTime -> expirationTime < now);
 
-            CPGroupAvailabilityEvent event = new CPGroupAvailabilityEventImpl(groupId, members, unavailableMembers);
+            CPGroupAvailabilityEvent event = new CPGroupAvailabilityEventImpl(groupId, members, unavailableMembers, isShutdown);
             if (recentEvents.putIfAbsent(event, now + DEDUPLICATION_PERIOD) != null) {
                 return;
             }

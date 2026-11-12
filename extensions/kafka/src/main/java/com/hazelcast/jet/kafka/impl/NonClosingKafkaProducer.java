@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import org.apache.kafka.clients.producer.KafkaProducer;
 
 import java.time.Duration;
 import java.util.Properties;
-import java.util.concurrent.TimeUnit;
 
 public class NonClosingKafkaProducer<K, V> extends KafkaProducer<K, V> {
 
@@ -46,8 +45,4 @@ public class NonClosingKafkaProducer<K, V> extends KafkaProducer<K, V> {
         onClose.run();
     }
 
-    @Override
-    public void close(long timeout, TimeUnit unit) {
-        onClose.run();
-    }
 }

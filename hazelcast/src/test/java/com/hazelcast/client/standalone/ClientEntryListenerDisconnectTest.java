@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.client.standalone;
 
 import com.hazelcast.client.HazelcastClient;
 import com.hazelcast.client.config.ClientConfig;
+import com.hazelcast.client.config.RoutingMode;
 import com.hazelcast.config.Config;
 import com.hazelcast.config.IndexType;
 import com.hazelcast.core.EntryAdapter;
@@ -27,6 +28,7 @@ import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.map.IMap;
 import org.junit.Ignore;
 
+import java.io.Serial;
 import java.io.Serializable;
 import java.util.concurrent.TimeUnit;
 
@@ -55,7 +57,7 @@ public class ClientEntryListenerDisconnectTest {
         clientConfig.setClusterName("test");
         clientConfig.getNetworkConfig()
                 .addAddress("localhost:6701", "localhost:6702")
-                .setSmartRouting(false);
+                .getClusterRoutingConfig().setRoutingMode(RoutingMode.SINGLE_MEMBER);
         clientConfig.getConnectionStrategyConfig().getConnectionRetryConfig().setClusterConnectTimeoutMillis(Long.MAX_VALUE);
         HazelcastInstance client = HazelcastClient.newHazelcastClient(clientConfig);
         IMap<Integer, GenericEvent> mapClient = client.getMap("test");
@@ -125,6 +127,7 @@ public class ClientEntryListenerDisconnectTest {
     @SuppressWarnings("unused")
     private static class GenericEvent implements Serializable {
 
+        @Serial
         private static final long serialVersionUID = -933111044641052844L;
 
         private int userId;

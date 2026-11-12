@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import java.time.OffsetDateTime;
  *
  * @since 5.2
  */
+@SuppressWarnings("MethodCount")
 public interface CompactWriter {
 
     /**
@@ -218,7 +219,7 @@ public interface CompactWriter {
     void writeArrayOfDecimal(@Nonnull String fieldName, @Nullable BigDecimal[] value);
 
     /**
-     * Writes an array of times consisting of hour, minute, second, and nano seconds.
+     * Writes an array of times consisting of hour, minute, second, and nanoseconds.
      *
      * @param fieldName name of the field.
      * @param value     to be written.

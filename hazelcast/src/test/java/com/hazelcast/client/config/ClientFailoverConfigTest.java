@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,42 +20,37 @@ import com.hazelcast.config.InvalidConfigurationException;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import java.util.Arrays;
+import java.util.List;
 
 import static com.hazelcast.client.config.ClientConnectionStrategyConfig.ReconnectMode.OFF;
-import static org.hamcrest.Matchers.empty;
-import static org.hamcrest.Matchers.hasSize;
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class ClientFailoverConfigTest {
 
-    @Rule
-    public ExpectedException expectedException = ExpectedException.none();
 
     @Test
     public void testAddClientConfig_WithOffReconnectMode_ShouldThrowInvalidConfigException() {
         ClientFailoverConfig failoverConfig = new ClientFailoverConfig();
-        assertThat(failoverConfig.getClientConfigs(), is(empty()));
+        assertThat(failoverConfig.getClientConfigs()).isEmpty();
 
         ClientConfig clientConfig1 = new ClientConfig();
         failoverConfig.addClientConfig(clientConfig1);
-        assertThat(failoverConfig.getClientConfigs(), hasSize(1));
+        assertThat(failoverConfig.getClientConfigs()).hasSize(1);
 
         ClientConfig clientConfig2 = new ClientConfig()
                 .setConnectionStrategyConfig(new ClientConnectionStrategyConfig().setReconnectMode(OFF));
 
-        expectedException.expect(InvalidConfigurationException.class);
-        expectedException.expectMessage("Reconnect mode for ClientFailoverConfig must not be OFF");
-        failoverConfig.addClientConfig(clientConfig2);
+        assertThatThrownBy(() -> failoverConfig.addClientConfig(clientConfig2))
+                .isInstanceOf(InvalidConfigurationException.class)
+                .hasMessageContaining("Reconnect mode for ClientFailoverConfig must not be OFF");
     }
 
     @Test
@@ -64,9 +59,10 @@ public class ClientFailoverConfigTest {
         ClientConfig clientConfig2 = new ClientConfig()
                 .setConnectionStrategyConfig(new ClientConnectionStrategyConfig().setReconnectMode(OFF));
 
-        expectedException.expect(InvalidConfigurationException.class);
-        expectedException.expectMessage("Reconnect mode for ClientFailoverConfig must not be OFF");
-        new ClientFailoverConfig().setClientConfigs(Arrays.asList(clientConfig1, clientConfig2));
+        List<ClientConfig> clientConfigList = Arrays.asList(clientConfig1, clientConfig2);
+        ClientFailoverConfig clientFailoverConfig = new ClientFailoverConfig();
+        assertThatThrownBy(() -> clientFailoverConfig.setClientConfigs(clientConfigList))
+                .isInstanceOf(InvalidConfigurationException.class)
+                .hasMessageContaining("Reconnect mode for ClientFailoverConfig must not be OFF");
     }
-
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,6 +54,7 @@ class ClusterMergeTask implements Runnable {
         this.lifecycleService = node.hazelcastInstance.getLifecycleService();
     }
 
+    @Override
     public void run() {
         lifecycleService.fireLifecycleEvent(MERGING);
 
@@ -94,8 +95,8 @@ class ClusterMergeTask implements Runnable {
     private void disposeTasks(Collection<Runnable>... tasks) {
         for (Collection<Runnable> task : tasks) {
             for (Runnable runnable : task) {
-                if (runnable instanceof Disposable) {
-                    ((Disposable) runnable).dispose();
+                if (runnable instanceof Disposable disposable) {
+                    disposable.dispose();
                 }
             }
         }
@@ -153,7 +154,7 @@ class ClusterMergeTask implements Runnable {
     }
 
     private void rejoin() {
-        // start connection-manager to setup and accept new connections
+        // start connection-manager to set up and accept new connections
         node.getServer().start();
         // re-join to the target cluster
         node.join();

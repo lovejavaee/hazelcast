@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,8 +33,8 @@ import com.hazelcast.cp.internal.raft.impl.testing.LocalRaftGroup;
 import com.hazelcast.cp.internal.raft.impl.testing.LocalRaftGroup.LocalRaftGroupBuilder;
 import com.hazelcast.cp.internal.raft.impl.testing.RaftRunnable;
 import com.hazelcast.cp.internal.raft.impl.util.PostponedResponse;
-import com.hazelcast.spi.impl.InternalCompletableFuture;
 import com.hazelcast.test.HazelcastParallelClassRunner;
+import com.hazelcast.spi.impl.InternalCompletableFuture;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
@@ -339,7 +339,7 @@ public class MembershipChangeTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void when_thereIsNoCommitInTheCurrentTerm_then_cannotMakeMemberChange() throws ExecutionException, InterruptedException {
+    public void when_thereIsNoCommitInTheCurrentTerm_then_cannotMakeMemberChange() {
         // https://groups.google.com/forum/#!msg/raft-dev/t4xj6dJTP6E/d2D9LrWRza8J
 
         group = newGroup(3);
@@ -474,7 +474,7 @@ public class MembershipChangeTest extends HazelcastTestSupport {
 
         RaftNodeImpl newRaftNode1 = group.createNewRaftNode();
         group.dropMessagesToMember(leader.getLocalMember(), newRaftNode1.getLocalMember(), AppendRequest.class);
-        Future f1 = leader.replicateMembershipChange(newRaftNode1.getLocalMember(), MembershipChangeMode.ADD);
+        Future<?> f1 = leader.replicateMembershipChange(newRaftNode1.getLocalMember(), MembershipChangeMode.ADD);
 
         assertTrueEventually(() -> {
             for (RaftNodeImpl follower : followers) {
@@ -518,7 +518,7 @@ public class MembershipChangeTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void when_leaderIsSteppingDown_then_itDoesNotAcceptNewAppends() throws ExecutionException, InterruptedException {
+    public void when_leaderIsSteppingDown_then_itDoesNotAcceptNewAppends() {
         group = new LocalRaftGroupBuilder(3).setAppendNopEntryOnLeaderElection(true).build();
         group.start();
 
@@ -527,8 +527,8 @@ public class MembershipChangeTest extends HazelcastTestSupport {
         group.dropMessagesToMember(leader.getLocalMember(), followers[0].getLocalMember(), AppendRequest.class);
         group.dropMessagesToMember(leader.getLocalMember(), followers[1].getLocalMember(), AppendRequest.class);
 
-        InternalCompletableFuture f1 = leader.replicateMembershipChange(leader.getLocalMember(), REMOVE);
-        InternalCompletableFuture f2 = leader.replicate(new PostponedResponseRaftRunnable());
+        InternalCompletableFuture<?> f1 = leader.replicateMembershipChange(leader.getLocalMember(), REMOVE);
+        InternalCompletableFuture<?> f2 = leader.replicate(new PostponedResponseRaftRunnable());
 
         assertFalse(f1.isDone());
         assertTrueEventually(() -> assertTrue(f2.isDone()));

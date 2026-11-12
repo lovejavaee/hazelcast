@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,12 +42,15 @@ import java.util.Iterator;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
 
 import static com.hazelcast.internal.serialization.impl.SerializationUtil.readCollection;
 import static com.hazelcast.internal.serialization.impl.SerializationUtil.writeCollection;
 import static com.hazelcast.internal.util.CollectionUtil.isEmpty;
 import static com.hazelcast.internal.util.CollectionUtil.isNotEmpty;
+import static com.hazelcast.internal.util.ExceptionUtil.peel;
+import static com.hazelcast.internal.util.ExceptionUtil.sneakyThrow;
 import static com.hazelcast.internal.util.ThreadUtil.isRunningOnPartitionThread;
 
 /**
@@ -75,7 +78,7 @@ public final class PartitionReplicaSyncRequestOffloadable
 
     public PartitionReplicaSyncRequestOffloadable(Collection<ServiceNamespace> namespaces,
                                                   int partitionId, int replicaIndex) {
-        this.namespaces = Collections.newSetFromMap(new ConcurrentHashMap<>());
+        this.namespaces = ConcurrentHashMap.newKeySet();
         this.namespaces.addAll(namespaces);
         this.partitionId = partitionId;
         setPartitionId(-1);
@@ -90,6 +93,7 @@ public final class PartitionReplicaSyncRequestOffloadable
     /**
      * Send responses for first number of {@code permits} namespaces and remove them from the list.
      */
+    @Override
     protected void sendOperationsForNamespaces(int permits) {
         InternalPartitionServiceImpl partitionService = getService();
         try {
@@ -158,7 +162,11 @@ public final class PartitionReplicaSyncRequestOffloadable
                     }
                 });
         operationService.execute(gatherReplicaVersionsRunnable);
-        gatherReplicaVersionsRunnable.future.joinInternal();
+        try {
+            gatherReplicaVersionsRunnable.future.get();
+        } catch (InterruptedException | ExecutionException e) {
+            throw sneakyThrow(peel(e));
+        }
     }
 
     @Override
@@ -175,7 +183,11 @@ public final class PartitionReplicaSyncRequestOffloadable
             UrgentPartitionRunnable partitionRunnable = new UrgentPartitionRunnable(partitionId(),
                     () -> sendOperations(operations, chunkSuppliers, ns));
             getNodeEngine().getOperationService().execute(partitionRunnable);
-            partitionRunnable.future.joinInternal();
+            try {
+                partitionRunnable.future.get();
+            } catch (InterruptedException | ExecutionException e) {
+                throw sneakyThrow(peel(e));
+            }
         }
     }
 
@@ -219,6 +231,7 @@ public final class PartitionReplicaSyncRequestOffloadable
                                 // operations while preparing replication operations
                                 if (!trySetMigratingFlag()) {
                                     sendRetryResponse();
+                                    return;
                                 }
 
                                 try {
@@ -258,7 +271,7 @@ public final class PartitionReplicaSyncRequestOffloadable
 
     @Override
     protected void readInternal(ObjectDataInput in) throws IOException {
-        namespaces = Collections.newSetFromMap(new ConcurrentHashMap<>());
+        namespaces = ConcurrentHashMap.newKeySet();
         namespaces.addAll(readCollection(in));
         partitionId = in.readInt();
     }
@@ -269,7 +282,11 @@ public final class PartitionReplicaSyncRequestOffloadable
         UrgentPartitionRunnable<Boolean> trySetMigrating = new UrgentPartitionRunnable<>(partitionId(),
                 () -> partitionStateManager.trySetMigratingFlag(partitionId()));
         getNodeEngine().getOperationService().execute(trySetMigrating);
-        return trySetMigrating.future.joinInternal();
+        try {
+            return trySetMigrating.future.get();
+        } catch (InterruptedException | ExecutionException e) {
+            throw sneakyThrow(peel(e));
+        }
     }
 
     private void clearMigratingFlag() {
@@ -278,6 +295,16 @@ public final class PartitionReplicaSyncRequestOffloadable
         UrgentPartitionRunnable<Void> trySetMigrating = new UrgentPartitionRunnable<>(partitionId(),
                 () -> partitionStateManager.clearMigratingFlag(partitionId()));
         getNodeEngine().getOperationService().execute(trySetMigrating);
-        trySetMigrating.future.joinInternal();
+        try {
+            trySetMigrating.future.get();
+        } catch (InterruptedException | ExecutionException e) {
+            throw sneakyThrow(peel(e));
+        }
+    }
+
+    @Override
+    protected void toString(StringBuilder sb) {
+        super.toString(sb);
+        sb.append(", [real]partitionId=").append(partitionId);
     }
 }

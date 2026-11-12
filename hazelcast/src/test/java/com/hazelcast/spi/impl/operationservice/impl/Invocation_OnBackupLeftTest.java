@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,6 @@ import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.spi.impl.operationservice.BackupAwareOperation;
 import com.hazelcast.spi.impl.operationservice.Operation;
 import com.hazelcast.spi.properties.ClusterProperty;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
@@ -41,7 +40,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import static com.hazelcast.internal.util.UuidUtil.newUnsecureUuidString;
 import static com.hazelcast.spi.impl.operationservice.impl.InvocationConstant.VOID;
 import static com.hazelcast.test.Accessors.getOperationService;
-import static java.util.Collections.newSetFromMap;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -49,7 +47,7 @@ import static org.junit.Assert.assertTrue;
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class Invocation_OnBackupLeftTest extends HazelcastTestSupport {
 
-    private static final Set<String> backupRunning = newSetFromMap(new ConcurrentHashMap<>());
+    private static final Set<String> backupRunning = ConcurrentHashMap.newKeySet();
 
     // we use 20 seconds so we don't get spurious build failures
     private static final int COMPLETION_TIMEOUT_SECONDS = 20;
@@ -80,7 +78,7 @@ public class Invocation_OnBackupLeftTest extends HazelcastTestSupport {
         Operation op = new PrimaryOperation(backupId)
                 .setPrimaryResponseDelaySeconds(responseDelaySeconds)
                 .setPartitionId(getPartitionId(local));
-        InvocationFuture f = (InvocationFuture) localOperationService.invokeOnPartition(op);
+        InvocationFuture f = localOperationService.invokeOnPartition(op);
 
         waitForBackupRunning(backupId);
 
@@ -94,7 +92,7 @@ public class Invocation_OnBackupLeftTest extends HazelcastTestSupport {
         String backupId = newUnsecureUuidString();
         Operation op = new PrimaryOperation(backupId)
                 .setPartitionId(getPartitionId(local));
-        InvocationFuture f = (InvocationFuture) localOperationService.invokeOnPartition(op);
+        InvocationFuture f = localOperationService.invokeOnPartition(op);
 
         waitForPrimaryResponse(f);
 
@@ -106,21 +104,11 @@ public class Invocation_OnBackupLeftTest extends HazelcastTestSupport {
     }
 
     private void waitForBackupRunning(final String backupId) {
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertTrue(backupRunning.contains(backupId));
-            }
-        });
+        assertTrueEventually(() -> assertTrue(backupRunning.contains(backupId)));
     }
 
     private void waitForPrimaryResponse(final InvocationFuture f) {
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertNotEquals(VOID, f.invocation.pendingResponse);
-            }
-        });
+        assertTrueEventually(() -> assertNotEquals(VOID, f.invocation.pendingResponse));
     }
 
     static class PrimaryOperation extends Operation implements BackupAwareOperation {

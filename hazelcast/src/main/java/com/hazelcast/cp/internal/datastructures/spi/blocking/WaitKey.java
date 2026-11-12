@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 package com.hazelcast.cp.internal.datastructures.spi.blocking;
 
-import com.hazelcast.cp.internal.session.AbstractProxySessionManager;
+import com.hazelcast.cp.internal.session.ProxySessionManager;
 import com.hazelcast.cluster.Address;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
@@ -57,7 +57,7 @@ public abstract class WaitKey implements IdentifiedDataSerializable {
     /**
      * Returns id of the session to which the corresponding operation is
      * attached.
-     * Returns {@link AbstractProxySessionManager#NO_SESSION_ID} if no session
+     * Returns {@link ProxySessionManager#NO_SESSION_ID} if no session
      *         is attached.
      */
     public abstract long sessionId();

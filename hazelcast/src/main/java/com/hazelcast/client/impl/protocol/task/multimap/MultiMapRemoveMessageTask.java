@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import com.hazelcast.internal.util.Timer;
 import com.hazelcast.multimap.impl.MultiMapRecord;
 import com.hazelcast.multimap.impl.operations.MultiMapResponse;
 import com.hazelcast.multimap.impl.operations.RemoveAllOperation;
+import com.hazelcast.security.SecurityInterceptorConstants;
 import com.hazelcast.security.permission.ActionConstants;
 import com.hazelcast.security.permission.MultiMapPermission;
 import com.hazelcast.spi.impl.operationservice.Operation;
@@ -36,7 +37,7 @@ import java.util.List;
 
 /**
  * Client Protocol Task for handling messages with type ID:
- * {@link com.hazelcast.client.impl.protocol.codec.MultiMapMessageType#MULTIMAP_REMOVE}
+ * {@link com.hazelcast.client.impl.protocol.codec.MultiMapRemoveCodec#REQUEST_MESSAGE_TYPE}
  */
 public class MultiMapRemoveMessageTask
         extends AbstractMultiMapPartitionMessageTask<MultiMapRemoveCodec.RequestParameters> {
@@ -93,7 +94,7 @@ public class MultiMapRemoveMessageTask
 
     @Override
     public String getMethodName() {
-        return "remove";
+        return SecurityInterceptorConstants.REMOVE;
     }
 
     @Override

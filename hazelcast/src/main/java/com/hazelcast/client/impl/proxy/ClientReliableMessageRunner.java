@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,6 +50,11 @@ public class ClientReliableMessageRunner<E> extends MessageRunner<E> {
     }
 
     @Override
+    protected void runWithNamespaceAwareness(Runnable runnable) {
+        runnable.run();
+    }
+
+    @Override
     protected Member getMember(ReliableTopicMessage m) {
         Member member = null;
         if (m.getPublisherAddress() != null) {
@@ -61,10 +66,8 @@ public class ClientReliableMessageRunner<E> extends MessageRunner<E> {
     @Override
     protected boolean handleInternalException(Throwable t) {
         if (t instanceof HazelcastClientNotActiveException) {
-            if (logger.isFinestEnabled()) {
-                logger.finest("Terminating MessageListener " + listener + " on topic: " + topicName + ". "
-                        + " Reason: HazelcastClient is shutting down");
-            }
+            logger.finest("Terminating MessageListener %s on topic: %s. Reason: HazelcastClient is shutting down", listener,
+                    topicName);
             return false;
         } else if (t instanceof HazelcastClientOfflineException) {
             if (logger.isFinestEnabled()) {

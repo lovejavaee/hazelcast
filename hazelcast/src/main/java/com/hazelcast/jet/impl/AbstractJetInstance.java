@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import com.hazelcast.internal.util.Preconditions;
 import com.hazelcast.jet.Jet;
 import com.hazelcast.jet.JetCacheManager;
 import com.hazelcast.jet.JetInstance;
+import com.hazelcast.jet.JetMemberSelector;
 import com.hazelcast.jet.Job;
 import com.hazelcast.jet.JobAlreadyExistsException;
 import com.hazelcast.jet.JobStateSnapshot;
@@ -34,7 +35,6 @@ import com.hazelcast.jet.core.JobStatus;
 import com.hazelcast.jet.impl.observer.ObservableImpl;
 import com.hazelcast.jet.impl.operation.GetJobIdsOperation.GetJobIdsResult;
 import com.hazelcast.jet.impl.pipeline.PipelineImpl;
-import com.hazelcast.jet.impl.util.Util;
 import com.hazelcast.jet.pipeline.Pipeline;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.map.IMap;
@@ -47,6 +47,7 @@ import com.hazelcast.topic.ITopic;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import javax.security.auth.Subject;
 import java.security.AccessControlException;
 import java.util.Collection;
 import java.util.List;
@@ -55,9 +56,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
+import static com.hazelcast.internal.util.Memoizers.memoizeConcurrent;
 import static com.hazelcast.jet.impl.JobRepository.exportedSnapshotMapName;
-import static com.hazelcast.jet.impl.util.LoggingUtil.logFine;
 import static com.hazelcast.jet.impl.util.Util.distinctBy;
 import static com.hazelcast.security.permission.ActionConstants.ACTION_ADD_RESOURCES;
 import static com.hazelcast.security.permission.ActionConstants.ACTION_SUBMIT;
@@ -89,10 +91,10 @@ public abstract class AbstractJetInstance<M> implements JetInstance {
     private final Supplier<JobRepository> jobRepository;
     private final Map<String, Observable> observables;
 
-    public AbstractJetInstance(HazelcastInstance hazelcastInstance) {
+    protected AbstractJetInstance(HazelcastInstance hazelcastInstance) {
         this.hazelcastInstance = hazelcastInstance;
         this.cacheManager = new JetCacheManagerImpl(this);
-        this.jobRepository = Util.memoizeConcurrent(() -> new JobRepository(hazelcastInstance));
+        this.jobRepository = memoizeConcurrent(() -> new JobRepository(hazelcastInstance));
         this.observables = new ConcurrentHashMap<>();
     }
 
@@ -109,6 +111,11 @@ public abstract class AbstractJetInstance<M> implements JetInstance {
                 throw e;
             }
         }
+    }
+
+    @Nonnull
+    public Job newJob(@Nonnull DAG dag, @Nonnull JobConfig config, @Nullable Subject subject) {
+        return newJobInt(newJobId(), dag, config, subject, false);
     }
 
     @Nonnull @Override
@@ -131,17 +138,30 @@ public abstract class AbstractJetInstance<M> implements JetInstance {
         return newJobInt(jobId, pipeline, config, false);
     }
 
+    @Nonnull
+    public Job newJob(long jobId, @Nonnull DAG dag, @Nonnull JobConfig config, @Nullable Subject subject) {
+        return newJobInt(jobId, dag, config, subject, false);
+    }
+
     private Job newJobInt(long jobId, @Nonnull Object jobDefinition, @Nonnull JobConfig config, boolean isLightJob) {
+        return newJobInt(jobId, jobDefinition, config, null, isLightJob);
+    }
+
+    private Job newJobInt(long jobId,
+                          @Nonnull Object jobDefinition,
+                          @Nonnull JobConfig config,
+                          @Nullable Subject subject,
+                          boolean isLightJob) {
         if (isLightJob) {
             validateConfigForLightJobs(config);
         }
-        if (jobDefinition instanceof PipelineImpl) {
-            config = config.attachAll(((PipelineImpl) jobDefinition).attachedFiles());
+        if (jobDefinition instanceof PipelineImpl pipelineImpl) {
+            config = config.attachAll(pipelineImpl.attachedFiles());
         }
         if (!config.getResourceConfigs().isEmpty()) {
             uploadResources(jobId, config);
         }
-        return newJobProxy(jobId, isLightJob, jobDefinition, config);
+        return newJobProxy(jobId, isLightJob, jobDefinition, config, subject);
     }
 
     protected static void validateConfigForLightJobs(JobConfig config) {
@@ -155,11 +175,13 @@ public abstract class AbstractJetInstance<M> implements JetInstance {
                 "JobConfig.classLoaderFactory not supported for light jobs");
         Preconditions.checkTrue(config.getInitialSnapshotName() == null,
                 "JobConfig.initialSnapshotName not supported for light jobs");
+        Preconditions.checkTrue(config.getUserCodeNamespace() == null,
+                "User Code Namespace association is not supported for light jobs");
     }
 
-    private Job newJobIfAbsent(@Nonnull Object jobDefinition, @Nonnull JobConfig config) {
+    private Job newJobIfAbsent(@Nonnull Object jobDefinition, @Nonnull JobConfig config, @Nullable Subject subject) {
         if (config.getName() == null) {
-            return newJobInt(newJobId(), jobDefinition, config, false);
+            return newJobInt(newJobId(), jobDefinition, config, subject, false);
         } else {
             while (true) {
                 Job job = getJob(config.getName());
@@ -170,22 +192,27 @@ public abstract class AbstractJetInstance<M> implements JetInstance {
                     }
                 }
                 try {
-                    return newJobInt(newJobId(), jobDefinition, config, false);
+                    return newJobInt(newJobId(), jobDefinition, config, subject, false);
                 } catch (JobAlreadyExistsException e) {
-                    logFine(getLogger(), "Could not submit job with duplicate name: %s, ignoring", config.getName());
+                    getLogger().fine("Could not submit job with duplicate name: %s, ignoring", config.getName());
                 }
             }
         }
     }
 
+    @Nonnull
+    public Job newJobIfAbsent(@Nonnull DAG dag, @Nonnull JobConfig config, @Nullable Subject subject) {
+        return newJobIfAbsent((Object) dag, config, subject);
+    }
+
     @Nonnull @Override
     public Job newJobIfAbsent(@Nonnull DAG dag, @Nonnull JobConfig config) {
-        return newJobIfAbsent((Object) dag, config);
+        return newJobIfAbsent((Object) dag, config, null);
     }
 
     @Nonnull @Override
     public Job newJobIfAbsent(@Nonnull Pipeline pipeline, @Nonnull JobConfig config) {
-        return newJobIfAbsent((Object) pipeline, config);
+        return newJobIfAbsent(pipeline, config, null);
     }
 
     @Nonnull @Override
@@ -198,24 +225,38 @@ public abstract class AbstractJetInstance<M> implements JetInstance {
         return newJobInt(newJobId(), dag, config, true);
     }
 
+    /**
+     * Submits a job defined in the Core API with attached {@link Subject}.
+     */
+    @Nonnull
+    public Job newLightJob(@Nonnull DAG dag, @Nonnull JobConfig config, @Nullable Subject subject) {
+        return newJobInt(newJobId(), dag, config, subject, true);
+    }
+
     @Nonnull
     public Job newLightJob(long jobId, @Nonnull DAG dag, @Nonnull JobConfig config) {
         return newJobInt(jobId, dag, config, true);
     }
 
+    @Nonnull
+    public Job newLightJob(long jobId, @Nonnull DAG dag, @Nonnull JobConfig config, @Nullable Subject subject) {
+        return newJobInt(jobId, dag, config, subject, true);
+    }
+
     @Nonnull @Override
     public List<Job> getJobs() {
-        return mergeJobIdsResults(getJobsInt(null, null));
+        return mergeJobIdsResults(getAllJobs());
     }
 
     @Nonnull @Override
     public List<Job> getJobs(@Nonnull String name) {
-        return mergeJobIdsResults(getJobsInt(name, null));
+        GetJobIdsResult result =  getJobByName(name);
+        return convertToJobStream(null, result).collect(Collectors.toList());
     }
 
     @Nullable @Override
     public Job getJob(long jobId) {
-        List<Job> jobs = mergeJobIdsResults(getJobsInt(null, jobId));
+        List<Job> jobs = mergeJobIdsResults(getJobsById(jobId));
         assert jobs.size() <= 1;
         return jobs.isEmpty() ? null : jobs.get(0);
     }
@@ -223,18 +264,22 @@ public abstract class AbstractJetInstance<M> implements JetInstance {
     @Nonnull
     private List<Job> mergeJobIdsResults(Map<M, GetJobIdsResult> results) {
         return results.entrySet().stream()
-                .flatMap(en -> IntStream.range(0, en.getValue().getJobIds().length)
-                        .mapToObj(i -> {
-                            long jobId = en.getValue().getJobIds()[i];
-                            boolean isLightJob = en.getValue().getIsLightJobs()[i];
-                            return newJobProxy(jobId, isLightJob ? en.getKey() : null);
-                        }))
+                .flatMap(entry -> convertToJobStream(entry.getKey(), entry.getValue()))
+                // Filtering is preserved for compatibility with 5.5: new client with old server
+                // Reason: Older server has an issue:
                 // In edge cases there can be duplicates. E.g. the GetIdsOp is broadcast to all members.  member1
                 // is master and responds and dies. It's removed from cluster, member2 becomes master and
                 // responds with the same normal jobs. It's safe to remove duplicates because the same jobId should
                 // be the same job - we use FlakeIdGenerator to generate the IDs.
                 .filter(distinctBy(Job::getId))
                 .collect(toList());
+    }
+
+    private Stream<Job> convertToJobStream(@Nullable M member, GetJobIdsResult result) {
+        long[] jobIds = result.getJobIds();
+        boolean[] isLightJobs = result.getIsLightJobs();
+        return IntStream.range(0, jobIds.length)
+                .mapToObj(i -> newJobProxy(jobIds[i], isLightJobs[i] ? member : null));
     }
 
     @Nullable
@@ -246,10 +291,10 @@ public abstract class AbstractJetInstance<M> implements JetInstance {
         }
         IMap<Object, Object> map = getHazelcastInstance().getMap(mapName);
         Object validationRecord = map.get(SnapshotValidationRecord.KEY);
-        if (validationRecord instanceof SnapshotValidationRecord) {
+        if (validationRecord instanceof SnapshotValidationRecord snapshotValidationRecord) {
             // update the cache - for robustness. For example after the map was copied
             getHazelcastInstance().getMap(JobRepository.EXPORTED_SNAPSHOTS_DETAIL_CACHE).set(name, validationRecord);
-            return new JobStateSnapshot(getHazelcastInstance(), name, (SnapshotValidationRecord) validationRecord);
+            return new JobStateSnapshot(getHazelcastInstance(), name, snapshotValidationRecord);
         } else {
             return null;
         }
@@ -363,11 +408,84 @@ public abstract class AbstractJetInstance<M> implements JetInstance {
     public abstract Job newJobProxy(long jobId, M lightJobCoordinator);
 
     /**
-     * Submit a new job and return the job proxy.
+     * Submit a new job with attached {@link Subject} and return the job proxy.
      */
-    public abstract Job newJobProxy(long jobId, boolean isLightJob, @Nonnull Object jobDefinition, @Nonnull JobConfig config);
+    public abstract Job newJobProxy(long jobId,
+                                    boolean isLightJob,
+                                    @Nonnull Object jobDefinition,
+                                    @Nonnull JobConfig config,
+                                    @Nullable Subject subject);
 
-    public abstract Map<M, GetJobIdsResult> getJobsInt(String onlyName, Long onlyJobId);
+
+    protected abstract GetJobIdsResult getJobByName(String onlyName);
+
+    protected abstract Map<M, GetJobIdsResult> getJobsById(Long onlyJobId);
+
+    protected abstract Map<M, GetJobIdsResult> getAllJobs();
 
     public abstract M getMasterId();
+
+    @Override
+    public JobBuilderImpl newJobBuilder(@Nonnull DAG dag) {
+        return new JobBuilderImpl(dag);
+    }
+
+    @Override
+    public JobBuilderImpl newJobBuilder(@Nonnull Pipeline pipeline) {
+        return new JobBuilderImpl(pipeline);
+    }
+
+    public class JobBuilderImpl implements JobBuilder {
+        private final @Nonnull Object jobDefinition;
+        private @Nullable JobConfig config;
+        private boolean isLightJob;
+
+        JobBuilderImpl(@Nonnull DAG dag) {
+            jobDefinition = dag;
+        }
+
+        JobBuilderImpl(@Nonnull Pipeline pipeline) {
+            jobDefinition = pipeline;
+        }
+
+        @Override
+        public JobBuilderImpl withConfig(@Nonnull JobConfig jobConfig) {
+            this.config = jobConfig;
+            return this;
+        }
+
+        @Override
+        public JobBuilderImpl withMemberSelector(@Nonnull JetMemberSelector memberSelector) {
+            if (jobDefinition instanceof DAG dag) {
+                dag.setMemberSelector(memberSelector);
+            } else {
+                ((PipelineImpl) jobDefinition).setMemberSelector(memberSelector);
+            }
+            return this;
+        }
+
+        @Override
+        public JobBuilderImpl asLightJob() {
+            isLightJob = true;
+            return this;
+        }
+
+        @Nonnull
+        private JobConfig getConfig() {
+            return config != null ? config : new JobConfig();
+        }
+
+        @Override
+        public Job start() {
+            return newJobInt(newJobId(), jobDefinition, getConfig(), isLightJob);
+        }
+
+        @Override
+        public Job startIfAbsent() {
+            if (isLightJob) {
+                throw new UnsupportedOperationException();
+            }
+            return newJobIfAbsent(jobDefinition, getConfig(), null);
+        }
+    }
 }

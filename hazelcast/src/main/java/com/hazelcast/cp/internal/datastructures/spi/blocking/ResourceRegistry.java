@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -80,7 +80,7 @@ public abstract class ResourceRegistry<W extends WaitKey, R extends BlockingReso
 
     protected CPGroupId groupId;
     protected final Map<String, R> resources = new ConcurrentHashMap<>();
-    protected final Set<String> destroyedNames = new HashSet<>();
+    protected final Set<String> destroyed = ConcurrentHashMap.newKeySet();
 
     // key.element1: name, key.element2: invocation uid
     // value.element1: timeout duration (persisted in the snapshot), value.element2: deadline timestamp (transient)
@@ -114,6 +114,9 @@ public abstract class ResourceRegistry<W extends WaitKey, R extends BlockingReso
         return resources.get(name);
     }
 
+    // squid:S3824 ConcurrentHashMap.computeIfAbsent(K, Function<? super K, ? extends V>) locks the map, which *may* have an
+    // effect on throughput such that it's not a direct replacement
+    @SuppressWarnings("squid:S3824")
     protected final R getOrInitResource(String name) {
         checkNotDestroyed(name);
         R resource = resources.get(name);
@@ -127,7 +130,7 @@ public abstract class ResourceRegistry<W extends WaitKey, R extends BlockingReso
 
     private void checkNotDestroyed(String name) {
         checkNotNull(name);
-        if (destroyedNames.contains(name)) {
+        if (destroyed.contains(name)) {
             throw new DistributedObjectDestroyedException("Resource[" + name + "] is already destroyed!");
         }
     }
@@ -175,9 +178,7 @@ public abstract class ResourceRegistry<W extends WaitKey, R extends BlockingReso
 
     final Map<BiTuple<String, UUID>, Long> overwriteWaitTimeouts(Map<BiTuple<String, UUID>, BiTuple<Long, Long>>
                                                                         existingWaitTimeouts) {
-        for (Entry<BiTuple<String, UUID>, BiTuple<Long, Long>> e : existingWaitTimeouts.entrySet()) {
-            waitTimeouts.put(e.getKey(), e.getValue());
-        }
+        waitTimeouts.putAll(existingWaitTimeouts);
 
         Map<BiTuple<String, UUID>, Long> newKeys = new HashMap<>();
         for (Entry<BiTuple<String, UUID>, BiTuple<Long, Long>> e : waitTimeouts.entrySet()) {
@@ -207,7 +208,7 @@ public abstract class ResourceRegistry<W extends WaitKey, R extends BlockingReso
     }
 
     final Collection<W> destroyResource(String name) {
-        destroyedNames.add(name);
+        destroyed.add(name);
         BlockingResource<W> resource = resources.remove(name);
         if (resource == null) {
             return null;
@@ -225,13 +226,21 @@ public abstract class ResourceRegistry<W extends WaitKey, R extends BlockingReso
         return groupId;
     }
 
+    public Map<String, R> getResources() {
+        return resources;
+    }
+
+    public Set<String> getDestroyed() {
+        return destroyed;
+    }
+
     // queried locally in tests
     public final Map<BiTuple<String, UUID>, BiTuple<Long, Long>> getWaitTimeouts() {
         return unmodifiableMap(waitTimeouts);
     }
 
     public final Collection<Long> destroy() {
-        destroyedNames.addAll(resources.keySet());
+        destroyed.addAll(resources.keySet());
         Collection<Long> indices = new ArrayList<>();
         for (BlockingResource<W> raftLock : resources.values()) {
             for (W key : raftLock.getAllWaitKeys()) {
@@ -295,8 +304,8 @@ public abstract class ResourceRegistry<W extends WaitKey, R extends BlockingReso
             out.writeString(e.getKey());
             out.writeObject(e.getValue());
         }
-        out.writeInt(destroyedNames.size());
-        for (String name : destroyedNames) {
+        out.writeInt(destroyed.size());
+        for (String name : destroyed) {
             out.writeString(name);
         }
         out.writeInt(waitTimeouts.size());
@@ -320,7 +329,7 @@ public abstract class ResourceRegistry<W extends WaitKey, R extends BlockingReso
         count = in.readInt();
         for (int i = 0; i < count; i++) {
             String name = in.readString();
-            destroyedNames.add(name);
+            destroyed.add(name);
         }
         long now = Clock.currentTimeMillis();
         count = in.readInt();
@@ -334,7 +343,7 @@ public abstract class ResourceRegistry<W extends WaitKey, R extends BlockingReso
 
     @Override
     public String toString() {
-        return "ResourceRegistry{" + "groupId=" + groupId + ", resources=" + resources + ", destroyedNames=" + destroyedNames
+        return "ResourceRegistry{" + "groupId=" + groupId + ", resources=" + resources + ", destroyed=" + destroyed
                 + ", waitTimeouts=" + waitTimeouts + '}';
     }
 }

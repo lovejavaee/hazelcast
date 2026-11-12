@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,22 @@
 package com.hazelcast.spi.impl.operationexecutor;
 
 import com.hazelcast.internal.nio.Packet;
+import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.spi.impl.operationexecutor.impl.OperationExecutorImpl;
+import com.hazelcast.spi.impl.operationservice.AsynchronouslyExecutingBackupOperation;
+import com.hazelcast.spi.impl.operationservice.BackupOperation;
+import com.hazelcast.spi.impl.operationservice.BlockingOperation;
+import com.hazelcast.spi.impl.operationservice.CallStatus;
+import com.hazelcast.spi.impl.operationservice.Offload;
 import com.hazelcast.spi.impl.operationservice.Operation;
+
+import java.util.Set;
+import java.util.function.Consumer;
+
+import static com.hazelcast.spi.impl.operationservice.CallStatus.OFFLOAD_ORDINAL;
+import static com.hazelcast.spi.impl.operationservice.CallStatus.RESPONSE_ORDINAL;
+import static com.hazelcast.spi.impl.operationservice.CallStatus.VOID_ORDINAL;
+import static com.hazelcast.spi.impl.operationservice.CallStatus.WAIT_ORDINAL;
 
 /**
  * The OperationRunner is responsible for the actual running of operations.
@@ -53,12 +67,9 @@ public abstract class OperationRunner {
      * Runs the provided packet.
      *
      * @param packet the packet to execute
-     * @return {@code true} if this packet was not executed and should be retried at a later time,
-     * {@code false} if the packet should not be retried, either because it
-     * timed out or has run successfully
      * @throws Exception if there was an exception raised while processing the packet
      */
-    public abstract boolean run(Packet packet) throws Exception;
+    public abstract void run(Packet packet) throws Exception;
 
     public abstract void run(Runnable task);
 
@@ -66,11 +77,8 @@ public abstract class OperationRunner {
      * Runs the provided operation.
      *
      * @param task the operation to execute
-     * @return {@code true} if this operation was not executed and should be retried at a later time,
-     * {@code false} if the operation should not be retried, either because it
-     * timed out or has run successfully
      */
-    public abstract boolean run(Operation task);
+    public abstract void run(Operation task);
 
     /**
      * Returns the current task that is executing. This value could be null
@@ -151,7 +159,7 @@ public abstract class OperationRunner {
     }
 
     /**
-     * Runs operation directly without checking any conditions;
+     * Runs op directly without checking any conditions;
      * node state, partition ownership, timeouts etc.
      * <p>
      * {@link Operation#beforeRun()}, {@link Operation#call()}
@@ -159,18 +167,60 @@ public abstract class OperationRunner {
      * <p>
      * Operation responses and backups are ignored.
      *
-     * @param operation operation to run
-     * @throws Exception when one of the operation phases fails with an exception
+     * @param op op to run
+     * @throws Exception when one of the op phases fails with an exception
      */
-    public static void runDirect(Operation operation) throws Exception {
+    public static void runDirect(Operation op) throws Exception {
         try {
-            operation.pushThreadContext();
-            operation.beforeRun();
-            operation.call();
-            operation.afterRun();
+            op.pushThreadContext();
+            op.beforeRun();
+            op.call();
+            op.afterRun();
         } finally {
-            operation.popThreadContext();
-            operation.afterRunFinal();
+            op.popThreadContext();
+            op.afterRunFinal();
         }
+    }
+
+    public static CallStatus runDirect(Operation op, NodeEngineImpl nodeEngine,
+                                       Set<Operation> asyncOperations,
+                                       Consumer<Operation> backupOpAfterRun) throws Exception {
+        CallStatus callStatus;
+        try {
+            op.pushThreadContext();
+            op.beforeRun();
+            callStatus = op.call();
+
+            switch (callStatus.ordinal()) {
+                case RESPONSE_ORDINAL:
+                case VOID_ORDINAL:
+                    op.afterRun();
+                    break;
+                case OFFLOAD_ORDINAL:
+                    op.afterRun();
+                    Offload offload = (Offload) callStatus;
+                    offload.init(nodeEngine, asyncOperations);
+                    if (op instanceof AsynchronouslyExecutingBackupOperation asynchronouslyExecutingBackupOperation
+                            && op instanceof BackupOperation) {
+                        asynchronouslyExecutingBackupOperation.setBackupOpAfterRun(backupOpAfterRun);
+                    }
+                    offload.start();
+                    break;
+                case WAIT_ORDINAL:
+                    if (op instanceof AsynchronouslyExecutingBackupOperation asynchronouslyExecutingBackupOperation
+                            && op instanceof BackupOperation) {
+                        asynchronouslyExecutingBackupOperation.setBackupOpAfterRun(backupOpAfterRun);
+                    }
+                    nodeEngine.getOperationParker().park((BlockingOperation) op);
+                    break;
+                default:
+                    throw new IllegalStateException();
+            }
+        } finally {
+            op.popThreadContext();
+            op.afterRunFinal();
+        }
+
+        return callStatus;
     }
 }

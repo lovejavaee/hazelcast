@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,14 @@
 
 package com.hazelcast.cp.internal.session;
 
-import com.hazelcast.cluster.Address;
 import com.hazelcast.config.Config;
 import com.hazelcast.config.cp.CPSubsystemConfig;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.cp.ISemaphore;
 import com.hazelcast.cp.internal.HazelcastRaftTestSupport;
 import com.hazelcast.cp.internal.RaftGroupId;
 import com.hazelcast.cp.internal.RaftInvocationManager;
+import com.hazelcast.cp.internal.RaftService;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
 import com.hazelcast.test.ChangeLoggingRule;
 import org.junit.Before;
@@ -32,17 +33,16 @@ import org.junit.Test;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
-import static com.hazelcast.cp.internal.session.AbstractProxySessionManager.NO_SESSION_ID;
+import static com.hazelcast.cp.internal.session.ProxySessionManager.NO_SESSION_ID;
 import static com.hazelcast.internal.util.ConcurrencyUtil.CALLER_RUNS;
-import static com.hazelcast.test.Accessors.getNodeEngineImpl;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.atMost;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -54,7 +54,7 @@ public abstract class AbstractProxySessionManagerTest extends HazelcastRaftTestS
 
     private static final int sessionTTLSeconds = 10;
 
-    HazelcastInstance[] members;
+    protected HazelcastInstance[] members;
     protected RaftGroupId groupId;
 
     @Before
@@ -66,13 +66,13 @@ public abstract class AbstractProxySessionManagerTest extends HazelcastRaftTestS
 
     @Test
     public void getSession_returnsNoSessionId_whenNoSessionCreated() {
-        AbstractProxySessionManager sessionManager = getSessionManager();
+        ProxySessionManager sessionManager = getSessionManager();
         assertEquals(NO_SESSION_ID, sessionManager.getSession(groupId));
     }
 
     @Test
     public void acquireSession_createsNewSession_whenSessionNotExists() {
-        AbstractProxySessionManager sessionManager = getSessionManager();
+        ProxySessionManager sessionManager = getSessionManager();
         long sessionId = sessionManager.acquireSession(groupId);
         assertNotEquals(NO_SESSION_ID, sessionId);
         assertEquals(sessionId, sessionManager.getSession(groupId));
@@ -84,7 +84,7 @@ public abstract class AbstractProxySessionManagerTest extends HazelcastRaftTestS
 
     @Test
     public void acquireSession_returnsExistingSession_whenSessionExists() {
-        AbstractProxySessionManager sessionManager = getSessionManager();
+        ProxySessionManager sessionManager = getSessionManager();
         long newSessionId = sessionManager.acquireSession(groupId);
         long sessionId = sessionManager.acquireSession(groupId);
         assertEquals(newSessionId, sessionId);
@@ -94,7 +94,7 @@ public abstract class AbstractProxySessionManagerTest extends HazelcastRaftTestS
 
     @Test
     public void acquireSession_returnsTheSameSessionId_whenExecutedConcurrently() throws Exception {
-        AbstractProxySessionManager sessionManager = getSessionManager();
+        ProxySessionManager sessionManager = getSessionManager();
 
         Callable<Long> acquireSessionCall = () -> sessionManager.acquireSession(groupId);
 
@@ -117,13 +117,13 @@ public abstract class AbstractProxySessionManagerTest extends HazelcastRaftTestS
 
     @Test
     public void releaseSession_hasNoEffect_whenSessionNotExists() {
-        AbstractProxySessionManager sessionManager = getSessionManager();
+        ProxySessionManager sessionManager = getSessionManager();
         sessionManager.releaseSession(groupId, 1);
     }
 
     @Test
     public void releaseSession_whenSessionExists() {
-        AbstractProxySessionManager sessionManager = getSessionManager();
+        ProxySessionManager sessionManager = getSessionManager();
         long sessionId = sessionManager.acquireSession(groupId);
         sessionManager.releaseSession(groupId, sessionId);
         assertEquals(0, sessionManager.getSessionAcquireCount(groupId, sessionId));
@@ -131,7 +131,7 @@ public abstract class AbstractProxySessionManagerTest extends HazelcastRaftTestS
 
     @Test
     public void sessionHeartbeatsAreNotSent_whenSessionNotExists() {
-        AbstractProxySessionManager sessionManager = getSessionManager();
+        AbstractProxySessionManager sessionManager = (AbstractProxySessionManager) getSessionManager();
         long sessionId = 1;
 
         assertTrueAllTheTime(() -> verify(sessionManager, never()).heartbeat(groupId, sessionId), 5);
@@ -139,7 +139,7 @@ public abstract class AbstractProxySessionManagerTest extends HazelcastRaftTestS
 
     @Test
     public void sessionHeartbeatsAreSent_whenSessionInUse() {
-        AbstractProxySessionManager sessionManager = getSessionManager();
+        AbstractProxySessionManager sessionManager = (AbstractProxySessionManager) getSessionManager();
         long sessionId = sessionManager.acquireSession(groupId);
 
         SessionAccessor sessionAccessor = getSessionAccessor();
@@ -153,7 +153,7 @@ public abstract class AbstractProxySessionManagerTest extends HazelcastRaftTestS
 
     @Test
     public void sessionHeartbeatsAreNotSent_whenSessionReleased() {
-        AbstractProxySessionManager sessionManager = getSessionManager();
+        AbstractProxySessionManager sessionManager = (AbstractProxySessionManager) getSessionManager();
         long sessionId = sessionManager.acquireSession(groupId);
 
         assertTrueEventually(() -> verify(sessionManager, atLeastOnce()).heartbeat(groupId, sessionId));
@@ -165,33 +165,8 @@ public abstract class AbstractProxySessionManagerTest extends HazelcastRaftTestS
     }
 
     @Test
-    public void sessionHeartbeatsStopSent_afterClusterRestart() {
-        AbstractProxySessionManager sessionManager = getSessionManager();
-        long sessionId = sessionManager.acquireSession(groupId);
-
-        assertTrueEventually(() -> verify(sessionManager, atLeastOnce()).heartbeat(groupId, sessionId));
-
-        Address address1 = members[0].getCPSubsystem().getLocalCPMember().getAddress();
-        Address address2 = members[1].getCPSubsystem().getLocalCPMember().getAddress();
-        Address address3 = members[2].getCPSubsystem().getLocalCPMember().getAddress();
-
-        members[0].getLifecycleService().terminate();
-        members[1].getLifecycleService().terminate();
-        members[2].getLifecycleService().terminate();
-
-        Config config = createConfig(3, 3);
-        HazelcastInstance instance1 = factory.newHazelcastInstance(address1, config);
-        HazelcastInstance instance2 = factory.newHazelcastInstance(address2, config);
-        HazelcastInstance instance3 = factory.newHazelcastInstance(address3, config);
-
-        waitUntilCPDiscoveryCompleted(instance1, instance2, instance3);
-
-        assertTrueAllTheTime(() -> verify(sessionManager, atMost(10)).heartbeat(groupId, sessionId), 15);
-    }
-
-    @Test
     public void acquireSession_returnsTheExistingSession_whenSessionInUse() {
-        AbstractProxySessionManager sessionManager = getSessionManager();
+        AbstractProxySessionManager sessionManager = (AbstractProxySessionManager) getSessionManager();
 
         long sessionId = sessionManager.acquireSession(groupId);
 
@@ -205,7 +180,7 @@ public abstract class AbstractProxySessionManagerTest extends HazelcastRaftTestS
 
     @Test
     public void acquireSession_returnsNewSession_whenSessionExpiredAndNotInUse() {
-        AbstractProxySessionManager sessionManager = getSessionManager();
+        AbstractProxySessionManager sessionManager = (AbstractProxySessionManager) getSessionManager();
 
         long sessionId = sessionManager.acquireSession(groupId);
 
@@ -223,7 +198,31 @@ public abstract class AbstractProxySessionManagerTest extends HazelcastRaftTestS
         });
     }
 
-    protected abstract AbstractProxySessionManager getSessionManager();
+    @Test
+    public void lastMember_skipsSessionClose_and_shutsDownQuickly() throws Exception {
+        ISemaphore sem = members[0].getCPSubsystem().getSemaphore("s");
+        sem.init(1);
+        sem.acquire();
+        assertFalse(members[1].getCPSubsystem().getSemaphore("s").tryAcquire(50, TimeUnit.MILLISECONDS));
+        sem.release();
+
+        members[1].getLifecycleService().shutdown();
+        members[2].getLifecycleService().shutdown();
+
+        assertTrueEventually(() ->
+                assertEquals(1, members[0].getCluster().getMembers().size()));
+        assertTrueEventually(() -> {
+            RaftService raftService = getNodeEngineImpl(members[0]).getService(RaftService.SERVICE_NAME);
+            assertEquals(1, raftService.getMetadataGroupManager().getActiveMembers().size());
+        });
+
+        long beforeShutdown = System.nanoTime();
+        members[0].getLifecycleService().shutdown();
+        long millis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - beforeShutdown);
+        assertTrue("expected fast last member shutdown, got " + millis + " ms", millis < 10000);
+    }
+
+    protected abstract ProxySessionManager getSessionManager();
 
     private InternalCompletableFuture<Object> completedFuture() {
         return InternalCompletableFuture.newCompletedFuture(null, CALLER_RUNS);

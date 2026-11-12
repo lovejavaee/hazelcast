@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,22 +17,28 @@
 package com.hazelcast.cp.internal;
 
 import com.hazelcast.cp.internal.raft.impl.RaftRole;
+import com.hazelcast.cp.internal.raft.impl.state.RaftState;
 import com.hazelcast.internal.metrics.Probe;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import com.hazelcast.internal.metrics.ProbeUnit;
 
-import static com.hazelcast.internal.metrics.MetricDescriptorConstants.CP_METRIC_RAFT_NODE_AVAILABLE_LOG_CAPACITY;
-import static com.hazelcast.internal.metrics.MetricDescriptorConstants.CP_METRIC_RAFT_NODE_COMMIT_INDEX;
-import static com.hazelcast.internal.metrics.MetricDescriptorConstants.CP_METRIC_RAFT_NODE_LAST_APPLIED;
-import static com.hazelcast.internal.metrics.MetricDescriptorConstants.CP_METRIC_RAFT_NODE_LAST_LOG_INDEX;
-import static com.hazelcast.internal.metrics.MetricDescriptorConstants.CP_METRIC_RAFT_NODE_LAST_LOG_TERM;
-import static com.hazelcast.internal.metrics.MetricDescriptorConstants.CP_METRIC_RAFT_NODE_SNAPSHOT_INDEX;
-import static com.hazelcast.internal.metrics.MetricDescriptorConstants.CP_METRIC_RAFT_NODE_TERM;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_METRIC_RAFT_NODE_LEADERSHIP_AVERAGE_TIME_MS;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_METRIC_RAFT_NODE_AVAILABLE_LOG_CAPACITY;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_METRIC_RAFT_NODE_COMMIT_INDEX;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_METRIC_RAFT_NODE_LAST_APPLIED;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_METRIC_RAFT_NODE_LAST_LOG_INDEX;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_METRIC_RAFT_NODE_LAST_LOG_TERM;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_METRIC_RAFT_NODE_ELECTED_LEADER_COUNT;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_METRIC_RAFT_NODE_SNAPSHOT_BUILD_COUNT;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_METRIC_RAFT_NODE_SNAPSHOT_BUILD_DURATION_MS;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_METRIC_RAFT_NODE_SNAPSHOT_INDEX;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_METRIC_RAFT_NODE_SNAPSHOT_TRANSFER_COUNT;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_METRIC_RAFT_NODE_SNAPSHOT_TRANSFER_DURATION_MS;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_METRIC_RAFT_NODE_TERM;
 
 /**
  * Container object for single RaftNode metrics.
  */
 @SuppressWarnings("checkstyle:visibilitymodifier")
-@SuppressFBWarnings("URF_UNREAD_PUBLIC_OR_PROTECTED_FIELD")
 public class RaftNodeMetrics {
 
     public final RaftRole role;
@@ -61,8 +67,35 @@ public class RaftNodeMetrics {
     @Probe(name = CP_METRIC_RAFT_NODE_AVAILABLE_LOG_CAPACITY)
     public final long availableLogCapacity;
 
+    @Probe(name = CP_METRIC_RAFT_NODE_LEADERSHIP_AVERAGE_TIME_MS,
+            unit = ProbeUnit.MS)
+    public final long averageTimeAsLeaderMs;
+
+    @Probe(name = CP_METRIC_RAFT_NODE_ELECTED_LEADER_COUNT,
+            unit = ProbeUnit.COUNT)
+    public final long electedLeaderCount;
+
+    @Probe(name = CP_METRIC_RAFT_NODE_SNAPSHOT_BUILD_DURATION_MS,
+            unit = ProbeUnit.MS)
+    public final long snapshotBuildDurationMs;
+
+    @Probe(name = CP_METRIC_RAFT_NODE_SNAPSHOT_BUILD_COUNT,
+            unit = ProbeUnit.COUNT)
+    public final long snapshotBuildCount;
+
+    @Probe(name = CP_METRIC_RAFT_NODE_SNAPSHOT_TRANSFER_DURATION_MS,
+            unit = ProbeUnit.MS)
+    public final long snapshotTransferDurationMs;
+
+    @Probe(name = CP_METRIC_RAFT_NODE_SNAPSHOT_TRANSFER_COUNT,
+            unit = ProbeUnit.COUNT)
+    public final long snapshotTransferCount;
+
+    @SuppressWarnings("checkstyle:ParameterNumber")
     public RaftNodeMetrics(RaftRole role, int memberCount, int term, long commitIndex, long lastApplied,
-            long lastLogTerm, long snapshotIndex, long lastLogIndex, long availableLogCapacity) {
+                           long lastLogTerm, long snapshotIndex, long lastLogIndex, long availableLogCapacity,
+                           RaftState.LeadershipStats leadershipStats, long snapshotBuildDurationMs, long snapshotBuildCount,
+                           long snapshotTransferDurationMs, long snapshotTransferCount) {
         this.role = role;
         this.memberCount = memberCount;
         this.term = term;
@@ -72,5 +105,11 @@ public class RaftNodeMetrics {
         this.snapshotIndex = snapshotIndex;
         this.lastLogIndex = lastLogIndex;
         this.availableLogCapacity = availableLogCapacity;
+        this.averageTimeAsLeaderMs = leadershipStats.getAvgTimeAsLeaderMs();
+        this.electedLeaderCount = leadershipStats.getElectedLeaderCount();
+        this.snapshotBuildDurationMs = snapshotBuildDurationMs;
+        this.snapshotBuildCount = snapshotBuildCount;
+        this.snapshotTransferDurationMs = snapshotTransferDurationMs;
+        this.snapshotTransferCount = snapshotTransferCount;
     }
 }

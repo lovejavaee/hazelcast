@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import org.junit.runner.RunWith;
 import java.util.Random;
 
 import static com.hazelcast.internal.memory.MemoryAllocator.NULL_ADDRESS;
-import static org.codehaus.groovy.runtime.metaclass.ConcurrentReaderHashMap.DEFAULT_LOAD_FACTOR;
+import static com.hazelcast.internal.util.hashslot.impl.CapacityUtil.DEFAULT_LOAD_FACTOR;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
@@ -52,7 +52,7 @@ public class HashSlotArray16byteKeyImplTest {
     private HashSlotArray16byteKeyImpl hsa;
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         memMgr = new HeapMemoryManager(32 << 20);
         mem = memMgr.getAccessor();
         hsa = new HashSlotArray16byteKeyImpl(0L, memMgr, VALUE_LENGTH);
@@ -60,13 +60,13 @@ public class HashSlotArray16byteKeyImplTest {
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         hsa.dispose();
         memMgr.dispose();
     }
 
     @Test
-    public void testPut() throws Exception {
+    public void testPut() {
         final long key1 = randomKey();
         final long key2 = randomKey();
         SlotAssignmentResult slot = insert(key1, key2);
@@ -79,7 +79,7 @@ public class HashSlotArray16byteKeyImplTest {
     }
 
     @Test
-    public void testGet() throws Exception {
+    public void testGet() {
         final long key1 = randomKey();
         final long key2 = randomKey();
         final SlotAssignmentResult slot = insert(key1, key2);
@@ -89,7 +89,7 @@ public class HashSlotArray16byteKeyImplTest {
     }
 
     @Test
-    public void testRemove() throws Exception {
+    public void testRemove() {
         final long key1 = randomKey();
         final long key2 = randomKey();
         insert(key1, key2);
@@ -99,7 +99,7 @@ public class HashSlotArray16byteKeyImplTest {
     }
 
     @Test
-    public void testSize() throws Exception {
+    public void testSize() {
         final long key1 = randomKey();
         final long key2 = randomKey();
 
@@ -111,7 +111,7 @@ public class HashSlotArray16byteKeyImplTest {
     }
 
     @Test
-    public void testClear() throws Exception {
+    public void testClear() {
         final long key1 = randomKey();
         final long key2 = randomKey();
 
@@ -188,28 +188,28 @@ public class HashSlotArray16byteKeyImplTest {
 
     @Test(expected = AssertionError.class)
     @RequireAssertEnabled
-    public void testPut_whenDisposed() throws Exception {
+    public void testPut_whenDisposed() {
         hsa.dispose();
         hsa.ensure(1, 1);
     }
 
     @Test(expected = AssertionError.class)
     @RequireAssertEnabled
-    public void testGet_whenDisposed() throws Exception {
+    public void testGet_whenDisposed() {
         hsa.dispose();
         hsa.get(1, 1);
     }
 
     @Test(expected = AssertionError.class)
     @RequireAssertEnabled
-    public void testRemove_whenDisposed() throws Exception {
+    public void testRemove_whenDisposed() {
         hsa.dispose();
         hsa.remove(1, 1);
     }
 
     @Test(expected = AssertionError.class)
     @RequireAssertEnabled
-    public void testClear_whenDisposed() throws Exception {
+    public void testClear_whenDisposed() {
         hsa.dispose();
         hsa.clear();
     }

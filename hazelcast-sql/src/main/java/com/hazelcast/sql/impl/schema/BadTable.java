@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,8 +30,8 @@ import java.util.List;
 public final class BadTable extends Table {
     private final Throwable cause;
 
-    public BadTable(String schemaName, String sqlName, Throwable cause) {
-        super(schemaName, sqlName, Collections.emptyList(), new ConstantTableStatistics(0));
+    public BadTable(String schemaName, String sqlName, String objectType, Throwable cause) {
+        super(schemaName, sqlName, Collections.emptyList(), new ConstantTableStatistics(0), objectType, false);
         this.cause = cause;
     }
 
@@ -43,11 +43,18 @@ public final class BadTable extends Table {
 
     @Override
     public PlanObjectKey getObjectKey() {
+        // BadTable will not be used in any reasonable plan.
+        // To not cause additional problems in PlanChecker return constant value instead of throwing.
+        return PlanObjectKey.NON_CACHEABLE_OBJECT_KEY;
+    }
+
+    @Override
+    public boolean isStreaming() {
         throw createException();
     }
 
     private QueryException createException() {
-        return new QueryException(String.format("Mapping '%s' is invalid: %s", getSqlName(), cause),
+        return QueryException.error(String.format("Mapping '%s' is invalid: %s", getSqlName(), cause),
                 cause);
     }
 }

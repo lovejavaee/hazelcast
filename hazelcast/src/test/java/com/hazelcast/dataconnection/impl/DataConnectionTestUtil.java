@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,18 +24,27 @@ import com.hazelcast.dataconnection.DataConnectionRegistration;
 import com.hazelcast.dataconnection.DataConnectionResource;
 
 import javax.annotation.Nonnull;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Properties;
 
+import static org.junit.Assert.assertNotNull;
+
 public final class DataConnectionTestUtil {
+
+    public static final String DUMMY_TYPE = "DUMMY";
 
     private DataConnectionTestUtil() {
     }
 
     public static void configureJdbcDataConnection(String name, String jdbcUrl, Config config) {
         Properties properties = new Properties();
-        properties.put("jdbcUrl", jdbcUrl);
+        properties.setProperty("jdbcUrl", jdbcUrl);
         DataConnectionConfig dataConnectionConfig = new DataConnectionConfig()
                 .setName(name)
                 .setType("jdbc")
@@ -45,12 +54,22 @@ public final class DataConnectionTestUtil {
 
     public static void configureJdbcDataConnection(String name, String jdbcUrl, String username, String password, Config config) {
         Properties properties = new Properties();
-        properties.put("jdbcUrl", jdbcUrl);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("jdbcUrl", jdbcUrl);
+        properties.setProperty("user", username);
+        properties.setProperty("password", password);
         DataConnectionConfig dataConnectionConfig = new DataConnectionConfig()
                 .setName(name)
                 .setType("jdbc")
+                .setProperties(properties);
+        config.getDataConnectionConfigs().put(name, dataConnectionConfig);
+    }
+
+    public static void configureMongoDataConnection(String name, String connectionString, Config config) {
+        Properties properties = new Properties();
+        properties.setProperty("connectionString", connectionString);
+        DataConnectionConfig dataConnectionConfig = new DataConnectionConfig()
+                .setName(name)
+                .setType("mongo")
                 .setProperties(properties);
         config.getDataConnectionConfigs().put(name, dataConnectionConfig);
     }
@@ -75,8 +94,14 @@ public final class DataConnectionTestUtil {
         public Collection<DataConnectionResource> listResources() {
             return Arrays.asList(
                     new DataConnectionResource("testType1", "testName1"),
-                    new DataConnectionResource("testType2", "testName2")
+                    new DataConnectionResource("testType2", "testPrefix1", "testName2")
             );
+        }
+
+        @Nonnull
+        @Override
+        public Collection<String> resourceTypes() {
+            return Arrays.asList("testType1", "testType2");
         }
 
         @Override
@@ -93,12 +118,23 @@ public final class DataConnectionTestUtil {
 
         @Override
         public String type() {
-            return "DUMMY";
+            return DUMMY_TYPE;
         }
 
         @Override
         public Class<? extends DataConnection> clazz() {
             return DummyDataConnection.class;
+        }
+    }
+
+    public static void executeJdbc(String jdbcUrl, String sql) throws SQLException {
+        assertNotNull(jdbcUrl, "jdbdUrl must be set");
+        assertNotNull(sql, "sql query must be provided");
+
+        try (Connection conn = DriverManager.getConnection(jdbcUrl);
+             Statement stmt = conn.createStatement()
+        ) {
+            stmt.execute(sql);
         }
     }
 }

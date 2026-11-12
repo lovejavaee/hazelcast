@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package com.hazelcast.function;
 
-import com.hazelcast.internal.util.ExceptionUtil;
 import com.hazelcast.security.impl.function.SecuredFunction;
 
 import java.io.Serializable;
@@ -33,22 +32,7 @@ import static com.hazelcast.internal.util.Preconditions.checkNotNull;
  * @since 4.0
  */
 @FunctionalInterface
-public interface ConsumerEx<T> extends Consumer<T>, Serializable, SecuredFunction {
-
-    /**
-     * Exception-declaring version of {@link Consumer#accept}
-     * @throws Exception in case of any exceptional case
-     */
-    void acceptEx(T t) throws Exception;
-
-    @Override
-    default void accept(T t) {
-        try {
-            acceptEx(t);
-        } catch (Exception e) {
-            throw ExceptionUtil.sneakyThrow(e);
-        }
-    }
+public interface ConsumerEx<T> extends ThrowingConsumer<T>, Serializable, SecuredFunction {
 
     /**
      * {@code Serializable} variant of {@link Consumer#andThen(Consumer)
@@ -56,10 +40,7 @@ public interface ConsumerEx<T> extends Consumer<T>, Serializable, SecuredFunctio
      */
     default ConsumerEx<T> andThen(ConsumerEx<? super T> after) {
         checkNotNull(after, "after");
-        return t -> {
-            accept(t);
-            after.accept(t);
-        };
+        return new FunctionsImpl.ComposedConsumerEx<>(this, after);
     }
 
     /**

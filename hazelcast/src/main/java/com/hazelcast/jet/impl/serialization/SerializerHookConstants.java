@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ public final class SerializerHookConstants {
     /**
      * Start of reserved space for Jet-specific serializers.
      * Any ID greater than this number might be used by some other Hazelcast serializer.
-     * For more information, {@see SerializationConstants}
+     * For more information, see {@link SerializationConstants}
      */
     public static final int JET_RESERVED_SPACE_START = SerializationConstants.JET_SERIALIZER_FIRST;
 
@@ -58,10 +58,15 @@ public final class SerializerHookConstants {
     public static final int QUERY_ENTRY = -327;
     public static final int DEFERRED_MAP = -328;
     public static final int AVRO_UTF8 = -329;
+    public static final int AVRO_GENERIC_CONTAINER = -330;
 
     public static final int CDC_RECORD = -340;
     public static final int CDC_RECORD_PART = -341;
     public static final int CDC_SOURCE_STATE = -342;
+
+    public static final int EE_CDC_RECORD = -343;
+    public static final int EE_CDC_RECORD_PART = -344;
+    public static final int EE_CDC_SOURCE_STATE = -345;
 
 
     // reserved for hadoop module: -380 to -390

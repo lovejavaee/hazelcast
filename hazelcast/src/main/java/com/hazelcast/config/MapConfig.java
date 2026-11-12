@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,10 +27,12 @@ import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.nio.serialization.impl.Versioned;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 import static com.hazelcast.internal.serialization.impl.SerializationUtil.readNullableList;
 import static com.hazelcast.internal.serialization.impl.SerializationUtil.writeNullableList;
@@ -38,13 +40,15 @@ import static com.hazelcast.internal.util.Preconditions.checkAsyncBackupCount;
 import static com.hazelcast.internal.util.Preconditions.checkBackupCount;
 import static com.hazelcast.internal.util.Preconditions.checkFalse;
 import static com.hazelcast.internal.util.Preconditions.checkNoNullInside;
+import static com.hazelcast.internal.util.Preconditions.checkNotNegative;
 import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 import static com.hazelcast.internal.util.Preconditions.isNotNull;
 
 /**
  * Contains the configuration for an {@link IMap}.
  */
-public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versioned {
+@SuppressWarnings("MethodCount")
+public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versioned, UserCodeNamespaceAwareConfig<MapConfig> {
 
     /**
      * The minimum number of backups
@@ -98,6 +102,12 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
      */
     public static final boolean DEFAULT_ENTRY_STATS_ENABLED = false;
     /**
+     * Default serialized entry size in bytes above which an entry is reported as oversized.
+     *
+     * @since 6.0
+     */
+    public static final long DEFAULT_OVERSIZED_ENTRY_THRESHOLD_BYTES = 1024L * 1024L;
+    /**
      * Default max size.
      */
     public static final int DEFAULT_MAX_SIZE = Integer.MAX_VALUE;
@@ -115,6 +125,7 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
     private boolean readBackupData;
     private boolean statisticsEnabled = DEFAULT_STATISTICS_ENABLED;
     private boolean perEntryStatsEnabled = DEFAULT_ENTRY_STATS_ENABLED;
+    private long oversizedEntryThresholdBytes = DEFAULT_OVERSIZED_ENTRY_THRESHOLD_BYTES;
     private int backupCount = DEFAULT_BACKUP_COUNT;
     private int asyncBackupCount = MIN_BACKUP_COUNT;
     private int timeToLiveSeconds = DEFAULT_TTL_SECONDS;
@@ -129,6 +140,7 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
     private WanReplicationRef wanReplicationRef;
     private List<EntryListenerConfig> entryListenerConfigs;
     private List<MapPartitionLostListenerConfig> partitionLostListenerConfigs;
+    // order of index configs is not relevant
     private List<IndexConfig> indexConfigs;
     private List<AttributeConfig> attributeConfigs;
     private List<QueryCacheConfig> queryCacheConfigs;
@@ -144,6 +156,7 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
             .setSize(DEFAULT_MAX_SIZE);
     private TieredStoreConfig tieredStoreConfig = new TieredStoreConfig();
     private List<PartitioningAttributeConfig> partitioningAttributeConfigs;
+    private @Nullable String userCodeNamespace = DEFAULT_NAMESPACE;
 
     public MapConfig() {
     }
@@ -152,6 +165,7 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
         setName(name);
     }
 
+    @SuppressWarnings("ExecutableStatementCount")
     public MapConfig(MapConfig config) {
         this.name = config.name;
         this.backupCount = config.backupCount;
@@ -167,6 +181,7 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
         this.cacheDeserializedValues = config.cacheDeserializedValues;
         this.statisticsEnabled = config.statisticsEnabled;
         this.perEntryStatsEnabled = config.perEntryStatsEnabled;
+        this.oversizedEntryThresholdBytes = config.oversizedEntryThresholdBytes;
         this.mergePolicyConfig = new MergePolicyConfig(config.mergePolicyConfig);
         this.wanReplicationRef = config.wanReplicationRef != null ? new WanReplicationRef(config.wanReplicationRef) : null;
         this.entryListenerConfigs = new ArrayList<>(config.getEntryListenerConfigs());
@@ -183,6 +198,7 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
         this.eventJournalConfig = new EventJournalConfig(config.eventJournalConfig);
         this.tieredStoreConfig = new TieredStoreConfig(config.tieredStoreConfig);
         this.partitioningAttributeConfigs = new ArrayList<>(config.getPartitioningAttributeConfigs());
+        this.userCodeNamespace = config.userCodeNamespace;
     }
 
     /**
@@ -190,6 +206,7 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
      *
      * @return the name of the {@link IMap}
      */
+    @Override
     public String getName() {
         return name;
     }
@@ -199,6 +216,7 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
      *
      * @param name the name to set for this {@link IMap}
      */
+    @Override
     public MapConfig setName(String name) {
         this.name = checkNotNull(name, "Name must not be null");
         return this;
@@ -413,7 +431,7 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
 
     /**
      * Sets the {@link MergePolicyConfig} for this map.
-     *
+     * <p>
      * Note that you may need to enable per entry stats
      * via {@link MapConfig#setPerEntryStatsEnabled}
      * to see all fields of entry view in your {@link
@@ -438,7 +456,7 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
 
     /**
      * Set to enable/disable map level statistics for this map.
-     *
+     * <p>
      * This setting is only for map level stats such as last
      * access time to map, total number of hits etc. For
      * entry level stats see {@link #perEntryStatsEnabled}
@@ -467,7 +485,7 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
     /**
      * Set to enable/disable per entry statistics.
      * Its default value is {@code false}.
-     *
+     * <p>
      * When you enable per entry stats, you can retrieve entry
      * level statistics such as hits, creation time, last access
      * time, last update time, last stored time for an entry.
@@ -479,6 +497,49 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
      */
     public MapConfig setPerEntryStatsEnabled(boolean perEntryStatsEnabled) {
         this.perEntryStatsEnabled = perEntryStatsEnabled;
+        return this;
+    }
+
+    /**
+     * Returns the serialized entry size, in bytes, above which an entry
+     * written to this map is reported as oversized.
+     *
+     * @return the oversized entry threshold in bytes, or {@code 0} if entry size tracking is disabled
+     * @see #setOversizedEntryThresholdBytes(long)
+     * @since 6.0
+     */
+    public long getOversizedEntryThresholdBytes() {
+        return oversizedEntryThresholdBytes;
+    }
+
+    /**
+     * Sets the serialized entry size, in bytes, above which an entry written
+     * to this map is reported as oversized. Large entries can cause memory
+     * pressure and slow down migrations and WAN replication.
+     * <p>
+     * When an entry larger than this threshold is written, the
+     * {@code oversizedEntriesSeen} map metric is incremented and a warning is
+     * logged, at most once every 30 minutes per map on each member. The
+     * {@code lastOversizedEntrySize} and {@code lastOversizedEntryTime} map
+     * metrics record the most recent oversized entry. The size is the sum of
+     * the serialized key and value sizes. For {@link InMemoryFormat#OBJECT}
+     * format, this can differ significantly from the heap memory used by the
+     * entry. Some {@code OBJECT} format writes may not be reported, such as
+     * entry processor results (unless WAN replication is enabled), read-through
+     * loads and writes to maps with a {@link com.hazelcast.map.MapInterceptor}.
+     * Statistics must be enabled for the map.
+     * <p>
+     * Its default value is {@value #DEFAULT_OVERSIZED_ENTRY_THRESHOLD_BYTES}.
+     * Set to {@code 0} to disable entry size tracking.
+     *
+     * @param oversizedEntryThresholdBytes the threshold in bytes, or {@code 0} to disable
+     * @return the current map config instance
+     * @throws IllegalArgumentException if the threshold is negative
+     * @since 6.0
+     */
+    public MapConfig setOversizedEntryThresholdBytes(long oversizedEntryThresholdBytes) {
+        this.oversizedEntryThresholdBytes = checkNotNegative(oversizedEntryThresholdBytes,
+                "Oversized entry threshold cannot be negative");
         return this;
     }
 
@@ -709,9 +770,9 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
      * @param hotRestartConfig hot restart config
      * @return this {@code MapConfig} instance
      *
-     * @deprecated since 5.0 use {@link MapConfig#setDataPersistenceConfig(DataPersistenceConfig)}
+     * @deprecated use {@link MapConfig#setDataPersistenceConfig(DataPersistenceConfig)}
      */
-    @Deprecated
+    @Deprecated(since = "5.0")
     public MapConfig setHotRestartConfig(@Nonnull HotRestartConfig hotRestartConfig) {
         this.hotRestartConfig = checkNotNull(hotRestartConfig, "HotRestartConfig cannot be null");
 
@@ -834,17 +895,41 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
-    @SuppressWarnings("checkstyle:methodlength")
+    @Nullable
+    public String getUserCodeNamespace() {
+        return userCodeNamespace;
+    }
+
+    /**
+     * Associates the provided Namespace Name with this structure for {@link ClassLoader} awareness.
+     * <p>
+     * The behaviour of setting this to {@code null} is outlined in the documentation for
+     * {@link UserCodeNamespaceAwareConfig#DEFAULT_NAMESPACE}.
+     *
+     * @param userCodeNamespace The ID of the Namespace to associate with this structure.
+     * @return the updated {@link MapConfig} instance
+     * @since 5.4
+     */
+    @Override
+    public MapConfig setUserCodeNamespace(@Nullable String userCodeNamespace) {
+        this.userCodeNamespace = userCodeNamespace;
+        return this;
+    }
+
+    @Override
+    @SuppressWarnings({"checkstyle:methodlength", "CyclomaticComplexity", "NPathComplexity"})
     public final boolean equals(Object o) {
         if (this == o) {
             return true;
         }
-        if (!(o instanceof MapConfig)) {
+        if (!(o instanceof MapConfig that)) {
             return false;
         }
 
-        MapConfig that = (MapConfig) o;
         if (backupCount != that.backupCount) {
             return false;
         }
@@ -864,6 +949,9 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
             return false;
         }
         if (perEntryStatsEnabled != that.perEntryStatsEnabled) {
+            return false;
+        }
+        if (oversizedEntryThresholdBytes != that.oversizedEntryThresholdBytes) {
             return false;
         }
         if (!name.equals(that.name)) {
@@ -899,7 +987,7 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
         if (!getPartitionLostListenerConfigs().equals(that.getPartitionLostListenerConfigs())) {
             return false;
         }
-        if (!getIndexConfigs().equals(that.getIndexConfigs())) {
+        if (!Set.copyOf(getIndexConfigs()).equals(Set.copyOf(that.getIndexConfigs()))) {
             return false;
         }
         if (!getAttributeConfigs().equals(that.getAttributeConfigs())) {
@@ -929,10 +1017,14 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
         if (!getPartitioningAttributeConfigs().equals(that.getPartitioningAttributeConfigs())) {
             return false;
         }
+        if (!Objects.equals(userCodeNamespace, that.userCodeNamespace)) {
+            return false;
+        }
 
         return hotRestartConfig.equals(that.hotRestartConfig);
     }
 
+    @SuppressWarnings("NPathComplexity")
     @Override
     public final int hashCode() {
         int result = (name != null ? name.hashCode() : 0);
@@ -950,12 +1042,13 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
         result = 31 * result + metadataPolicy.hashCode();
         result = 31 * result + (wanReplicationRef != null ? wanReplicationRef.hashCode() : 0);
         result = 31 * result + getEntryListenerConfigs().hashCode();
-        result = 31 * result + getIndexConfigs().hashCode();
+        result = 31 * result + Set.copyOf(getIndexConfigs()).hashCode();
         result = 31 * result + getAttributeConfigs().hashCode();
         result = 31 * result + getQueryCacheConfigs().hashCode();
         result = 31 * result + getPartitionLostListenerConfigs().hashCode();
         result = 31 * result + (statisticsEnabled ? 1 : 0);
         result = 31 * result + (perEntryStatsEnabled ? 1 : 0);
+        result = 31 * result + Long.hashCode(oversizedEntryThresholdBytes);
         result = 31 * result + (partitioningStrategyConfig != null ? partitioningStrategyConfig.hashCode() : 0);
         result = 31 * result + (splitBrainProtectionName != null ? splitBrainProtectionName.hashCode() : 0);
         result = 31 * result + merkleTreeConfig.hashCode();
@@ -964,6 +1057,7 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
         result = 31 * result + dataPersistenceConfig.hashCode();
         result = 31 * result + tieredStoreConfig.hashCode();
         result = 31 * result + getPartitioningAttributeConfigs().hashCode();
+        result = 31 * result + (userCodeNamespace != null ? userCodeNamespace.hashCode() : 0);
         return result;
     }
 
@@ -995,8 +1089,10 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
                 + ", cacheDeserializedValues=" + cacheDeserializedValues
                 + ", statisticsEnabled=" + statisticsEnabled
                 + ", entryStatsEnabled=" + perEntryStatsEnabled
+                + ", oversizedEntryThresholdBytes=" + oversizedEntryThresholdBytes
                 + ", tieredStoreConfig=" + tieredStoreConfig
                 + ", partitioningAttributeConfigs=" + partitioningAttributeConfigs
+                + ", userCodeNamespace=" + userCodeNamespace
                 + '}';
     }
 
@@ -1043,6 +1139,16 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
         if (out.getVersion().isGreaterOrEqual(Versions.V5_3)) {
             writeNullableList(partitioningAttributeConfigs, out);
         }
+
+        // RU_COMPAT_5_3
+        if (out.getVersion().isGreaterOrEqual(Versions.V5_4)) {
+            out.writeString(userCodeNamespace);
+        }
+
+        // RU_COMPAT_5_7
+        if (out.getVersion().isGreaterOrEqual(Versions.V6_0)) {
+            out.writeLong(oversizedEntryThresholdBytes);
+        }
     }
 
     @Override
@@ -1077,6 +1183,16 @@ public class MapConfig implements IdentifiedDataSerializable, NamedConfig, Versi
         setTieredStoreConfig(in.readObject());
         if (in.getVersion().isGreaterOrEqual(Versions.V5_3)) {
             partitioningAttributeConfigs = readNullableList(in);
+        }
+
+        // RU_COMPAT_5_3
+        if (in.getVersion().isGreaterOrEqual(Versions.V5_4)) {
+            userCodeNamespace = in.readString();
+        }
+
+        // RU_COMPAT_5_7
+        if (in.getVersion().isGreaterOrEqual(Versions.V6_0)) {
+            oversizedEntryThresholdBytes = in.readLong();
         }
     }
 }

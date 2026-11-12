@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,12 +30,16 @@ import com.hazelcast.internal.util.BiTuple;
 import com.hazelcast.spi.impl.NodeEngine;
 
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 import static com.hazelcast.cp.internal.RaftService.getObjectNameForProxy;
 import static com.hazelcast.cp.internal.RaftService.withoutDefaultGroupName;
-import static com.hazelcast.internal.metrics.MetricDescriptorConstants.CP_TAG_NAME;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_TAG_GROUP;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_TAG_NAME;
 import static com.hazelcast.internal.util.ExceptionUtil.rethrow;
+import static com.hazelcast.spi.properties.ClusterProperty.METRICS_DATASTRUCTURES;
 
 /**
  * Contains Raft-based count down latch instances
@@ -46,7 +50,7 @@ public class CountDownLatchService extends AbstractBlockingService<AwaitInvocati
     /**
      * Name of the service
      */
-    public static final String SERVICE_NAME = "hz:raft:countDownLatchService";
+    public static final String SERVICE_NAME = CountDownLatchServiceUtil.SERVICE_NAME;
 
     public CountDownLatchService(NodeEngine nodeEngine) {
         super(nodeEngine);
@@ -55,7 +59,10 @@ public class CountDownLatchService extends AbstractBlockingService<AwaitInvocati
     @Override
     protected void initImpl() {
         super.initImpl();
-        nodeEngine.getMetricsRegistry().registerDynamicMetricsProvider(this);
+
+        if (nodeEngine.getProperties().getBoolean(METRICS_DATASTRUCTURES)) {
+            nodeEngine.getMetricsRegistry().registerDynamicMetricsProvider(this);
+        }
     }
 
     public boolean trySetCount(CPGroupId groupId, String name, int count) {
@@ -126,18 +133,21 @@ public class CountDownLatchService extends AbstractBlockingService<AwaitInvocati
     public void provideDynamicMetrics(MetricDescriptor descriptor, MetricsCollectionContext context) {
         MetricDescriptor root = descriptor.withPrefix("cp.countdownlatch");
 
+        Map<CPGroupId, Integer> liveCount = new HashMap<>();
         for (CPGroupId groupId : getGroupIdSet()) {
             CountDownLatchRegistry registry = getRegistryOrNull(groupId);
             for (CountDownLatch latch : registry.getAllLatches()) {
                 MetricDescriptor desc = root.copy()
                         .withDiscriminator("id", latch.getName() + "@" + groupId.getName())
                         .withTag(CP_TAG_NAME, latch.getName())
-                        .withTag("group", groupId.getName());
+                        .withTag(CP_TAG_GROUP, groupId.getName());
 
                 context.collect(desc.copy().withMetric("round"), latch.getRound());
                 context.collect(desc.copy().withUnit(ProbeUnit.COUNT).withMetric("count"), latch.getCount());
                 context.collect(desc.copy().withUnit(ProbeUnit.COUNT).withMetric("remaining"), latch.getRemainingCount());
             }
+            liveCount.put(groupId, registry.getAllLatches().size());
         }
+        addSummaryMetrics(root, context, "cp.countdownlatch.summary", liveCount);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,8 +39,10 @@ import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.sql.HazelcastSqlException;
 import com.hazelcast.sql.SqlRow;
 import com.hazelcast.sql.SqlService;
+import com.hazelcast.test.HazelcastSerialClassRunner;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -73,7 +75,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
+@RunWith(HazelcastSerialClassRunner.class)
 public class SqlCompactTest extends SqlTestSupport {
 
     private static SqlService sqlService;
@@ -123,8 +127,10 @@ public class SqlCompactTest extends SqlTestSupport {
                 return Person.class;
             }
         });
+        addToCompactSerializationAllowList(config, Primitives.class);
 
         ClientConfig clientConfig = new ClientConfig();
+        addToCompactSerializationAllowList(clientConfig, Primitives.class);
         initializeWithClient(1, config, clientConfig);
         sqlService = instance().getSql();
         clientSqlService = client().getSql();
@@ -197,7 +203,7 @@ public class SqlCompactTest extends SqlTestSupport {
         IMap<Object, Object> map = client().getMap(name);
         Primitives primitives = (Primitives) map.get(1);
 
-        assertEquals(true, primitives.b);
+        assertTrue(primitives.b);
         assertEquals(2, primitives.bt);
         assertEquals(3, primitives.s);
         assertEquals(4, primitives.i);
@@ -260,7 +266,7 @@ public class SqlCompactTest extends SqlTestSupport {
     }
 
     @Test
-    public void test_readNonNullKindsOfCompactViaSQL() throws IOException {
+    public void test_readNonNullKindsOfCompactViaSQL() {
         String name = randomName();
         sqlService.execute("CREATE MAPPING " + name + " ("
                 + " __key INT "

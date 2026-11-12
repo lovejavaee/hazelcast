@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,12 +19,14 @@ package com.hazelcast.ringbuffer.impl;
 import com.hazelcast.config.InMemoryFormat;
 import com.hazelcast.config.RingbufferConfig;
 import com.hazelcast.core.HazelcastException;
+import com.hazelcast.internal.namespace.NamespaceUtil;
 import com.hazelcast.internal.nio.IOUtil;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.nio.serialization.HazelcastSerializationException;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
+import com.hazelcast.nio.serialization.impl.Versioned;
 import com.hazelcast.ringbuffer.StaleSequenceException;
 import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.operationservice.Notifier;
@@ -37,6 +39,9 @@ import java.io.IOException;
 import static com.hazelcast.config.InMemoryFormat.BINARY;
 import static com.hazelcast.config.InMemoryFormat.OBJECT;
 import static com.hazelcast.config.InMemoryFormat.values;
+import static com.hazelcast.internal.namespace.NamespaceUtil.callWithNamespace;
+import static com.hazelcast.internal.namespace.NamespaceUtil.runWithNamespace;
+import static com.hazelcast.spi.properties.ClusterProperty.EVENT_JOURNAL_CLEANUP_THRESHOLD;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
 /**
@@ -51,11 +56,11 @@ import static java.util.concurrent.TimeUnit.SECONDS;
  * @param <E> the type of items in the ringbuffer
  */
 @SuppressWarnings("checkstyle:methodcount")
-public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, Notifier {
+public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, Notifier, Versioned {
 
     private static final long TTL_DISABLED = 0;
 
-    private ObjectNamespace namespace;
+    private ObjectNamespace objectNamespace;
 
     // a cached version of the wait notify key needed to wait for a change if the ringbuffer is empty
     private RingbufferWaitNotifyKey emptyRingWaitNotifyKey;
@@ -69,6 +74,8 @@ public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, No
     private RingbufferConfig config;
     private RingbufferStoreWrapper store;
     private SerializationService serializationService;
+    private String userCodeNamespace;
+    private int cleanupThreshold;
 
     /**
      * The ringbuffer containing the items. The type of contained items depends
@@ -96,11 +103,13 @@ public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, No
      * {@link #init(RingbufferConfig, NodeEngine)}
      * method to complete the initialization before usage.
      *
-     * @param namespace the namespace of the ringbuffer container
+     * @param objectNamespace   the {@link ObjectNamespace} of the ringbuffer container
+     * @param userCodeNamespace the user code namespace of the ringbuffer content
      */
-    public RingbufferContainer(ObjectNamespace namespace, int partitionId) {
-        this.namespace = namespace;
-        this.emptyRingWaitNotifyKey = new RingbufferWaitNotifyKey(namespace, partitionId);
+    public RingbufferContainer(ObjectNamespace objectNamespace, int partitionId, String userCodeNamespace) {
+        this.objectNamespace = objectNamespace;
+        this.userCodeNamespace = userCodeNamespace;
+        this.emptyRingWaitNotifyKey = new RingbufferWaitNotifyKey(objectNamespace, partitionId);
     }
 
     /**
@@ -116,10 +125,10 @@ public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, No
                                RingbufferConfig config,
                                NodeEngine nodeEngine,
                                int partitionId) {
-        this(namespace, partitionId);
+        this(namespace, partitionId, config.getUserCodeNamespace());
 
         this.inMemoryFormat = config.getInMemoryFormat();
-        this.ringbuffer = new ArrayRingbuffer<E>(config.getCapacity());
+        this.ringbuffer = new ArrayRingbuffer<>(config.getCapacity());
 
         final long ttlMs = SECONDS.toMillis(config.getTimeToLiveSeconds());
         if (ttlMs != TTL_DISABLED) {
@@ -140,16 +149,22 @@ public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, No
      */
     public void init(RingbufferConfig config, NodeEngine nodeEngine) {
         this.config = config;
+        this.userCodeNamespace = config.getUserCodeNamespace();
         this.serializationService = nodeEngine.getSerializationService();
-        initRingbufferStore(nodeEngine.getConfigClassLoader());
+        initRingbufferStore(NamespaceUtil.getClassLoaderForNamespace(nodeEngine, config.getUserCodeNamespace()), nodeEngine);
+        this.cleanupThreshold = (int) (
+                config.getCapacity() * nodeEngine.getProperties().getFloat(EVENT_JOURNAL_CLEANUP_THRESHOLD)
+        );
     }
 
-    private void initRingbufferStore(ClassLoader configClassLoader) {
-        this.store = RingbufferStoreWrapper.create(namespace,
+    private void initRingbufferStore(ClassLoader classLoader, NodeEngine nodeEngine) {
+        this.store = RingbufferStoreWrapper.create(objectNamespace,
                 config.getRingbufferStoreConfig(),
                 config.getInMemoryFormat(),
                 serializationService,
-                configClassLoader);
+                classLoader,
+                nodeEngine,
+                config.getUserCodeNamespace());
         if (store.isEnabled()) {
             try {
                 final long storeSequence = store.getLargestSequence();
@@ -186,6 +201,10 @@ public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, No
 
     public long headSequence() {
         return ringbuffer.headSequence();
+    }
+
+    public String getUserCodeNamespace() {
+        return userCodeNamespace;
     }
 
     /**
@@ -281,7 +300,7 @@ public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, No
      * {@link InMemoryFormat} if necessary.
      *
      * @param item item to be stored in the ring buffer and data store, can be
-     *             {@link Data} or an deserialized object
+     *             {@link Data} or a deserialized object
      * @return the sequence ID of the item stored in the ring buffer
      * @throws HazelcastException              if there was any exception thrown by the data store
      * @throws HazelcastSerializationException if the ring buffer is configured to keep items in object format and the
@@ -330,8 +349,8 @@ public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, No
             }
         }
 
-        for (int i = 0; i < items.length; i++) {
-            lastSequence = addInternal(items[i]);
+        for (T item : items) {
+            lastSequence = addInternal(item);
         }
         return lastSequence;
     }
@@ -351,7 +370,6 @@ public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, No
      * @throws HazelcastSerializationException if the ring buffer is configured to keep items in object format and the
      *                                         item could not be deserialized
      */
-    @SuppressWarnings("unchecked")
     public void set(long sequenceId, T item) {
         final E rbItem = convertToRingbufferFormat(item);
 
@@ -388,8 +406,10 @@ public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, No
      */
     public Data readAsData(long sequence) {
         checkReadSequence(sequence);
-        Object rbItem = readOrLoadItem(sequence);
-        return serializationService.toData(rbItem);
+        return callWithNamespace(userCodeNamespace, () -> {
+            Object rbItem = readOrLoadItem(sequence);
+            return serializationService.toData(rbItem);
+        });
     }
 
     /**
@@ -407,21 +427,28 @@ public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, No
     public long readMany(long beginSequence, ReadResultSetImpl result) {
         checkReadSequence(beginSequence);
 
-        long seq = beginSequence;
-        while (seq <= ringbuffer.tailSequence()) {
-            result.addItem(seq, readOrLoadItem(seq));
-            seq++;
-            if (result.isMaxSizeReached()) {
-                // we have found all items we are looking for. We are done.
-                break;
+        return callWithNamespace(userCodeNamespace, () -> {
+            long seq = beginSequence;
+            while (seq <= ringbuffer.tailSequence()) {
+                result.addItem(seq, readOrLoadItem(seq));
+                seq++;
+                if (result.isMaxSizeReached()) {
+                    // we have found all items we are looking for. We are done.
+                    break;
+                }
             }
-        }
-        return seq;
+            return seq;
+        });
     }
 
-    @SuppressWarnings("unchecked")
     public void cleanup() {
         if (expirationPolicy != null) {
+            expirationPolicy.cleanup(ringbuffer);
+        }
+    }
+
+    public void maybeCleanup() {
+        if (expirationPolicy != null && remainingCapacity() < cleanupThreshold) {
             expirationPolicy.cleanup(ringbuffer);
         }
     }
@@ -444,7 +471,7 @@ public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, No
      * @return the bounded sequence
      */
     public long clampReadSequenceToBounds(long readSequence) {
-        // fast forward if late and no store is configured
+        // fast-forward if late and no store is configured
         final long headSequence = headSequence();
         if (readSequence < headSequence && !store.isEnabled()) {
             return headSequence;
@@ -523,7 +550,6 @@ public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, No
         return item;
     }
 
-    @SuppressWarnings("unchecked")
     private long addInternal(T item) {
         final E rbItem = convertToRingbufferFormat(item);
 
@@ -548,9 +574,9 @@ public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, No
      *                                         in object format and the item could not be deserialized
      */
     private E convertToRingbufferFormat(Object item) {
-        return inMemoryFormat == OBJECT
+        return callWithNamespace(userCodeNamespace, () -> inMemoryFormat == OBJECT
                 ? (E) serializationService.toObject(item)
-                : (E) serializationService.toData(item);
+                : (E) serializationService.toData(item));
     }
 
     /**
@@ -602,9 +628,9 @@ public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, No
 
             // we write the time difference compared to now. Because the clock on the receiving side
             // can be totally different then our time. If there would be a ttl of 10 seconds, than
-            // the expiration time would be 10 seconds after the insertion time. But the if ringbuffer is
+            // the expiration time would be 10 seconds after the insertion time. But if ringbuffer is
             // migrated to a machine with a time 1 hour earlier, the ttl would effectively become
-            // 1 hours and 10 seconds.
+            // 1 hour and 10 seconds.
             if (ttlEnabled) {
                 long deltaMs = expirationPolicy.getExpirationAt(seq) - now;
                 out.writeLong(deltaMs);
@@ -631,18 +657,21 @@ public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, No
         }
 
         long now = System.currentTimeMillis();
-        for (long seq = headSequence; seq <= tailSequence; seq++) {
-            if (inMemoryFormat == BINARY) {
-                ringbuffer.set(seq, (E) IOUtil.readData(in));
-            } else {
-                ringbuffer.set(seq, (E) in.readObject());
-            }
+        runWithNamespace(userCodeNamespace, () -> {
+            for (long seq = headSequence; seq <= tailSequence; seq++) {
+                final long seqFinal = seq;
+                if (inMemoryFormat == BINARY) {
+                    runWithNamespace(userCodeNamespace, () -> ringbuffer.set(seqFinal, (E) IOUtil.readData(in)));
+                } else {
+                    runWithNamespace(userCodeNamespace, () -> ringbuffer.set(seqFinal, in.readObject()));
+                }
 
-            if (ttlEnabled) {
-                long delta = in.readLong();
-                expirationPolicy.setExpirationAt(seq, delta + now);
+                if (ttlEnabled) {
+                    long delta = in.readLong();
+                    expirationPolicy.setExpirationAt(seq, delta + now);
+                }
             }
-        }
+        });
     }
 
     /**
@@ -656,8 +685,20 @@ public class RingbufferContainer<T, E> implements IdentifiedDataSerializable, No
         return expirationPolicy;
     }
 
+    /**
+     * @deprecated due to ambiguity between User Code Namespaces (used in
+     * most data structures) and ObjectNamespaces not used in most data structures.
+     * Use {@link #getObjectNamespace()} instead.
+     *
+     * @return This container's {@link ObjectNamespace}
+     */
+    @Deprecated(since = "5.4", forRemoval = true)
     public ObjectNamespace getNamespace() {
-        return namespace;
+        return objectNamespace;
+    }
+
+    public ObjectNamespace getObjectNamespace() {
+        return objectNamespace;
     }
 
     @Override

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.test;
 
 import com.hazelcast.cache.jsr.JsrTestUtil;
 import com.hazelcast.internal.util.ConcurrencyUtil;
+import com.hazelcast.test.annotation.QuickTest;
 import com.hazelcast.test.annotation.Repeat;
 import com.hazelcast.test.bounce.BounceMemberRule;
 import com.hazelcast.test.starter.ReflectionUtils;
@@ -35,12 +36,14 @@ import org.junit.runners.model.InitializationError;
 import org.junit.runners.model.MultipleFailureException;
 import org.junit.runners.model.Statement;
 import org.junit.runners.model.TestClass;
+import org.opentest4j.TestAbortedException;
 
 import java.lang.annotation.Annotation;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
 import java.lang.reflect.Method;
+import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -63,7 +66,6 @@ public abstract class AbstractHazelcastClassRunner extends AbstractParameterized
     private static final int DEFAULT_TEST_TIMEOUT_IN_SECONDS = getInteger("hazelcast.test.defaultTestTimeoutInSeconds", 300);
     private static final boolean THREAD_DUMP_ON_FAILURE;
 
-    private static final ThreadLocal<String> TEST_NAME_THREAD_LOCAL = new InheritableThreadLocal<String>();
     private static final boolean THREAD_CPU_TIME_INFO_AVAILABLE;
     private static final boolean THREAD_CONTENTION_INFO_AVAILABLE;
 
@@ -72,7 +74,7 @@ public abstract class AbstractHazelcastClassRunner extends AbstractParameterized
 
         final String threadDumpOnFailure = System.getProperty("hazelcast.test.threadDumpOnFailure");
         THREAD_DUMP_ON_FAILURE = threadDumpOnFailure != null
-                ? Boolean.parseBoolean(threadDumpOnFailure) : JenkinsDetector.isOnJenkins();
+                ? Boolean.parseBoolean(threadDumpOnFailure) : CiExecutionDetector.isOnCi();
 
         ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
 
@@ -119,7 +121,7 @@ public abstract class AbstractHazelcastClassRunner extends AbstractParameterized
         System.setProperty("hazelcast.phone.home.enabled", "false");
         System.setProperty("hazelcast.wait.seconds.before.join", "1");
         System.setProperty("hazelcast.local.localAddress", "127.0.0.1");
-        System.setProperty("java.net.preferIPv4Stack", "true");
+
         //override default async executor of hazelcast so that it can report correct test names in test runs
         //if ForkJoinPool parallelism is less than or equal to 1, `thread-per-task` will be used.
         //In that case there is no need to override defaultAsyncExecutor
@@ -142,29 +144,18 @@ public abstract class AbstractHazelcastClassRunner extends AbstractParameterized
     }
 
     public static String getTestMethodName() {
-        return TEST_NAME_THREAD_LOCAL.get();
-    }
-
-    static void setThreadLocalTestMethodName(String name) {
-        TestLoggingUtils.setThreadLocalTestMethodName(name);
-        TEST_NAME_THREAD_LOCAL.set(name);
-    }
-
-    static void removeThreadLocalTestMethodName() {
-        TestLoggingUtils.removeThreadLocalTestMethodName();
-        TEST_NAME_THREAD_LOCAL.remove();
+        return TestNameHolder.getTestMethodName();
     }
 
     @Override
     protected List<FrameworkMethod> getChildren() {
         List<FrameworkMethod> children = super.getChildren();
-        List<FrameworkMethod> modifiableList = new ArrayList<FrameworkMethod>(children);
+        List<FrameworkMethod> modifiableList = new ArrayList<>(children);
         Collections.shuffle(modifiableList);
         return modifiableList;
     }
 
     @Override
-    @SuppressWarnings("deprecation")
     protected Statement withPotentialTimeout(FrameworkMethod method, Object test, Statement next) {
         long timeout = getTimeout(method.getAnnotation(Test.class));
         return new FailOnTimeoutStatement(method.getName(), next, timeout);
@@ -185,11 +176,11 @@ public abstract class AbstractHazelcastClassRunner extends AbstractParameterized
         ExpectedException expectedException = null;
         if (!testRules.isEmpty()) {
             for (TestRule rule : testRules) {
-                if (rule instanceof BounceMemberRule) {
-                    nextStatement = ((BounceMemberRule) rule).stopBouncing(statement);
+                if (rule instanceof BounceMemberRule memberRule) {
+                    nextStatement = memberRule.stopBouncing(statement);
                 }
-                if (rule instanceof ExpectedException) {
-                    expectedException = (ExpectedException) rule;
+                if (rule instanceof ExpectedException exception) {
+                    expectedException = exception;
                 }
             }
         }
@@ -214,8 +205,8 @@ public abstract class AbstractHazelcastClassRunner extends AbstractParameterized
         Statement nextStatement = statement;
         if (!testRules.isEmpty()) {
             for (TestRule rule : testRules) {
-                if (rule instanceof BounceMemberRule) {
-                    nextStatement = ((BounceMemberRule) rule).startBouncing(statement);
+                if (rule instanceof BounceMemberRule memberRule) {
+                    nextStatement = memberRule.startBouncing(statement);
                 }
             }
         }
@@ -250,7 +241,7 @@ public abstract class AbstractHazelcastClassRunner extends AbstractParameterized
     protected List<TestRule> getTestRules(Object target) {
         List<TestRule> testRules = super.getTestRules(target);
 
-        Set<Class<? extends TestRule>> testRuleClasses = new HashSet<Class<? extends TestRule>>();
+        Set<Class<? extends TestRule>> testRuleClasses = new HashSet<>();
 
         TestClass testClass = getTestClass();
 
@@ -297,6 +288,13 @@ public abstract class AbstractHazelcastClassRunner extends AbstractParameterized
     protected Statement withAfterClasses(Statement statement) {
         final Statement originalStatement = super.withAfterClasses(statement);
         return new AfterClassesStatement(originalStatement);
+    }
+
+    @Override
+    protected List<TestRule> classRules() {
+        List<TestRule> rules = new ArrayList<>(super.classRules());
+        rules.add(new MobyNamingRule());
+        return rules;
     }
 
     private String generateThreadDump() {
@@ -360,7 +358,7 @@ public abstract class AbstractHazelcastClassRunner extends AbstractParameterized
 
         @Override
         public void evaluate() throws Throwable {
-            List<Throwable> errors = new ArrayList<Throwable>();
+            List<Throwable> errors = new ArrayList<>();
             try {
                 next.evaluate();
             } catch (Throwable e) {
@@ -388,7 +386,7 @@ public abstract class AbstractHazelcastClassRunner extends AbstractParameterized
         }
 
         private boolean isJUnitAssumeException(Throwable e) {
-            return e instanceof AssumptionViolatedException;
+            return e instanceof AssumptionViolatedException || e instanceof TestAbortedException;
         }
 
         private boolean expectsException() throws IllegalAccessException {
@@ -425,6 +423,15 @@ public abstract class AbstractHazelcastClassRunner extends AbstractParameterized
                 }
                 statement.evaluate();
             }
+        }
+    }
+
+    public static void logMessageIfTestOverran(FrameworkMethod method, float tookSeconds) {
+        if (tookSeconds > QuickTest.EXPECTED_RUNTIME_THRESHOLD.getSeconds()) {
+            System.err.println(MessageFormat.format(
+                    "{0} is annotated as a {1}, expected to complete within {2} seconds - but took {3} seconds",
+                    method.getName(), QuickTest.class.getSimpleName(), QuickTest.EXPECTED_RUNTIME_THRESHOLD.getSeconds(),
+                    tookSeconds));
         }
     }
 }

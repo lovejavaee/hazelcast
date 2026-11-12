@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,13 +21,13 @@ import com.hazelcast.logging.AbstractLogger;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.LoggerFactory;
 
-import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Level;
 
 public class MockLoggingFactory implements LoggerFactory {
 
-    static List<String> capturedMessages = new ArrayList<>();
+    public static List<String> capturedMessages = new CopyOnWriteArrayList<>();
 
     @Override
     public ILogger getLogger(String name) {
@@ -44,11 +44,6 @@ public class MockLoggingFactory implements LoggerFactory {
                 if (thrown != null) {
                     thrown.printStackTrace();
                 }
-            }
-
-            @Override
-            public void log(com.hazelcast.logging.LogEvent logEvent) {
-                log(logEvent.getLogRecord().getLevel(), logEvent.getLogRecord().getMessage());
             }
 
             @Override

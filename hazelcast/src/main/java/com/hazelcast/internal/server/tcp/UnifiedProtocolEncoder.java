@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import com.hazelcast.spi.properties.HazelcastProperties;
 import java.nio.ByteBuffer;
 
 import static com.hazelcast.internal.networking.ChannelOption.SO_SNDBUF;
+import static com.hazelcast.internal.networking.HandlerStatus.BLOCKED;
 import static com.hazelcast.internal.networking.HandlerStatus.CLEAN;
 import static com.hazelcast.internal.networking.HandlerStatus.DIRTY;
 import static com.hazelcast.internal.nio.IOUtil.compactOrClear;
@@ -36,7 +37,6 @@ import static com.hazelcast.internal.nio.Protocols.CLUSTER;
 import static com.hazelcast.internal.nio.Protocols.PROTOCOL_LENGTH;
 import static com.hazelcast.internal.nio.ascii.TextEncoder.TEXT_ENCODER;
 import static com.hazelcast.internal.server.ServerContext.KILO_BYTE;
-import static com.hazelcast.internal.util.JVMUtil.upcast;
 import static com.hazelcast.internal.util.StringUtil.stringToBytes;
 import static com.hazelcast.spi.properties.ClusterProperty.SOCKET_CLIENT_SEND_BUFFER_SIZE;
 import static com.hazelcast.spi.properties.ClusterProperty.SOCKET_SEND_BUFFER_SIZE;
@@ -44,7 +44,7 @@ import static com.hazelcast.spi.properties.ClusterProperty.SOCKET_SEND_BUFFER_SI
 /**
  * The ProtocolEncoder is responsible for writing the protocol and once the protocol
  * has been written, the ProtocolEncoder is replaced by the appropriate handler.
- *
+ * <p>
  * The ProtocolEncoder and the 'client' side of a member connection, will always
  * write the cluster protocol immediately. The ProtocolEncoder on the 'server' side
  * of the connection will wait till it has received the protocol and then will only
@@ -77,8 +77,6 @@ public class UnifiedProtocolEncoder
     /**
      * Signals the ProtocolEncoder that the protocol is known. This call will be
      * made by the ProtocolDecoder as soon as it knows the inbound protocol.
-     *
-     * @param inboundProtocol
      */
     void signalProtocolEstablished(String inboundProtocol) {
         assert !channel.isClientMode() : "Signal protocol should only be made on channel in serverMode";
@@ -92,12 +90,12 @@ public class UnifiedProtocolEncoder
 
         try {
             if (inboundProtocol == null) {
-                // deal with spurious calls; the protocol to send isn't known yet.
-                return CLEAN;
+                // the protocol to send isn't known yet.
+                return BLOCKED;
             }
 
             if (CLUSTER.equals(inboundProtocol)) {
-                // in case of a member, the cluster protocol needs to be send first before initializing the channel.
+                // in case of a member, the cluster protocol needs to be sent first before initializing the channel.
 
                 if (!clusterProtocolBuffered) {
                     clusterProtocolBuffered = true;
@@ -126,15 +124,17 @@ public class UnifiedProtocolEncoder
                 }
             }
 
-            return CLEAN;
+            // Blocking avoids a busy loop, but outbound frames may accumulate until the connection is closed
+            // TODO: close stalled protocol negotiations - https://hazelcast.atlassian.net/browse/CTT-1426
+            return encoderCanReplace ? CLEAN : BLOCKED;
         } finally {
-            upcast(dst).flip();
+            dst.flip();
         }
     }
 
     /**
      * Checks if the protocol bytes have been drained.
-     *
+     * <p>
      * The protocol buffer is in write mode, so if position is 0, the protocol
      * buffer has been drained.
      *

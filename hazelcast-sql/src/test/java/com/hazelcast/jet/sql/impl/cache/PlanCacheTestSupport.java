@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,8 @@ import com.hazelcast.sql.impl.optimizer.PlanKey;
 import com.hazelcast.sql.impl.optimizer.PlanObjectKey;
 import com.hazelcast.sql.impl.optimizer.SqlPlan;
 import com.hazelcast.sql.impl.security.SqlSecurityContext;
+import com.hazelcast.test.HazelcastSerialClassRunner;
+import org.junit.runner.RunWith;
 
 import java.util.Collections;
 import java.util.HashSet;
@@ -36,6 +38,7 @@ import java.util.UUID;
 
 import static org.junit.Assert.assertEquals;
 
+@RunWith(HazelcastSerialClassRunner.class)
 public abstract class PlanCacheTestSupport extends SqlTestSupport {
 
     protected static final Map<UUID, PartitionIdSet> PART_MAP_1;
@@ -156,7 +159,12 @@ public abstract class PlanCacheTestSupport extends SqlTestSupport {
         }
 
         @Override
-        public SqlResult execute(QueryId queryId, List<Object> arguments, long timeout) {
+        public boolean supportsTimeout() {
+            return true;
+        }
+
+        @Override
+        public SqlResult execute(QueryId queryId, List<Object> arguments, long timeout, SqlSecurityContext ssc) {
             throw new UnsupportedOperationException();
         }
     }

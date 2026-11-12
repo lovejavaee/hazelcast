@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,27 +16,29 @@
 
 package com.hazelcast.jet.sql.impl.connector.jdbc;
 
+import com.hazelcast.dataconnection.impl.DataConnectionTestUtil;
+import com.hazelcast.internal.util.concurrent.ConcurrentMemoizingSupplier;
 import com.hazelcast.test.jdbc.TestDatabaseProvider;
 import org.junit.rules.TestRule;
 import org.junit.runner.Description;
 import org.junit.runners.model.Statement;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
+
+import static com.hazelcast.internal.util.Memoizers.memoizeConcurrent;
 
 public class DatabaseRule implements TestRule {
 
     private TestDatabaseProvider databaseProvider;
-    private String dbConnectionUrl;
+    private ConcurrentMemoizingSupplier<String> dbConnectionUrl;
 
     public String getDbConnectionUrl() {
-        return dbConnectionUrl;
+        return dbConnectionUrl.get();
     }
 
     public DatabaseRule(TestDatabaseProvider databaseProvider) {
         this.databaseProvider = databaseProvider;
-        dbConnectionUrl = databaseProvider.createDatabase(DatabaseRule.class.getName());
+        dbConnectionUrl = memoizeConcurrent(() -> this.databaseProvider.createDatabase(DatabaseRule.class.getName()));
     }
 
     @Override
@@ -62,12 +64,7 @@ public class DatabaseRule implements TestRule {
     }
 
     public void executeJdbc(String sql) throws SQLException {
-
-        try (Connection conn = DriverManager.getConnection(dbConnectionUrl);
-             java.sql.Statement stmt = conn.createStatement()
-        ) {
-            stmt.execute(sql);
-        }
+        DataConnectionTestUtil.executeJdbc(dbConnectionUrl.get(), sql);
     }
 
     public void insertItems(String tableName, int count) throws SQLException {

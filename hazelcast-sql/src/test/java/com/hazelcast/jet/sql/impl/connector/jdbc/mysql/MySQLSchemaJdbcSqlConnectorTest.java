@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,12 +19,12 @@ package com.hazelcast.jet.sql.impl.connector.jdbc.mysql;
 import com.hazelcast.jet.sql.impl.connector.jdbc.SchemaJdbcConnectorTest;
 import com.hazelcast.test.annotation.NightlyTest;
 import com.hazelcast.test.jdbc.MySQLDatabaseProvider;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.experimental.categories.Category;
 
-import java.util.Arrays;
-
-import static java.util.stream.Collectors.joining;
+import static org.junit.Assume.assumeFalse;
+import static com.hazelcast.jet.TestedVersions.TEST_MYSQL_IMAGE;
 
 @Category(NightlyTest.class)
 public class MySQLSchemaJdbcSqlConnectorTest extends SchemaJdbcConnectorTest {
@@ -34,10 +34,16 @@ public class MySQLSchemaJdbcSqlConnectorTest extends SchemaJdbcConnectorTest {
         initialize(new MySQLDatabaseProvider());
     }
 
-    @Override
-    protected String quote(String... parts) {
-        return Arrays.stream(parts)
-                     .map(part -> '`' + part.replaceAll("`", "``") + '`')
-                     .collect(joining("."));
+    @Before
+    public void checkMySQLVersion() throws Exception {
+        // We suffer from the following issue when useInformationSchema is false
+        // https://bugs.mysql.com/bug.php?id=63992
+        // This value is set to true on MySQL 8.0.3+
+        // https://dev.mysql.com/doc/connector-j/8.0/en/connector-j-connp-props-metadata.html
+        // Therefore we ignore the `table.with.dot` case for MySQL 5
+
+        assumeFalse(TEST_MYSQL_IMAGE.getVersionPart().startsWith("5")
+                && table.equals("table.with.dot"));
     }
+
 }

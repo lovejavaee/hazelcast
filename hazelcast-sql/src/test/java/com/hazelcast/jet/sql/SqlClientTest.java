@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,9 +28,11 @@ import com.hazelcast.sql.SqlResult;
 import com.hazelcast.sql.SqlRow;
 import com.hazelcast.sql.SqlService;
 import com.hazelcast.sql.impl.client.SqlClientService;
+import com.hazelcast.test.HazelcastSerialClassRunner;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 
 import java.util.BitSet;
 import java.util.Collection;
@@ -40,12 +42,14 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 
 import static com.hazelcast.jet.Util.idToString;
+import static com.hazelcast.jet.core.JobAssertions.assertThat;
 import static com.hazelcast.jet.core.JobStatus.FAILED;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 
+@RunWith(HazelcastSerialClassRunner.class)
 public class SqlClientTest extends SqlTestSupport {
 
     @BeforeClass
@@ -159,7 +163,7 @@ public class SqlClientTest extends SqlTestSupport {
         Job job = awaitSingleRunningJob(instance());
 
         client.shutdown();
-        assertJobStatusEventually(job, FAILED);
+        assertThat(job).eventuallyHasStatus(FAILED);
         assertThatThrownBy(job::join)
                 .hasMessageContaining("QueryException: Client cannot be reached");
     }
@@ -197,7 +201,7 @@ public class SqlClientTest extends SqlTestSupport {
 
         result.close();
         logger.info("after res.close() returned");
-        assertJobStatusEventually(job, FAILED);
+        assertThat(job).eventuallyHasStatus(FAILED);
     }
 
     // test for https://github.com/hazelcast/hazelcast/issues/19897

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -174,7 +174,7 @@ public class CachedExecutorServiceDelegateTest {
     }
 
     @Test
-    public void execute() throws Exception {
+    public void execute() {
         final int taskCount = 10;
         ManagedExecutorService executorService = newManagedExecutorService(1, taskCount);
 

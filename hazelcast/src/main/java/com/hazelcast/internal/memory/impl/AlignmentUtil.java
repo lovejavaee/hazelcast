@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,8 @@ import java.nio.ByteOrder;
 
 import static com.hazelcast.internal.memory.impl.UnsafeUtil.UNSAFE_AVAILABLE;
 
+import com.hazelcast.internal.tpcengine.util.OS;
+
 @SuppressWarnings("checkstyle:magicnumber")
 public final class AlignmentUtil {
 
@@ -32,12 +34,26 @@ public final class AlignmentUtil {
     public static final int OBJECT_REFERENCE_MASK = OBJECT_REFERENCE_ALIGN - 1;
     public static final boolean IS_PLATFORM_BIG_ENDIAN = ByteOrder.nativeOrder() == ByteOrder.BIG_ENDIAN;
 
+    /**
+     * Enables or disables unaligned memory access.
+     * <p>
+     * Unaligned access, if available, should be more performant than compensating measures
+     * (reading bytes individually). Note that atomic and ordered operations always require alignment.
+     * <p>
+     * Default logic for determining which platforms allow unaligned access is sufficient for most CPUs.
+     * x86_64/amd64 supports unaligned access.
+     * The situation is more complicated on ARM64 which supports unaligned, non-ordered access
+     * to normal (non-device) memory - cases used by Hazelcast.
+     * However, such operations can trap if {@code SCTLR_ELx.A=1} is configured by the operating system.
+     */
+    public static final String PROPERTY_UNALIGNED_ACCESS_ENABLED = "hazelcast.memory.unaligned";
+
     // We know these architectures allow unaligned memory access.
     // There is a chance some other architectures allow it too, but it's
     // better to stay conservative here.
     // For example unaligned memory access on Sparc may crash JVM with SIGBUS
     private static final String[] ARCHITECTURES_KNOWN_TO_ALLOW_UNALIGNED_ACCESS = new String[]
-            {"i386", "x86", "amd64", "x86_64"};
+            {"i386", "x86", "amd64", "x86_64", "aarch64"};
 
     private AlignmentUtil() {
     }
@@ -84,7 +100,9 @@ public final class AlignmentUtil {
     }
 
     public static boolean isUnalignedAccessAllowed() {
-        String currentArchitecture = System.getProperty("os.arch");
-        return ArrayUtils.contains(ARCHITECTURES_KNOWN_TO_ALLOW_UNALIGNED_ACCESS, currentArchitecture);
+        var unalignedProperty = System.getProperty(PROPERTY_UNALIGNED_ACCESS_ENABLED);
+        return unalignedProperty != null
+                ? Boolean.parseBoolean(unalignedProperty)
+                : ArrayUtils.contains(ARCHITECTURES_KNOWN_TO_ALLOW_UNALIGNED_ACCESS, OS.osArch());
     }
 }

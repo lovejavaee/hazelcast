@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.jet.sql.impl.inject;
 
 import com.hazelcast.jet.impl.util.ReflectionUtils;
+import com.hazelcast.nio.serialization.ClassNameFilter;
 import com.hazelcast.sql.impl.QueryException;
 import com.hazelcast.sql.impl.expression.RowValue;
 import com.hazelcast.sql.impl.type.QueryDataType;
@@ -39,10 +40,15 @@ class PojoUpsertTarget implements UpsertTarget {
 
     private final Class<?> clazz;
     private final Map<String, Class<?>> typesByPaths;
+    private final ClassNameFilter filter;
 
     private Object pojo;
 
-    PojoUpsertTarget(String className, Map<String, String> typeNamesByPaths) {
+    PojoUpsertTarget(String className, Map<String, String> typeNamesByPaths, ClassNameFilter filter) {
+        this.filter = filter;
+        if (filter != null) {
+            filter.filter(className);
+        }
         this.clazz = loadClass(className);
         this.typesByPaths = typeNamesByPaths.entrySet().stream()
                                             .collect(toMap(Entry::getKey, entry -> loadClass(entry.getValue())));
@@ -74,7 +80,7 @@ class PojoUpsertTarget implements UpsertTarget {
             }
             try {
                 if (value instanceof RowValue) {
-                    method.invoke(pojo, UpsertTargetUtils.convertRowToJavaType(value, targetType));
+                    method.invoke(pojo, UpsertTargetUtils.convertRowToJavaType(value, targetType, filter));
                 } else {
                     method.invoke(pojo, value);
                 }
@@ -91,7 +97,7 @@ class PojoUpsertTarget implements UpsertTarget {
             }
             try {
                 if (value instanceof RowValue) {
-                    field.set(pojo, UpsertTargetUtils.convertRowToJavaType(value, targetType));
+                    field.set(pojo, UpsertTargetUtils.convertRowToJavaType(value, targetType, filter));
                 } else {
                     field.set(pojo, value);
                 }
@@ -114,7 +120,7 @@ class PojoUpsertTarget implements UpsertTarget {
     @Override
     public void init() {
         try {
-            pojo = clazz.newInstance();
+            pojo = clazz.getDeclaredConstructor().newInstance();
         } catch (Exception e) {
             throw QueryException.error("Unable to instantiate class \"" + clazz.getName() + "\" : "
                     + e.getMessage(), e);

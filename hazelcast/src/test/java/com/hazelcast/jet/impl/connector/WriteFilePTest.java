@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,15 @@
 
 package com.hazelcast.jet.impl.connector;
 
-import com.fasterxml.jackson.jr.ob.JSON;
 import com.hazelcast.internal.nio.IOUtil;
+import com.hazelcast.internal.util.JavaVersion;
+import com.hazelcast.internal.util.JavaVm;
 import com.hazelcast.jet.Job;
 import com.hazelcast.jet.SimpleTestInClusterSupport;
 import com.hazelcast.jet.config.JobConfig;
 import com.hazelcast.jet.core.AbstractProcessor;
 import com.hazelcast.jet.core.DAG;
+import com.hazelcast.jet.core.JobStatus;
 import com.hazelcast.jet.core.ProcessorMetaSupplier;
 import com.hazelcast.jet.core.Vertex;
 import com.hazelcast.jet.core.test.TestInbox;
@@ -43,6 +45,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
+import tools.jackson.jr.ob.JSON;
 
 import javax.annotation.Nonnull;
 import java.io.BufferedWriter;
@@ -69,6 +72,7 @@ import java.util.stream.Stream;
 
 import static com.hazelcast.jet.config.ProcessingGuarantee.EXACTLY_ONCE;
 import static com.hazelcast.jet.core.Edge.between;
+import static com.hazelcast.jet.core.JobAssertions.assertThat;
 import static com.hazelcast.jet.core.JobStatus.RUNNING;
 import static com.hazelcast.jet.core.processor.Processors.mapP;
 import static com.hazelcast.jet.core.processor.SinkProcessors.writeFileP;
@@ -81,8 +85,10 @@ import static java.util.concurrent.TimeUnit.HOURS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static java.util.stream.Collectors.groupingBy;
 import static java.util.stream.Collectors.joining;
+import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assume.assumeFalse;
 
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class WriteFilePTest extends SimpleTestInClusterSupport {
@@ -195,6 +201,9 @@ public class WriteFilePTest extends SimpleTestInClusterSupport {
 
     @Test
     public void testCharset() throws Exception {
+        // Oracle 21 bug - https://bugs.openjdk.org/browse/JDK-8325605
+        assumeFalse(JavaVm.CURRENT_VM == JavaVm.HOTSPOT && JavaVersion.CURRENT_VERSION == JavaVersion.JAVA_21);
+
         // Given
         Charset charset = Charset.forName("iso-8859-2");
         String text = "ľščťž";
@@ -204,7 +213,7 @@ public class WriteFilePTest extends SimpleTestInClusterSupport {
         instance().getJet().newJob(p).join();
 
         // Then
-        assertEquals(text + System.getProperty("line.separator"), new String(Files.readAllBytes(onlyFile), charset));
+        assertEquals(text + System.lineSeparator(), Files.readString(onlyFile, charset));
     }
 
     @Test
@@ -261,7 +270,7 @@ public class WriteFilePTest extends SimpleTestInClusterSupport {
             Path file = directory.resolve(String.format("%03d-0", i));
             assertTrueEventually(() -> assertTrue("file not found: " + file, Files.exists(file)), 5);
             assertTrueEventually(() ->
-                    assertEquals(stringValue, new String(Files.readAllBytes(file), StandardCharsets.UTF_8)), 5);
+                    assertEquals(stringValue, Files.readString(file)), 5);
             clock.incrementAndGet();
         }
 
@@ -311,7 +320,7 @@ public class WriteFilePTest extends SimpleTestInClusterSupport {
         for (int i = 0, j = 100; i < numItems / 2; i++) {
             Path file = directory.resolve("0-" + i);
             assertEquals((j++) + System.lineSeparator() + (j++) + System.lineSeparator(),
-                    new String(Files.readAllBytes(file)));
+                    Files.readString(file));
         }
 
         job.join();
@@ -328,11 +337,13 @@ public class WriteFilePTest extends SimpleTestInClusterSupport {
         // When
         instance().getJet().newJob(p).join();
 
+        List<String> lines;
         // Then
-        List<String> lines = Files
-                .list(directory)
-                .flatMap(file -> uncheckCall(() -> Files.readAllLines(file).stream()))
-                .collect(Collectors.toList());
+        try (Stream<Path> list = Files.list(directory)) {
+            lines = list
+                    .flatMap(file -> uncheckCall(() -> Files.readAllLines(file).stream()))
+                    .collect(Collectors.toList());
+        }
         assertEquals(1, lines.size());
         TestPerson actual = JSON.std.beanFrom(TestPerson.class, lines.get(0));
         assertEquals(testPerson, actual);
@@ -395,7 +406,7 @@ public class WriteFilePTest extends SimpleTestInClusterSupport {
                 .setProcessingGuarantee(EXACTLY_ONCE)
                 .setSnapshotIntervalMillis(500);
         Job job = instance().getJet().newJob(dag, config);
-        assertJobStatusEventually(job, RUNNING);
+        assertThat(job).eventuallyHasStatus(RUNNING);
 
         JobRepository jr = new JobRepository(instance());
         waitForFirstSnapshot(jr, job.getId(), 10, true);
@@ -421,6 +432,27 @@ public class WriteFilePTest extends SimpleTestInClusterSupport {
     @Test
     public void stressTest_atLeastOnce_forceful() throws Exception {
         stressTest(false, false);
+    }
+
+    @Test
+    public void when_datePatternEscapesDirectory_then_jobFails() throws Exception {
+        Path directory = Files.createTempDirectory("write-file-p-test");
+
+        Pipeline p = Pipeline.create();
+        p.readFrom(TestSources.items("item1", "item2"))
+                .writeTo(Sinks.filesBuilder(directory.toString())
+                        .rollByDate("'../escaped'")
+                        .build());
+
+        Job job = instance().getJet().newJob(p);
+
+        assertThatThrownBy(job::join).hasMessageContaining("File name escapes");
+        assertThat(job).eventuallyHasStatus(JobStatus.FAILED);
+
+        // nothing must have been created outside the sink directory
+        try (Stream<Path> files = Files.list(directory.getParent())) {
+            assertTrue(files.noneMatch(f -> f.getFileName().startsWith("escaped")));
+        }
     }
 
     private void stressTest(boolean graceful, boolean exactlyOnce) throws Exception {
@@ -455,12 +487,12 @@ public class WriteFilePTest extends SimpleTestInClusterSupport {
 
         long endTime = System.nanoTime() + SECONDS.toNanos(60);
         do {
-            assertJobStatusEventually(job, RUNNING);
+            assertThat(job).eventuallyHasStatus(RUNNING);
             sleepMillis(100);
             job.restart(graceful);
             try {
                 checkFileContents(0, numItems, exactlyOnce, true, false);
-                // if content matches, break the loop. Otherwise restart and try again
+                // if content matches, break the loop. Otherwise, restart and try again
                 break;
             } catch (AssertionError ignored) {
             }
@@ -475,21 +507,23 @@ public class WriteFilePTest extends SimpleTestInClusterSupport {
     private void checkFileContents(int numFrom, int numTo, boolean exactlyOnce, boolean ignoreTempFiles,
                                    boolean assertSorted
     ) throws Exception {
-        List<Integer> actual = Files.list(directory)
-                                    .peek(f -> {
-                                        if (!ignoreTempFiles && f.getFileName().toString().endsWith(TEMP_FILE_SUFFIX)) {
-                                            throw new IllegalArgumentException("Temp file found: " + f);
-                                        }
-                                    })
-                                    .filter(f -> !f.toString().endsWith(TEMP_FILE_SUFFIX))
-                                    // sort by sequence number, if there is one
-                                    .sorted(Comparator.comparing(f -> f.getFileName().toString().length() == 1 ? 0
-                                            : Integer.parseInt(f.getFileName().toString().substring(2))))
-                                    .flatMap(file -> uncheckCall(() -> Files.readAllLines(file).stream()))
-                                    .map(Integer::parseInt)
-                                    .sorted(assertSorted ? (l, r) -> 0 : Comparator.naturalOrder())
-                                    .collect(Collectors.toList());
-
+        List<Integer> actual;
+        try (Stream<Path> list = Files.list(directory)) {
+            actual = list
+                    .peek(f -> {
+                        if (!ignoreTempFiles && f.getFileName().toString().endsWith(TEMP_FILE_SUFFIX)) {
+                            throw new IllegalArgumentException("Temp file found: " + f);
+                        }
+                    })
+                    .filter(f -> !f.toString().endsWith(TEMP_FILE_SUFFIX))
+                    // sort by sequence number, if there is one
+                    .sorted(Comparator.comparing(f -> f.getFileName().toString().length() == 1 ? 0
+                            : Integer.parseInt(f.getFileName().toString().substring(2))))
+                    .flatMap(file -> uncheckCall(() -> Files.readAllLines(file).stream()))
+                    .map(Integer::parseInt)
+                    .sorted(assertSorted ? (l, r) -> 0 : Comparator.naturalOrder())
+                    .collect(Collectors.toList());
+        }
         if (exactlyOnce) {
             String expectedStr = IntStream.range(numFrom, numTo).mapToObj(Integer::toString).collect(joining("\n"));
             String actualStr = actual.stream().map(Object::toString).collect(joining("\n"));
@@ -517,7 +551,7 @@ public class WriteFilePTest extends SimpleTestInClusterSupport {
     }
 
     private static Iterable<Integer> rangeIterable(int itemsFrom, int itemsTo) {
-        return (Iterable<Integer> & Serializable) () -> new Iterator<Integer>() {
+        return (Iterable<Integer> & Serializable) () -> new Iterator<>() {
             int val = itemsFrom;
 
             @Override

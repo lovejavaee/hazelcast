@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,26 +23,26 @@ import com.hazelcast.client.impl.spi.impl.ClientInvocationFuture;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.serialization.SerializationService;
 import com.hazelcast.internal.serialization.impl.DefaultSerializationServiceBuilder;
-import com.hazelcast.internal.util.RootCauseMatcher;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.spi.impl.sequence.CallIdSequence;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 
+import static com.hazelcast.internal.util.RootCauseMatcher.rootCause;
 import static com.hazelcast.test.HazelcastTestSupport.assertInstanceOf;
 import static com.hazelcast.test.HazelcastTestSupport.assertTrueEventually;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -53,9 +53,6 @@ public class ClientDelegatingFutureTest {
 
     private static final String DESERIALIZED_VALUE = "value";
     private static final String DESERIALIZED_DEFAULT_VALUE = "default_value";
-
-    @Rule
-    public ExpectedException expected = ExpectedException.none();
 
     private ClientMessage request;
     private ClientMessage response;
@@ -93,41 +90,41 @@ public class ClientDelegatingFutureTest {
     }
 
     @Test
-    public void get_whenCompletedExceptionally() throws Exception {
+    public void get_whenCompletedExceptionally() {
         invocationFuture.completeExceptionally(new IllegalArgumentException());
 
         assertTrue(delegatingFuture.isDone());
         assertTrue(delegatingFuture.isCompletedExceptionally());
-        expected.expect(ExecutionException.class);
-        expected.expectCause(new RootCauseMatcher(IllegalArgumentException.class));
-        delegatingFuture.get();
+        assertThatThrownBy(delegatingFuture::get)
+                .isInstanceOf(ExecutionException.class)
+                .cause().has(rootCause(IllegalArgumentException.class));
     }
 
     @Test
     public void join_whenCompletedExceptionally() {
         invocationFuture.completeExceptionally(new IllegalArgumentException());
 
-        expected.expect(CompletionException.class);
-        expected.expectCause(new RootCauseMatcher(IllegalArgumentException.class));
-        delegatingFuture.join();
+        assertThatThrownBy(delegatingFuture::get)
+                .isInstanceOf(ExecutionException.class)
+                .cause().has(rootCause(IllegalArgumentException.class));
     }
 
     @Test
     public void joinInternal_whenCompletedExceptionally() {
         invocationFuture.completeExceptionally(new IllegalArgumentException());
 
-        expected.expect(IllegalArgumentException.class);
-        delegatingFuture.joinInternal();
+        assertThatThrownBy(delegatingFuture::joinInternal)
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
-    public void getNow_whenNotDoneShouldReturnDefaultValue() throws Exception {
-        assertTrue(!delegatingFuture.isDone());
+    public void getNow_whenNotDoneShouldReturnDefaultValue() {
+        assertFalse(delegatingFuture.isDone());
         assertEquals(DESERIALIZED_DEFAULT_VALUE, delegatingFuture.getNow(DESERIALIZED_DEFAULT_VALUE));
     }
 
     @Test
-    public void getNow_whenDoneReturnValue() throws Exception {
+    public void getNow_whenDoneReturnValue() {
         invocationFuture.complete(response);
 
         assertTrue(delegatingFuture.isDone());
@@ -136,9 +133,7 @@ public class ClientDelegatingFutureTest {
 
     @Test
     public void whenComplete() {
-        CompletableFuture<String> nextStage = delegatingFuture.whenComplete((v, t) -> {
-            assertEquals(DESERIALIZED_VALUE, v);
-        });
+        CompletableFuture<String> nextStage = delegatingFuture.whenComplete((v, t) -> assertEquals(DESERIALIZED_VALUE, v));
         invocationFuture.complete(response);
 
         assertTrueEventually(() -> assertTrue(nextStage.isDone()));
@@ -147,15 +142,14 @@ public class ClientDelegatingFutureTest {
 
     @Test
     public void whenComplete_whenExceptional() {
-        CompletableFuture<String> nextStage = delegatingFuture.whenComplete((v, t) -> {
-            assertInstanceOf(IllegalArgumentException.class, t);
-        });
+        CompletableFuture<String> nextStage = delegatingFuture.whenComplete((v, t) -> assertInstanceOf(IllegalArgumentException.class, t));
         invocationFuture.completeExceptionally(new IllegalArgumentException());
 
         assertTrueEventually(() -> assertTrue(nextStage.isDone()));
-        expected.expect(CompletionException.class);
-        expected.expectCause(new RootCauseMatcher(IllegalArgumentException.class));
-        delegatingFuture.join();
+
+        assertThatThrownBy(delegatingFuture::join)
+                .isInstanceOf(CompletionException.class)
+                .cause().has(rootCause(IllegalArgumentException.class));
     }
 
     @Test

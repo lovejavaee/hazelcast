@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,9 +49,12 @@ import java.util.stream.IntStream;
 import java.util.stream.LongStream;
 
 import static com.hazelcast.jet.config.ProcessingGuarantee.EXACTLY_ONCE;
+import static com.hazelcast.jet.core.JobAssertions.assertThat;
 import static com.hazelcast.jet.pipeline.WindowDefinition.tumbling;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import static java.util.stream.Collectors.toList;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -202,7 +205,7 @@ public class SourceBuilderTest extends PipelineStreamTestSupport {
 
             // When
             int localPort = serverSocket.getLocalPort();
-            ToLongFunctionEx<String> timestampFn = line -> Long.valueOf(line.substring(LINE_PREFIX.length()));
+            ToLongFunctionEx<String> timestampFn = line -> Long.parseLong(line.substring(LINE_PREFIX.length()));
 
             BatchSource<String> socketSource = SourceBuilder
                     .batch("socket-source-with-timestamps", ctx -> socketReader(localPort))
@@ -289,7 +292,7 @@ public class SourceBuilderTest extends PipelineStreamTestSupport {
 
             // When
             int localPort = serverSocket.getLocalPort();
-            ToLongFunctionEx<String> timestampFn = line -> Long.valueOf(line.substring(LINE_PREFIX.length()));
+            ToLongFunctionEx<String> timestampFn = line -> Long.parseLong(line.substring(LINE_PREFIX.length()));
 
             BatchSource<String> socketSource = SourceBuilder
                     .batch("socket-source-with-timestamps", ctx -> socketReader(localPort))
@@ -321,6 +324,97 @@ public class SourceBuilderTest extends PipelineStreamTestSupport {
 
             assertEquals(expected, new ArrayList<>(sinkList));
         }
+    }
+
+    static class FailingContext implements Serializable {
+        static volatile boolean created;
+        static volatile boolean cleanedUp;
+        FailingContext() {
+            created = true;
+        }
+
+        void init() {
+            cleanedUp = false;
+            throw new RuntimeException("simulated fail");
+        }
+
+        void destroy() {
+            cleanedUp = true;
+        }
+    }
+
+    @Test
+    public void cleansUpFromInit_in_batch() {
+        // When
+        BatchSource<String> source = SourceBuilder
+                                               .batch("source",
+                                                      ctx -> new FailingContext())
+                                               .initFn(FailingContext::init)
+                                               .destroyFn(FailingContext::destroy)
+                                               .<String>fillBufferFn((in, buf) -> {
+                                                  // not called
+                                               })
+                                               .build();
+
+        // Then
+        Pipeline p = Pipeline.create();
+        p.readFrom(source)
+         .writeTo(sinkList());
+
+        assertThatCode(() -> hz().getJet().newJob(p).join())
+            .hasMessageContaining("simulated fail");
+        assertThat(FailingContext.created).isTrue();
+        assertThat(FailingContext.cleanedUp).isTrue();
+    }
+
+    @Test
+    public void cleansUpFromInit_in_stream() {
+        // When
+        StreamSource<String> source = SourceBuilder
+                                               .stream("source",
+                                                      ctx -> new FailingContext())
+                                               .initFn(FailingContext::init)
+                                               .destroyFn(FailingContext::destroy)
+                                               .<String>fillBufferFn((in, buf) -> {
+                                                  // not called
+                                               })
+                                               .build();
+
+        // Then
+        Pipeline p = Pipeline.create();
+        p.readFrom(source)
+         .withIngestionTimestamps()
+         .writeTo(sinkList());
+
+        assertThatCode(() -> hz().getJet().newJob(p).join())
+            .hasMessageContaining("simulated fail");
+        assertThat(FailingContext.created).isTrue();
+        assertThat(FailingContext.cleanedUp).isTrue();
+    }
+
+    @Test
+    public void cleansUpFromInit_in_timestampedStream() {
+        // When
+        StreamSource<String> source = SourceBuilder
+                                               .timestampedStream("source",
+                                                      ctx -> new FailingContext())
+                                               .initFn(FailingContext::init)
+                                               .destroyFn(FailingContext::destroy)
+                                               .<String>fillBufferFn((in, buf) -> {
+                                                  // not called
+                                               })
+                                               .build();
+
+        // Then
+        Pipeline p = Pipeline.create();
+        p.readFrom(source)
+         .withIngestionTimestamps()
+         .writeTo(sinkList());
+
+        assertThatCode(() -> hz().getJet().newJob(p).join())
+            .hasMessageContaining("simulated fail");
+        assertThat(FailingContext.created).isTrue();
+        assertThat(FailingContext.cleanedUp).isTrue();
     }
 
     @Test
@@ -370,7 +464,7 @@ public class SourceBuilderTest extends PipelineStreamTestSupport {
         assertTrueEventually(() -> assertFalse("result list is still empty", result.isEmpty()));
         // restart the job
         job.restart();
-        assertJobStatusEventually(job, JobStatus.RUNNING);
+        assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
 
         // wait until more results are added
         int oldSize = result.size();
@@ -405,7 +499,7 @@ public class SourceBuilderTest extends PipelineStreamTestSupport {
         assertTrueEventually(() -> assertFalse("result list is still empty", result.isEmpty()));
         // restart the job
         job.restart();
-        assertJobStatusEventually(job, JobStatus.RUNNING);
+        assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
 
         // wait until more results are added
         int oldSize = result.size();
@@ -413,7 +507,7 @@ public class SourceBuilderTest extends PipelineStreamTestSupport {
 
         // restart the job for the second time
         job.restart();
-        assertJobStatusEventually(job, JobStatus.RUNNING);
+        assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
 
         // wait until more results are added
         int sizeAfterSecondRestart = result.size();
@@ -450,7 +544,7 @@ public class SourceBuilderTest extends PipelineStreamTestSupport {
         assertTrueEventually(() -> assertFalse("result list is still empty", result.isEmpty()));
         // restart the job
         job.restart();
-        assertJobStatusEventually(job, JobStatus.RUNNING);
+        assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
 
         // wait until more results are added
         int oldSize = result.size();
@@ -498,7 +592,7 @@ public class SourceBuilderTest extends PipelineStreamTestSupport {
         waitForFirstSnapshot(jr, job.getId(), 10, true);
 
         job.restart();
-        assertJobStatusEventually(job, JobStatus.RUNNING);
+        assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
         int currentSize = result.size();
         assertTrueEventually(() -> assertTrue(result.size() > currentSize), 5);
     }

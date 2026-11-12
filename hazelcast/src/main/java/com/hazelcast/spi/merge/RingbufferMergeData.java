@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package com.hazelcast.spi.merge;
 import com.hazelcast.ringbuffer.StaleSequenceException;
 import com.hazelcast.ringbuffer.impl.Ringbuffer;
 import com.hazelcast.spi.impl.merge.RingbufferMergingValueImpl;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Arrays;
 import java.util.Iterator;
@@ -41,7 +40,7 @@ public class RingbufferMergeData implements Iterable<Object> {
         this.items = new Object[capacity];
     }
 
-    public RingbufferMergeData(Ringbuffer<Object> ringbuffer) {
+    public RingbufferMergeData(Ringbuffer<?> ringbuffer) {
         this.items = ringbuffer.getItems();
         this.headSequence = ringbuffer.headSequence();
         this.tailSequence = ringbuffer.tailSequence();
@@ -212,7 +211,6 @@ public class RingbufferMergeData implements Iterable<Object> {
      * by sequence ID and the index of the item in this array must be calculated
      * using the sequence and the modulo of the array.
      */
-    @SuppressFBWarnings("EI_EXPOSE_REP")
     public Object[] getItems() {
         return items;
     }
@@ -224,6 +222,6 @@ public class RingbufferMergeData implements Iterable<Object> {
      */
     @Override
     public Iterator<Object> iterator() {
-        return new RingbufferMergeDataReadOnlyIterator<Object>(this);
+        return new RingbufferMergeDataReadOnlyIterator<>(this);
     }
 }

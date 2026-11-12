@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -52,7 +52,7 @@ public class TcpIpMemberConnectionLossTest {
 
     @Before
     @After
-    public void killAllHazelcastInstances() throws IOException {
+    public void killAllHazelcastInstances() {
         HazelcastInstanceFactory.terminateAll();
     }
 
@@ -148,13 +148,11 @@ public class TcpIpMemberConnectionLossTest {
             running = false;
             while (thread.isAlive()) {
                 //break it out of a potential accept call
-                try {
-                    new Socket(host, port);
+                try (Socket ignored = new Socket(host, port)) {
                 } catch (IOException e) {
                     //ignore
                 }
             }
         }
-
     }
 }

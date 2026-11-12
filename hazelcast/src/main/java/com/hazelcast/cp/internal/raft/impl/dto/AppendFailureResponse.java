@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 
+import java.io.EOFException;
 import java.io.IOException;
 
 /**
@@ -36,17 +37,27 @@ import java.io.IOException;
  */
 public class AppendFailureResponse implements IdentifiedDataSerializable {
 
+    /**
+     * Value provided when followerNextIndex in failure response should be ignored by receiving leaders
+     */
+    public static final int SKIPPED_FOLLOWER_NEXT_INDEX = -1;
+
     private RaftEndpoint follower;
     private int term;
     private long expectedNextIndex;
+    private long flowControlSequenceNumber;
+    private long followerNextIndex;
 
     public AppendFailureResponse() {
     }
 
-    public AppendFailureResponse(RaftEndpoint follower, int term, long expectedNextIndex) {
+    public AppendFailureResponse(RaftEndpoint follower, int term, long expectedNextIndex,
+                                 long flowControlSequenceNumber, long followerNextIndex) {
         this.follower = follower;
         this.term = term;
         this.expectedNextIndex = expectedNextIndex;
+        this.flowControlSequenceNumber = flowControlSequenceNumber;
+        this.followerNextIndex = followerNextIndex;
     }
 
     public RaftEndpoint follower() {
@@ -59,6 +70,22 @@ public class AppendFailureResponse implements IdentifiedDataSerializable {
 
     public long expectedNextIndex() {
         return expectedNextIndex;
+    }
+
+    public long flowControlSequenceNumber() {
+        return flowControlSequenceNumber;
+    }
+
+    /**
+     * Provides the expected next log index from this follower, which will be used
+     * by the receiving leader to speed up log reconciliation by jumping straight
+     * to this index if it does not conflict with its match index.
+     *
+     * @since 5.6
+     * @return the follower's expected next log index
+     */
+    public long followerNextIndex() {
+        return followerNextIndex;
     }
 
     @Override
@@ -76,6 +103,8 @@ public class AppendFailureResponse implements IdentifiedDataSerializable {
         out.writeInt(term);
         out.writeObject(follower);
         out.writeLong(expectedNextIndex);
+        out.writeLong(flowControlSequenceNumber);
+        out.writeLong(followerNextIndex);
     }
 
     @Override
@@ -83,12 +112,25 @@ public class AppendFailureResponse implements IdentifiedDataSerializable {
         term = in.readInt();
         follower = in.readObject();
         expectedNextIndex = in.readLong();
+        try {
+            flowControlSequenceNumber = in.readLong();
+            // TODO RU_COMPAT_5_3 added for Version 5.3 compatibility. Should be removed at Version 6.0
+        } catch (EOFException e) {
+            flowControlSequenceNumber = -1;
+        }
+        try {
+            followerNextIndex = in.readLong();
+            // TODO RU_COMPAT_5_5 added for Version 5.5 compatibility. Should be removed at Version 6.0
+        } catch (EOFException e) {
+            followerNextIndex = -1;
+        }
     }
 
     @Override
     public String toString() {
         return "AppendFailureResponse{" + "follower=" + follower + ", term=" + term + ", expectedNextIndex="
-                + expectedNextIndex + '}';
+                + expectedNextIndex + ", flowControlSequenceNumber=" + flowControlSequenceNumber + ", "
+                + "followerNextIndex=" + followerNextIndex + '}';
     }
 
 }

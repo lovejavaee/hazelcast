@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,12 +18,8 @@ package com.hazelcast.test.starter;
 
 import org.mockito.stubbing.Answer;
 import org.reflections.Reflections;
-import org.reflections.scanners.MethodAnnotationsScanner;
-import org.reflections.scanners.SubTypesScanner;
-import org.reflections.scanners.TypeAnnotationsScanner;
 import org.reflections.util.ClasspathHelper;
 import org.reflections.util.ConfigurationBuilder;
-import org.reflections.util.FilterBuilder;
 
 import java.io.File;
 import java.lang.reflect.Constructor;
@@ -44,6 +40,9 @@ import static java.lang.reflect.Proxy.getInvocationHandler;
 import static java.lang.reflect.Proxy.isProxyClass;
 import static java.net.URLClassLoader.newInstance;
 import static org.mockito.Mockito.mockingDetails;
+import static org.reflections.scanners.Scanners.MethodsAnnotated;
+import static org.reflections.scanners.Scanners.SubTypes;
+import static org.reflections.scanners.Scanners.TypesAnnotated;
 
 /**
  * Reflection utilities.
@@ -60,12 +59,8 @@ public final class ReflectionUtils {
             URLClassLoader classLoader = newInstance(new URL[]{testClassesURL}, ClasspathHelper.staticClassLoader());
             return new Reflections(new ConfigurationBuilder()
                     .addUrls(ClasspathHelper.forPackage(forPackage, classLoader))
-                    .addClassLoader(classLoader)
-                    .filterInputsBy(new FilterBuilder().includePackage(forPackage))
-                    .setScanners(
-                            new SubTypesScanner(false),
-                            new TypeAnnotationsScanner(),
-                            new MethodAnnotationsScanner()));
+                    .addClassLoaders(classLoader)
+                    .setScanners(SubTypes.filterResultsBy(c -> true), TypesAnnotated, MethodsAnnotated));
         } catch (MalformedURLException e) {
             throw new IllegalArgumentException(e);
         }
@@ -160,7 +155,7 @@ public final class ReflectionUtils {
     }
 
     public static Map<String, Field> getAllFieldsByName(Class<?> clazz) {
-        ConcurrentMap<String, Field> fields = new ConcurrentHashMap<String, Field>();
+        ConcurrentMap<String, Field> fields = new ConcurrentHashMap<>();
         Field[] ownFields = clazz.getDeclaredFields();
         for (Field field : ownFields) {
             fields.put(field.getName(), field);
@@ -184,8 +179,7 @@ public final class ReflectionUtils {
     public static Object getDelegateFromProxyClass(Object arg) {
         if (isProxyClass(arg.getClass())) {
             InvocationHandler invocationHandler = getInvocationHandler(arg);
-            if (invocationHandler instanceof ProxyInvocationHandler) {
-                ProxyInvocationHandler proxyInvocationHandler = (ProxyInvocationHandler) invocationHandler;
+            if (invocationHandler instanceof ProxyInvocationHandler proxyInvocationHandler) {
                 return proxyInvocationHandler.getDelegate();
             }
         }

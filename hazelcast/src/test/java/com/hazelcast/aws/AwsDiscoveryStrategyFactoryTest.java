@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,20 +20,18 @@ import com.github.tomakehurst.wiremock.junit.WireMockRule;
 import com.hazelcast.config.Config;
 import com.hazelcast.config.DiscoveryConfig;
 import com.hazelcast.config.XmlConfigBuilder;
-import com.hazelcast.internal.nio.IOUtil;
 import com.hazelcast.spi.discovery.DiscoveryStrategy;
 import com.hazelcast.spi.discovery.impl.DefaultDiscoveryService;
 import com.hazelcast.spi.discovery.integration.DiscoveryServiceSettings;
 import org.junit.Rule;
 import org.junit.Test;
 
-import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStreamWriter;
+import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -111,7 +109,7 @@ public class AwsDiscoveryStrategyFactoryTest {
         // given
         String endpoint = "/some-endpoint";
         String url = String.format("http://localhost:%d%s", wireMockRule.port(), endpoint);
-        stubFor(get(urlEqualTo(endpoint)).willReturn(aResponse().withStatus(200).withBody("some-body")));
+        stubFor(get(urlEqualTo(endpoint)).willReturn(aResponse().withStatus(HttpURLConnection.HTTP_OK).withBody("some-body")));
 
         // when
         boolean isAvailable = AwsDiscoveryStrategyFactory.isEndpointAvailable(url);
@@ -138,13 +136,8 @@ public class AwsDiscoveryStrategyFactoryTest {
             throws IOException {
         File temp = File.createTempFile("test", ".tmp");
         temp.deleteOnExit();
-        BufferedWriter bufferedWriter = null;
-        try {
-            bufferedWriter = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(temp), StandardCharsets.UTF_8));
-            bufferedWriter.write(expectedContents);
-        } finally {
-            IOUtil.closeResource(bufferedWriter);
-        }
+        Files.writeString(temp.toPath(), expectedContents, StandardCharsets.UTF_8);
+
         return temp.getAbsolutePath();
     }
 }

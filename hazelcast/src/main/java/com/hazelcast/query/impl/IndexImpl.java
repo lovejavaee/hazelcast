@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.query.impl;
 
 import com.hazelcast.config.IndexConfig;
 import com.hazelcast.instance.impl.Node;
+import com.hazelcast.internal.monitor.impl.PartitionIndexChangeEvent;
 import com.hazelcast.internal.monitor.impl.PerIndexStats;
 import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.query.impl.GlobalIndexPartitionTracker.PartitionStamp;
@@ -38,15 +39,15 @@ public class IndexImpl extends AbstractIndex {
             IndexCopyBehavior copyBehavior,
             PerIndexStats stats,
             int partitionCount,
-            String mapName
-    ) {
-        super(node, config, ss, extractors, copyBehavior, stats, mapName);
+            String mapName) {
+        super(node, config, ss, extractors, copyBehavior, stats, mapName, GLOBAL_INDEX_NOOP_PARTITION_ID);
 
         partitionTracker = new GlobalIndexPartitionTracker(partitionCount);
     }
 
     @Override
-    protected IndexStore createIndexStore(Node node, IndexConfig config, PerIndexStats stats, String mapName) {
+    protected IndexStore createIndexStore(Node node, IndexConfig config,
+                                          PerIndexStats stats, String mapName, int ignored) {
         switch (config.getType()) {
             case SORTED:
                 return new OrderedIndexStore(copyBehavior);
@@ -75,22 +76,28 @@ public class IndexImpl extends AbstractIndex {
     @Override
     public final void beginPartitionUpdate() {
         partitionTracker.beginPartitionUpdate();
+        getPerIndexStats().onPartitionChange(PartitionIndexChangeEvent.CHANGE_STARTED);
     }
 
     @Override
     public final void markPartitionAsIndexed(int partitionId) {
-        partitionTracker.partitionIndexed(partitionId);
+        if (partitionTracker.partitionIndexed(partitionId)) {
+            getPerIndexStats().onPartitionChange(PartitionIndexChangeEvent.INDEXED);
+        }
+        getPerIndexStats().onPartitionChange(PartitionIndexChangeEvent.CHANGE_FINISHED);
     }
 
     @Override
     public final void markPartitionAsUnindexed(int partitionId) {
-        partitionTracker.partitionUnindexed(partitionId);
+        if (partitionTracker.partitionUnindexed(partitionId)) {
+            getPerIndexStats().onPartitionChange(PartitionIndexChangeEvent.UNINDEXED);
+        }
+        getPerIndexStats().onPartitionChange(PartitionIndexChangeEvent.CHANGE_FINISHED);
     }
 
     @Override
     public final void clear() {
         partitionTracker.clear();
-
         super.clear();
     }
 

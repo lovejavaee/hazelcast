@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,8 +29,9 @@ public interface ObjectDataInput extends DataInput, VersionAware, WanProtocolVer
     /**
      * @deprecated for the sake of better naming. Use {@link #readString()} instead
      */
-    @Deprecated
+    @Deprecated(since = "4.2", forRemoval = true)
     @Nullable
+    @Override
     String readUTF() throws IOException;
 
     /**
@@ -102,7 +103,7 @@ public interface ObjectDataInput extends DataInput, VersionAware, WanProtocolVer
      * @deprecated for the sake of better naming. Use {@link #readStringArray()} instead
      */
     @Nullable
-    @Deprecated
+    @Deprecated(since = "4.2", forRemoval = true)
     String[] readUTFArray() throws IOException;
 
     /**

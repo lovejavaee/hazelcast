@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,11 +40,14 @@ import com.hazelcast.internal.metrics.metricsets.GarbageCollectionMetricSet;
 import com.hazelcast.internal.metrics.metricsets.OperatingSystemMetricSet;
 import com.hazelcast.internal.metrics.metricsets.RuntimeMetricSet;
 import com.hazelcast.internal.metrics.metricsets.ThreadMetricSet;
+import com.hazelcast.internal.namespace.UserCodeNamespaceService;
 import com.hazelcast.internal.nio.Packet;
 import com.hazelcast.internal.partition.InternalPartitionService;
-import com.hazelcast.internal.partition.MigrationInfo;
+import com.hazelcast.internal.partition.PartitionMigrationEvent;
+import com.hazelcast.internal.partition.ReplicaSyncEvent;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.serialization.SerializationService;
+import com.hazelcast.internal.serialization.impl.compact.SchemaService;
 import com.hazelcast.internal.serialization.impl.compact.schema.MemberSchemaService;
 import com.hazelcast.internal.services.PostJoinAwareService;
 import com.hazelcast.internal.services.PreJoinAwareService;
@@ -52,7 +55,9 @@ import com.hazelcast.internal.tpc.TpcServerBootstrap;
 import com.hazelcast.internal.usercodedeployment.UserCodeDeploymentClassLoader;
 import com.hazelcast.internal.usercodedeployment.UserCodeDeploymentService;
 import com.hazelcast.internal.util.ConcurrencyDetection;
+import com.hazelcast.internal.util.phonehome.PhoneHome;
 import com.hazelcast.jet.impl.JetServiceBackend;
+import com.hazelcast.jet.impl.util.Util;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.LoggingService;
 import com.hazelcast.logging.impl.LoggingServiceImpl;
@@ -65,6 +70,7 @@ import com.hazelcast.spi.impl.executionservice.impl.ExecutionServiceImpl;
 import com.hazelcast.spi.impl.operationparker.OperationParker;
 import com.hazelcast.spi.impl.operationparker.impl.OperationParkerImpl;
 import com.hazelcast.spi.impl.operationservice.Operation;
+import com.hazelcast.spi.impl.operationservice.OperationService;
 import com.hazelcast.spi.impl.operationservice.PartitionAwareOperation;
 import com.hazelcast.spi.impl.operationservice.impl.OperationServiceImpl;
 import com.hazelcast.spi.impl.proxyservice.InternalProxyService;
@@ -73,6 +79,7 @@ import com.hazelcast.spi.impl.servicemanager.ServiceInfo;
 import com.hazelcast.spi.impl.servicemanager.ServiceManager;
 import com.hazelcast.spi.impl.servicemanager.impl.ServiceManagerImpl;
 import com.hazelcast.spi.impl.tenantcontrol.impl.TenantControlServiceImpl;
+import com.hazelcast.spi.merge.NamespaceAwareSplitBrainMergePolicyProvider;
 import com.hazelcast.spi.merge.SplitBrainMergePolicyProvider;
 import com.hazelcast.spi.properties.ClusterProperty;
 import com.hazelcast.spi.properties.HazelcastProperties;
@@ -100,7 +107,6 @@ import static com.hazelcast.internal.util.EmptyStatement.ignore;
 import static com.hazelcast.internal.util.ExceptionUtil.rethrow;
 import static com.hazelcast.spi.properties.ClusterProperty.BACKPRESSURE_ENABLED;
 import static com.hazelcast.spi.properties.ClusterProperty.CONCURRENT_WINDOW_MS;
-import static java.lang.System.currentTimeMillis;
 
 /**
  * The NodeEngineImpl is the where the construction of the Hazelcast dependencies take place. It can be
@@ -120,6 +126,7 @@ public class NodeEngineImpl implements NodeEngine {
     private final LoggingServiceImpl loggingService;
     private final ILogger logger;
     private final MetricsRegistryImpl metricsRegistry;
+    private final PhoneHome phoneHome;
     private final ProxyServiceImpl proxyService;
     private final ServiceManagerImpl serviceManager;
     private final ExecutionServiceImpl executionService;
@@ -149,18 +156,20 @@ public class NodeEngineImpl implements NodeEngine {
             this.loggingService = node.loggingService;
             this.logger = node.getLogger(NodeEngine.class.getName());
             this.metricsRegistry = newMetricRegistry(node);
+            this.phoneHome = new PhoneHome(node);
             this.proxyService = new ProxyServiceImpl(this);
             this.serviceManager = new ServiceManagerImpl(this);
             this.executionService = new ExecutionServiceImpl(this);
-            this.tpcServerBootstrap = new TpcServerBootstrap(this);
+            this.tenantControlService = new TenantControlServiceImpl(this);
+            this.tpcServerBootstrap = node.getNodeExtension().createTpcServerBootstrap();
             this.operationService = new OperationServiceImpl(this);
             this.eventService = new EventServiceImpl(this);
             this.operationParker = new OperationParkerImpl(this);
             UserCodeDeploymentService userCodeDeploymentService = new UserCodeDeploymentService();
             this.configurationService = node.getNodeExtension().createService(ClusterWideConfigurationService.class, this);
             ClassLoader configClassLoader = node.getConfigClassLoader();
-            if (configClassLoader instanceof UserCodeDeploymentClassLoader) {
-                ((UserCodeDeploymentClassLoader) configClassLoader).setUserCodeDeploymentService(userCodeDeploymentService);
+            if (configClassLoader instanceof UserCodeDeploymentClassLoader loader) {
+                loader.setUserCodeDeploymentService(userCodeDeploymentService);
             }
             this.transactionManagerService = new TransactionManagerServiceImpl(this);
             this.wanReplicationService = node.getNodeExtension().createService(WanReplicationService.class);
@@ -176,16 +185,17 @@ public class NodeEngineImpl implements NodeEngine {
             );
             this.splitBrainProtectionService = new SplitBrainProtectionServiceImpl(this);
             this.diagnostics = newDiagnostics();
-            this.splitBrainMergePolicyProvider = new SplitBrainMergePolicyProvider(configClassLoader);
+            this.splitBrainMergePolicyProvider = getConfig().getNamespacesConfig().isEnabled()
+                    ? new NamespaceAwareSplitBrainMergePolicyProvider(this)
+                    : new SplitBrainMergePolicyProvider(this.getConfigClassLoader());
 
             checkMapMergePolicies(node);
 
-            this.tenantControlService = new TenantControlServiceImpl(this);
 
-            serviceManager.registerService(OperationServiceImpl.SERVICE_NAME, operationService);
+            serviceManager.registerService(OperationService.SERVICE_NAME, operationService);
             serviceManager.registerService(OperationParker.SERVICE_NAME, operationParker);
             serviceManager.registerService(UserCodeDeploymentService.SERVICE_NAME, userCodeDeploymentService);
-            serviceManager.registerService(MemberSchemaService.SERVICE_NAME, node.getSchemaService());
+            serviceManager.registerService(SchemaService.SERVICE_NAME, node.getSchemaService());
             serviceManager.registerService(ConfigurationService.SERVICE_NAME, configurationService);
             serviceManager.registerService(TenantControlServiceImpl.SERVICE_NAME, tenantControlService);
         } catch (Throwable e) {
@@ -199,12 +209,15 @@ public class NodeEngineImpl implements NodeEngine {
     }
 
     private InternalSqlService createSqlService() {
+        if (!Util.isJetEnabled(this)) {
+            return new MissingSqlService(node.getThisUuid(), false);
+        }
         Class<?> clz;
         try {
             clz = Class.forName("com.hazelcast.sql.impl.SqlServiceImpl");
         } catch (ClassNotFoundException e) {
             // this is normal if the hazelcast-sql module isn't present - return disabled service
-            return new MissingSqlService(node.getThisUuid());
+            return new MissingSqlService(node.getThisUuid(), true);
         }
 
         try {
@@ -217,6 +230,7 @@ public class NodeEngineImpl implements NodeEngine {
         }
     }
 
+    @Override
     public TpcServerBootstrap getTpcServerBootstrap() {
         return tpcServerBootstrap;
     }
@@ -257,17 +271,25 @@ public class NodeEngineImpl implements NodeEngine {
     private Diagnostics newDiagnostics() {
         Address address = node.getThisAddress();
         String addressString = address.getHost().replace(":", "_") + "_" + address.getPort();
-        String name = "diagnostics-" + addressString + "-" + currentTimeMillis();
+        String name = "diagnostics-" + addressString;
 
-        return new Diagnostics(name, loggingService, getHazelcastInstance().getName(), node.getProperties());
+        return new Diagnostics(name, loggingService, getHazelcastInstance().getName(),
+                node.getProperties(), this);
     }
 
+    @Override
     public LoggingService getLoggingService() {
         return loggingService;
     }
 
+    @Override
     public MetricsRegistry getMetricsRegistry() {
         return metricsRegistry;
+    }
+
+    @Override
+    public PhoneHome getPhoneHome() {
+        return phoneHome;
     }
 
     public void start() {
@@ -371,6 +393,7 @@ public class NodeEngineImpl implements NodeEngine {
         return node.getClusterService();
     }
 
+    @Override
     public ManagementCenterService getManagementCenterService() {
         return node.getManagementCenterService();
     }
@@ -501,6 +524,7 @@ public class NodeEngineImpl implements NodeEngine {
         serviceManager.forEachMatchingService(serviceClass, consumer);
     }
 
+    @Override
     public Node getNode() {
         return node;
     }
@@ -511,12 +535,17 @@ public class NodeEngineImpl implements NodeEngine {
         eventService.onMemberLeft(member);
     }
 
+    @Override
     public void onClientDisconnected(UUID clientUuid) {
         operationParker.onClientDisconnected(clientUuid);
     }
 
-    public void onPartitionMigrate(MigrationInfo migrationInfo) {
+    public void onPartitionMigrate(PartitionMigrationEvent migrationInfo) {
         operationParker.onPartitionMigrate(migrationInfo);
+    }
+
+    public void onReplicaSync(ReplicaSyncEvent syncEvent) {
+        operationParker.onReplicaSync(syncEvent);
     }
 
     /**
@@ -610,6 +639,9 @@ public class NodeEngineImpl implements NodeEngine {
         if (metricsRegistry != null) {
             metricsRegistry.shutdown();
         }
+        if (phoneHome != null) {
+            phoneHome.shutdown();
+        }
         if (diagnostics != null) {
             diagnostics.shutdown();
         }
@@ -635,5 +667,10 @@ public class NodeEngineImpl implements NodeEngine {
                 throw new UnsupportedOperationException("Jet is not enabled on this node");
             };
         }
+    }
+
+    @Override
+    public UserCodeNamespaceService getNamespaceService() {
+        return node.getNamespaceService();
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package com.hazelcast.query.impl.getters;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -48,8 +47,6 @@ public class JsonPathCursor {
 
     /**
      * Creates a shallow copy of this object
-     *
-     * @param other
      */
     JsonPathCursor(JsonPathCursor other) {
         this.attributePath = other.attributePath;
@@ -58,11 +55,9 @@ public class JsonPathCursor {
 
     /**
      * Creates a new cursor from given attribute path.
-     *
-     * @param attributePath
      */
     public static JsonPathCursor createCursor(String attributePath) {
-        ArrayList<Triple> triples = new ArrayList<Triple>(DEFAULT_PATH_ELEMENT_COUNT);
+        ArrayList<Triple> triples = new ArrayList<>(DEFAULT_PATH_ELEMENT_COUNT);
         int start = 0;
         int end;
         while (start < attributePath.length()) {
@@ -128,13 +123,11 @@ public class JsonPathCursor {
     /**
      * Returns byte array of UTF8 encoded {@link #getCurrent()}. This
      * method caches the UTF8 encoded byte array, so it is more
-     * efficient to call repeteadly.
+     * efficient to call repeatedly.
      *
      * The returned byte array must not be modified!
-     *
-     * @return
      */
-    @SuppressFBWarnings(value = "EI_EXPOSE_REP", justification = "Making a copy reverses the benefit of this method")
+    //@SuppressFBWarnings(value = "EI_EXPOSE_REP", justification = "Making a copy reverses the benefit of this method")
     public byte[] getCurrentAsUTF8() {
         return currentAsUtf8;
     }
@@ -176,20 +169,7 @@ public class JsonPathCursor {
 
     private void next() {
         if (cursor < triples.size()) {
-            Triple triple = triples.get(cursor);
-            current = triple.string;
-            currentAsUtf8 = triple.stringAsUtf8;
-            isArray = triple.isArray;
-            currentArrayIndex = -1;
-            isAny = false;
-            if (isArray) {
-                if ("any".equals(current)) {
-                    isAny = true;
-                } else {
-                    isAny = false;
-                    currentArrayIndex = Integer.parseInt(current);
-                }
-            }
+            setState();
             cursor++;
         } else {
             current = null;
@@ -197,6 +177,42 @@ public class JsonPathCursor {
             currentArrayIndex = -1;
             isAny = false;
             isArray = false;
+        }
+    }
+
+    /**
+     * Sets internal state for current {@link #cursor}
+     */
+    private void setState() {
+        assert cursor < triples.size();
+        Triple triple = triples.get(cursor);
+        current = triple.string;
+        currentAsUtf8 = triple.stringAsUtf8;
+        isArray = triple.isArray;
+        currentArrayIndex = -1;
+        isAny = false;
+        if (isArray) {
+            if ("any".equals(current)) {
+                isAny = true;
+            } else {
+                isAny = false;
+                currentArrayIndex = Integer.parseInt(current);
+            }
+        }
+    }
+
+    public int saveState() {
+        return cursor - 1;
+    }
+
+    public void restoreState(int newCursor) {
+        if (newCursor == -1) {
+            reset();
+        } else {
+            cursor = newCursor;
+            // mimic logic in next()
+            setState();
+            cursor++;
         }
     }
 

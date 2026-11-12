@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,8 +19,7 @@ package com.hazelcast.multimap.impl;
 import com.hazelcast.config.EntryListenerConfig;
 import com.hazelcast.config.MultiMapConfig;
 import com.hazelcast.core.EntryListener;
-import com.hazelcast.core.HazelcastInstanceAware;
-import com.hazelcast.internal.cluster.Versions;
+import com.hazelcast.internal.namespace.NamespaceUtil;
 import com.hazelcast.internal.nio.ClassLoaderUtil;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.util.CollectionUtil;
@@ -37,7 +36,6 @@ import com.hazelcast.splitbrainprotection.SplitBrainProtectionOn;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import java.text.MessageFormat;
 import java.util.Collection;
 import java.util.EventListener;
 import java.util.HashMap;
@@ -53,7 +51,6 @@ import java.util.concurrent.TimeUnit;
 import static com.hazelcast.internal.util.Preconditions.checkInstanceOf;
 import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 import static com.hazelcast.internal.util.Preconditions.checkPositive;
-import static com.hazelcast.internal.util.Preconditions.checkTrueUnsupportedOperation;
 import static com.hazelcast.internal.util.SetUtil.createHashSet;
 
 @SuppressWarnings("checkstyle:methodcount")
@@ -64,9 +61,6 @@ public class MultiMapProxyImpl<K, V>
     protected static final String NULL_KEY_IS_NOT_ALLOWED = "Null key is not allowed!";
     protected static final String NULL_VALUE_IS_NOT_ALLOWED = "Null value is not allowed!";
     protected static final String NULL_LISTENER_IS_NOT_ALLOWED = "Null listener is not allowed!";
-    protected static final String MINIMUM_VERSION_ERROR_FORMAT = "{0} is only available with cluster version {1} or greater";
-    protected static final String MINIMUM_VERSION_ERROR_4_1 = MessageFormat.format(MINIMUM_VERSION_ERROR_FORMAT,
-            "MultiMap#putAllAsync", "4.1");
 
     public MultiMapProxyImpl(MultiMapConfig config, MultiMapService service, NodeEngine nodeEngine, String name) {
         super(config, service, nodeEngine, name);
@@ -84,16 +78,14 @@ public class MultiMapProxyImpl<K, V>
                         impl + " should be an instance of EntryListener");
             } else if (listenerConfig.getClassName() != null) {
                 try {
-                    listener = ClassLoaderUtil.newInstance(nodeEngine.getConfigClassLoader(), listenerConfig.getClassName());
+                    ClassLoader loader = NamespaceUtil.getClassLoaderForNamespace(nodeEngine, config.getUserCodeNamespace());
+                    listener = ClassLoaderUtil.newInstance(loader, listenerConfig.getClassName());
                 } catch (Exception e) {
                     throw ExceptionUtil.rethrow(e);
                 }
             }
 
             if (listener != null) {
-                if (listener instanceof HazelcastInstanceAware) {
-                    ((HazelcastInstanceAware) listener).setHazelcastInstance(nodeEngine.getHazelcastInstance());
-                }
                 if (listenerConfig.isLocal()) {
                     addLocalEntryListener(listener);
                 } else {
@@ -105,7 +97,6 @@ public class MultiMapProxyImpl<K, V>
 
     @Override
     public CompletionStage<Void> putAllAsync(@Nonnull Map<? extends K, Collection<? extends V>> m) {
-        checkTrueUnsupportedOperation(isClusterVersionGreaterOrEqual(Versions.V4_1), MINIMUM_VERSION_ERROR_4_1);
         InternalCompletableFuture<Void> future = new InternalCompletableFuture<>();
         Map<Data, Data> dataMap = new HashMap<>();
 
@@ -122,7 +113,6 @@ public class MultiMapProxyImpl<K, V>
 
     @Override
     public CompletionStage<Void> putAllAsync(@Nonnull K key, @Nonnull Collection<? extends V> value) {
-        checkTrueUnsupportedOperation(isClusterVersionGreaterOrEqual(Versions.V4_1), MINIMUM_VERSION_ERROR_4_1);
         InternalCompletableFuture<Void> future = new InternalCompletableFuture<>();
         Map<Data, Data> dataMap = new HashMap<>();
 
@@ -178,6 +168,7 @@ public class MultiMapProxyImpl<K, V>
         return result.getObjectCollection(nodeEngine);
     }
 
+    @Override
     public void delete(@Nonnull Object key) {
         checkNotNull(key, NULL_KEY_IS_NOT_ALLOWED);
         NodeEngine nodeEngine = getNodeEngine();

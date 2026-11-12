@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,17 +23,22 @@ import com.hazelcast.core.HazelcastInstanceNotActiveException;
 import com.hazelcast.function.FunctionEx;
 import com.hazelcast.instance.impl.Node;
 import com.hazelcast.internal.cluster.ClusterService;
+import com.hazelcast.internal.cluster.impl.MasterNodeChangedException;
+import com.hazelcast.internal.cluster.impl.MembersView;
+import com.hazelcast.internal.metrics.DynamicMetricsProvider;
 import com.hazelcast.internal.metrics.MetricDescriptor;
+import com.hazelcast.internal.metrics.MetricsCollectionContext;
 import com.hazelcast.internal.metrics.MetricsRegistry;
 import com.hazelcast.internal.metrics.Probe;
 import com.hazelcast.internal.partition.impl.InternalPartitionServiceImpl;
 import com.hazelcast.internal.partition.impl.PartitionServiceState;
 import com.hazelcast.internal.serialization.Data;
-import com.hazelcast.internal.util.Clock;
+import com.hazelcast.internal.util.ExceptionUtil;
 import com.hazelcast.internal.util.counters.Counter;
 import com.hazelcast.internal.util.counters.MwCounter;
 import com.hazelcast.internal.util.executor.ManagedExecutorService;
 import com.hazelcast.jet.JetException;
+import com.hazelcast.jet.JetMemberSelector;
 import com.hazelcast.jet.JobAlreadyExistsException;
 import com.hazelcast.jet.config.DeltaJobConfig;
 import com.hazelcast.jet.config.JetConfig;
@@ -58,8 +63,6 @@ import com.hazelcast.jet.impl.operation.GetJobIdsOperation.GetJobIdsResult;
 import com.hazelcast.jet.impl.operation.NotifyMemberShutdownOperation;
 import com.hazelcast.jet.impl.pipeline.PipelineImpl;
 import com.hazelcast.jet.impl.pipeline.PipelineImpl.Context;
-import com.hazelcast.jet.impl.util.ExceptionUtil;
-import com.hazelcast.jet.impl.util.LoggingUtil;
 import com.hazelcast.jet.impl.util.Util;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.ringbuffer.OverflowPolicy;
@@ -67,6 +70,7 @@ import com.hazelcast.ringbuffer.Ringbuffer;
 import com.hazelcast.security.SecurityContext;
 import com.hazelcast.spi.exception.RetryableHazelcastException;
 import com.hazelcast.spi.impl.NodeEngineImpl;
+import com.hazelcast.spi.impl.eventservice.impl.Registration;
 import com.hazelcast.spi.impl.executionservice.ExecutionService;
 import com.hazelcast.spi.properties.HazelcastProperties;
 import com.hazelcast.version.Version;
@@ -86,7 +90,6 @@ import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.Spliterators;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
@@ -101,11 +104,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.stream.StreamSupport;
 
 import static com.hazelcast.cluster.ClusterState.IN_TRANSITION;
 import static com.hazelcast.cluster.ClusterState.PASSIVE;
 import static com.hazelcast.cluster.memberselector.MemberSelectors.DATA_MEMBER_SELECTOR;
+import static com.hazelcast.internal.util.ExceptionUtil.sneakyThrow;
+import static com.hazelcast.internal.util.ExceptionUtil.withTryCatch;
 import static com.hazelcast.internal.util.executor.ExecutorType.CACHED;
 import static com.hazelcast.jet.Util.idToString;
 import static com.hazelcast.jet.core.JobStatus.COMPLETING;
@@ -114,14 +118,10 @@ import static com.hazelcast.jet.core.JobStatus.NOT_RUNNING;
 import static com.hazelcast.jet.core.JobStatus.RUNNING;
 import static com.hazelcast.jet.core.JobStatus.SUSPENDED;
 import static com.hazelcast.jet.datamodel.Tuple2.tuple2;
+import static com.hazelcast.jet.impl.AbstractJobProxy.cannotAddStatusListener;
 import static com.hazelcast.jet.impl.JobClassLoaderService.JobPhase.COORDINATOR;
 import static com.hazelcast.jet.impl.TerminationMode.CANCEL_FORCEFUL;
 import static com.hazelcast.jet.impl.execution.init.CustomClassLoadedObject.deserializeWithCustomClassLoader;
-import static com.hazelcast.jet.impl.operation.GetJobIdsOperation.ALL_JOBS;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.sneakyThrow;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.withTryCatch;
-import static com.hazelcast.jet.impl.util.LoggingUtil.logFine;
-import static com.hazelcast.jet.impl.util.LoggingUtil.logFinest;
 import static com.hazelcast.spi.properties.ClusterProperty.JOB_SCAN_PERIOD;
 import static java.util.Collections.emptyList;
 import static java.util.Comparator.comparing;
@@ -136,7 +136,7 @@ import static java.util.stream.Collectors.toList;
  * A service that handles MasterContexts on the coordinator member.
  * Job-control operations from client are handled here.
  */
-public class JobCoordinationService {
+public class JobCoordinationService implements DynamicMetricsProvider {
 
     private static final String COORDINATOR_EXECUTOR_NAME = "jet:coordinator";
 
@@ -155,6 +155,8 @@ public class JobCoordinationService {
      */
     private static final Object UNINITIALIZED_LIGHT_JOB_MARKER = new Object();
 
+    final List<JobInvocationObserver> jobInvocationObservers = new ArrayList<>();
+
     private final NodeEngineImpl nodeEngine;
     private final JetServiceBackend jetServiceBackend;
     private final JetConfig config;
@@ -167,7 +169,7 @@ public class JobCoordinationService {
     private final ConcurrentMap<Long, ScheduledFuture<?>> scheduledJobTimeouts = new ConcurrentHashMap<>();
     /**
      * Map of {memberUuid; removeTime}.
-     *
+     * <p>
      * A collection of UUIDs of members which left the cluster and for which we
      * didn't receive {@link NotifyMemberShutdownOperation}.
      */
@@ -193,7 +195,7 @@ public class JobCoordinationService {
         this.nodeEngine = nodeEngine;
         this.jetServiceBackend = jetServiceBackend;
         this.config = config;
-        this.pipelineToDagContext = () -> this.config.getCooperativeThreadCount();
+        this.pipelineToDagContext = this.config::getCooperativeThreadCount;
         this.logger = nodeEngine.getLogger(getClass());
         this.jobRepository = jobRepository;
 
@@ -242,33 +244,34 @@ public class JobCoordinationService {
                 // first, check if the job is already completed
                 JobResult jobResult = jobRepository.getJobResult(jobId);
                 if (jobResult != null) {
-                    logger.fine("Not starting job " + idToString(jobId) + " since already completed with result: "
-                            + jobResult);
+                    logger.fine("Not starting job %s since already completed with result: %s", idToString(jobId), jobResult);
                     return;
                 }
                 if (!config.isResourceUploadEnabled() && !jobConfig.getResourceConfigs().isEmpty()) {
                     throw new JetException(Util.JET_RESOURCE_UPLOAD_DISABLED_MESSAGE);
                 }
 
-                int quorumSize = jobConfig.isSplitBrainProtectionEnabled() ? getQuorumSize() : 0;
                 Object jobDefinition = deserializeJobDefinition(jobId, jobConfig, serializedJobDefinition);
                 DAG dag;
                 Data serializedDag;
-                if (jobDefinition instanceof PipelineImpl) {
-                    dag = ((PipelineImpl) jobDefinition).toDag(pipelineToDagContext);
-                    serializedDag = nodeEngine().getSerializationService().toData(dag);
+                if (jobDefinition instanceof PipelineImpl pipeline) {
+                    dag = pipeline.toDag(pipelineToDagContext);
+                    dag.setMemberSelector(pipeline.memberSelector());
+                    serializedDag = nodeEngine.getSerializationService().toData(dag);
                 } else {
                     dag = (DAG) jobDefinition;
                     serializedDag = serializedJobDefinition;
                 }
 
-                checkPermissions(subject, dag);
+                validateJob(dag, subject);
 
                 Set<String> ownedObservables = ownedObservables(dag);
-                JobRecord jobRecord = new JobRecord(nodeEngine.getClusterService().getClusterVersion(), jobId, serializedDag,
-                        dagToJson(dag), jobConfig, ownedObservables, subject);
+                JobRecord jobRecord = new JobRecord(nodeEngine.getClusterService().getClusterVersion(),
+                        jobId, serializedDag, dagToJson(dag), jobConfig, ownedObservables, subject);
+                int quorumSize = jobConfig.isSplitBrainProtectionEnabled() ? getQuorumSize() : 0;
                 JobExecutionRecord jobExecutionRecord = new JobExecutionRecord(jobId, quorumSize);
                 masterContext = createMasterContext(jobRecord, jobExecutionRecord);
+                masterContext.setMemberSelector(dag.memberSelector());
 
                 boolean hasDuplicateJobName;
                 synchronized (lock) {
@@ -279,14 +282,14 @@ public class JobCoordinationService {
                         // just try to initiate the coordination
                         MasterContext prev = masterContexts.putIfAbsent(jobId, masterContext);
                         if (prev != null) {
-                            logger.fine("Joining to already existing masterContext " + prev.jobIdString());
+                            logger.fine("Joining to already existing masterContext %s", prev.jobIdString());
                             return;
                         }
                     }
                 }
 
                 if (hasDuplicateJobName) {
-                    jobRepository.deleteJob(jobId);
+                    jobRepository.deleteJob(jobId, !jobConfig.getResourceConfigs().isEmpty());
                     throw new JobAlreadyExistsException("Another active job with equal name (" + jobConfig.getName()
                             + ") exists: " + idToString(jobId));
                 }
@@ -297,40 +300,43 @@ public class JobCoordinationService {
                 }
 
                 // If there is no master context and job result at the same time, it means this is the first submission
-                jobSubmitted.inc();
+                onJobSubmitted(dag, jobConfig);
                 jobRepository.putNewJobRecord(jobRecord);
                 logger.info("Starting job " + idToString(masterContext.jobId()) + " based on submit request");
             } catch (Throwable e) {
                 jetServiceBackend.getJobClassLoaderService()
-                                 .tryRemoveClassloadersForJob(jobId, COORDINATOR);
+                        .tryRemoveClassloadersForJob(jobId, COORDINATOR);
 
                 res.completeExceptionally(e);
                 throw e;
             } finally {
                 res.complete(null);
             }
-            tryStartJob(masterContext);
+            masterContext.jobContext().tryStartJob();
         });
         return res;
     }
 
     public CompletableFuture<Void> submitLightJob(
             long jobId,
-            Object deserializedJobDefinition,
+            Object jobDefinition,
             Data serializedJobDefinition,
             JobConfig jobConfig,
             Subject subject
     ) {
-        if (deserializedJobDefinition == null) {
-            deserializedJobDefinition = nodeEngine().getSerializationService().toObject(serializedJobDefinition);
+        if (jobDefinition == null) {
+            jobDefinition = nodeEngine.getSerializationService().toObject(serializedJobDefinition);
         }
 
         DAG dag;
-        if (deserializedJobDefinition instanceof DAG) {
-            dag = (DAG) deserializedJobDefinition;
+        if (jobDefinition instanceof PipelineImpl pipeline) {
+            dag = pipeline.toDag(pipelineToDagContext);
+            dag.setMemberSelector(pipeline.memberSelector());
         } else {
-            dag = ((PipelineImpl) deserializedJobDefinition).toDag(pipelineToDagContext);
+            dag = (DAG) jobDefinition;
         }
+
+        validateJob(dag, subject);
 
         // First insert just a marker into the map. This is to prevent initializing the light job if the jobId
         // was submitted twice. This can happen e.g. if the client retries.
@@ -338,8 +344,6 @@ public class JobCoordinationService {
         if (oldContext != null) {
             throw new JetException("duplicate jobId " + idToString(jobId));
         }
-
-        checkPermissions(subject, dag);
 
         // Initialize and start the job. We do this before adding the actual
         // LightMasterContext to the map to avoid possible races of the job initialization and cancellation.
@@ -350,12 +354,36 @@ public class JobCoordinationService {
                     scheduleJobTimeout(jobId, jobConfig.getTimeoutMillis());
 
                     return mc.getCompletionFuture()
-                      .whenComplete((r, t) -> {
-                          Object removed = lightMasterContexts.remove(jobId);
-                          assert removed instanceof LightMasterContext : "LMC not found: " + removed;
-                          unscheduleJobTimeout(jobId);
-                      });
+                            .whenComplete((r, t) -> {
+                                Object removed = lightMasterContexts.remove(jobId);
+                                assert removed instanceof LightMasterContext : "LMC not found: " + removed;
+                                unscheduleJobTimeout(jobId);
+                            });
                 }, coordinationExecutor());
+    }
+
+    private void validateJob(DAG dag, Subject subject) {
+        SecurityContext securityContext = nodeEngine.getNode().securityContext;
+        if (securityContext != null && subject != null) {
+            for (Vertex vertex : dag) {
+                Permission requiredPermission = vertex.getMetaSupplier().getRequiredPermission();
+                if (requiredPermission != null) {
+                    securityContext.checkPermission(subject, requiredPermission);
+                }
+            }
+        }
+        if (dag.memberSelector() != null) {
+            validateIsolatedJob(dag.memberSelector());
+        }
+    }
+
+    protected void validateIsolatedJob(@Nonnull JetMemberSelector memberSelector) {
+        throw new UnsupportedOperationException(
+                "The Isolated Jobs feature is only available in Hazelcast Enterprise Edition.");
+    }
+
+    protected void onJobSubmitted(DAG dag, JobConfig config) {
+        jobSubmitted.inc();
     }
 
     public long getJobSubmittedCount() {
@@ -370,27 +398,15 @@ public class JobCoordinationService {
         return ((LightMasterContext) mc).getJobConfig();
     }
 
-    private void checkPermissions(Subject subject, DAG dag) {
-        SecurityContext securityContext = nodeEngine.getNode().securityContext;
-        if (securityContext == null || subject == null) {
-            return;
-        }
-        for (Vertex vertex : dag) {
-            Permission requiredPermission = vertex.getMetaSupplier().getRequiredPermission();
-            if (requiredPermission != null) {
-                securityContext.checkPermission(subject, requiredPermission);
-            }
-        }
-    }
-
     private static Set<String> ownedObservables(DAG dag) {
-        return StreamSupport.stream(Spliterators.spliteratorUnknownSize(dag.iterator(), 0), false)
+        return dag.vertices().stream()
                 .map(vertex -> vertex.getMetaSupplier().getTags().get(ObservableImpl.OWNED_OBSERVABLE))
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
     }
 
-    @SuppressWarnings("WeakerAccess") // used by jet-enterprise
+    @SuppressWarnings("WeakerAccess")
+        // used by jet-enterprise
     MasterContext createMasterContext(JobRecord jobRecord, JobExecutionRecord jobExecutionRecord) {
         return new MasterContext(nodeEngine, this, jobRecord, jobExecutionRecord);
     }
@@ -405,8 +421,8 @@ public class JobCoordinationService {
         }
 
         return masterContexts.values()
-                             .stream()
-                             .anyMatch(ctx -> jobName.equals(ctx.jobConfig().getName()));
+                .stream()
+                .anyMatch(ctx -> jobName.equals(ctx.jobConfig().getName()));
     }
 
     public CompletableFuture<Void> prepareForPassiveClusterState() {
@@ -417,7 +433,7 @@ public class JobCoordinationService {
         return submitToCoordinatorThread(() -> {
             CompletableFuture[] futures = masterContexts
                     .values().stream()
-                    .map(mc -> mc.jobContext().gracefullyTerminate())
+                    .map(mc -> mc.jobContext().gracefullyTerminateOrCancel())
                     .toArray(CompletableFuture[]::new);
             return CompletableFuture.allOf(futures);
         }).thenCompose(identity());
@@ -452,7 +468,7 @@ public class JobCoordinationService {
                             if (t instanceof CancellationException || t instanceof JetException) {
                                 throw sneakyThrow(t);
                             }
-                            throw new JetException(ExceptionUtil.stackTraceToString(t));
+                            throw new JetException(ExceptionUtil.toString(t));
                         }),
                 JobResult::asCompletableFuture,
                 jobRecord -> {
@@ -503,7 +519,7 @@ public class JobCoordinationService {
                         throw new IllegalStateException("Cannot " + terminationMode + " job " + idToString(jobId)
                                 + " because it already has a result: " + jobResult);
                     }
-                    logger.fine("Ignoring cancellation of a completed job " + idToString(jobId));
+                    logger.fine("Ignoring cancellation of a completed job %s", idToString(jobId));
                 },
                 jobRecord -> {
                     // we'll eventually learn of the job through scanning of records or from a join operation
@@ -521,78 +537,84 @@ public class JobCoordinationService {
         ((LightMasterContext) mc).requestTermination(userInitiated);
     }
 
-    /**
-     * Return the job IDs of jobs with the given name, sorted by
-     * {active/completed, creation time}, active & newest first.
-     */
-    public CompletableFuture<GetJobIdsResult> getJobIds(@Nullable String onlyName, long onlyJobId) {
-        if (onlyName != null) {
-            assertIsMaster("Cannot query list of job IDs by name on non-master node");
-        }
 
+    public CompletableFuture<GetJobIdsResult> getJobIdById(long jobId) {
         return submitToCoordinatorThread(() -> {
-            if (onlyJobId != ALL_JOBS) {
-                Object lmc = lightMasterContexts.get(onlyJobId);
-                if (lmc != null && lmc != UNINITIALIZED_LIGHT_JOB_MARKER) {
-                    return new GetJobIdsResult(onlyJobId, true);
-                }
-
-                if (isMaster()) {
-                    try {
-                        callWithJob(onlyJobId, mc -> null, jobResult -> null, jobRecord -> null, null)
-                                .get();
-                    } catch (ExecutionException e) {
-                        if (e.getCause() instanceof JobNotFoundException) {
-                            return GetJobIdsResult.EMPTY;
-                        }
-                        throw e;
-                    }
-                    return new GetJobIdsResult(onlyJobId, false);
-                }
-                return GetJobIdsResult.EMPTY;
+            Object lmc = lightMasterContexts.get(jobId);
+            if (lmc != null && lmc != UNINITIALIZED_LIGHT_JOB_MARKER) {
+                return new GetJobIdsResult(jobId, true);
             }
+            if (isMaster()) {
+                try {
+                    callWithJob(jobId, mc -> null, jobResult -> null, jobRecord -> null, null)
+                            .get();
+                } catch (ExecutionException e) {
+                    if (e.getCause() instanceof JobNotFoundException) {
+                        return GetJobIdsResult.EMPTY;
+                    }
+                    throw e;
+                }
+                return new GetJobIdsResult(jobId, false);
+            }
+            return GetJobIdsResult.EMPTY;
+        });
+    }
 
+    public CompletableFuture<GetJobIdsResult> getLightJobIds() {
+        return submitToCoordinatorThread(() -> {
+            List<Tuple2<Long, Boolean>> result = new ArrayList<>();
+            for (Object ctx : lightMasterContexts.values()) {
+                if (ctx != UNINITIALIZED_LIGHT_JOB_MARKER) {
+                    result.add(tuple2(((LightMasterContext) ctx).getJobId(), true));
+                }
+            }
+            return new GetJobIdsResult(result);
+        });
+    }
+
+    public CompletableFuture<GetJobIdsResult> getAllJobsId() {
+        assertIsMaster("This method is allowed to run only on the master node!");
+        return submitToCoordinatorThread(() -> {
             List<Tuple2<Long, Boolean>> result = new ArrayList<>();
 
-            // add light jobs - only if no name is requested, light jobs can't have a name
-            if (onlyName == null) {
-                for (Object ctx : lightMasterContexts.values()) {
-                    if (ctx != UNINITIALIZED_LIGHT_JOB_MARKER) {
-                        result.add(tuple2(((LightMasterContext) ctx).getJobId(), true));
-                    }
+            // add light jobs
+            for (Object ctx : lightMasterContexts.values()) {
+                if (ctx != UNINITIALIZED_LIGHT_JOB_MARKER) {
+                    result.add(tuple2(((LightMasterContext) ctx).getJobId(), true));
+                }
+            }
+            // add normal jobs
+            for (Long jobId : jobRepository.getAllJobIds()) {
+                result.add(tuple2(jobId, false));
+            }
+
+            return new GetJobIdsResult(result);
+        });
+    }
+
+    public CompletableFuture<GetJobIdsResult> getNormalJobIdsByName(@Nonnull String name) {
+        return submitToCoordinatorThread(() -> {
+            List<Tuple2<Long, Boolean>> result = new ArrayList<>();
+            // we first need to collect to a map where the jobId is the key to eliminate possible duplicates
+            // in JobResult and also to be able to sort from newest to oldest
+            Map<Long, Long> jobs = new HashMap<>();
+            for (MasterContext ctx : masterContexts.values()) {
+                if (name.equals(ctx.jobConfig().getName())) {
+                    jobs.put(ctx.jobId(), Long.MAX_VALUE);
                 }
             }
 
-            // add normal jobs - only on master
-            if (isMaster()) {
-                if (onlyName != null) {
-                    // we first need to collect to a map where the jobId is the key to eliminate possible duplicates
-                    // in JobResult and also to be able to sort from newest to oldest
-                    Map<Long, Long> jobs = new HashMap<>();
-                    for (MasterContext ctx : masterContexts.values()) {
-                        if (onlyName.equals(ctx.jobConfig().getName())) {
-                            jobs.put(ctx.jobId(), Long.MAX_VALUE);
-                        }
-                    }
-
-                    for (JobResult jobResult : jobRepository.getJobResults(onlyName)) {
-                        jobs.put(jobResult.getJobId(), jobResult.getCreationTime());
-                    }
-
-                    jobs.entrySet().stream()
-                        .sorted(
-                                comparing(Entry<Long, Long>::getValue)
-                                        .thenComparing(Entry::getKey)
-                                        .reversed()
-                        )
-                        .forEach(entry -> result.add(tuple2(entry.getKey(), false)));
-                } else {
-                    for (Long jobId : jobRepository.getAllJobIds()) {
-                        result.add(tuple2(jobId, false));
-                    }
-                }
+            for (JobResult jobResult : jobRepository.getJobResults(name)) {
+                jobs.put(jobResult.getJobId(), jobResult.getCreationTime());
             }
 
+            jobs.entrySet().stream()
+                    .sorted(
+                            comparing(Entry<Long, Long>::getValue)
+                                    .thenComparing(Entry::getKey)
+                                    .reversed()
+                    )
+                    .forEach(entry -> result.add(tuple2(entry.getKey(), false)));
             return new GetJobIdsResult(result);
         });
     }
@@ -683,6 +705,18 @@ public class JobCoordinationService {
         );
     }
 
+    @Override
+    public void provideDynamicMetrics(MetricDescriptor descriptor, MetricsCollectionContext context) {
+        try {
+            descriptor.withTag(MetricTags.MODULE, "jet");
+            masterContexts.forEach((id, ctx) ->
+                    ctx.provideDynamicMetrics(descriptor.copy(), context));
+        } catch (Throwable t) {
+            logger.warning("Dynamic metric collection failed", t);
+            throw t;
+        }
+    }
+
     /**
      * Returns the latest metrics for a job or fails with {@link JobNotFoundException}
      * if the requested job is not found.
@@ -722,7 +756,7 @@ public class JobCoordinationService {
 
     public CompletableFuture<Void> resumeJob(long jobId) {
         return runWithJob(jobId,
-                masterContext -> masterContext.jobContext().resumeJob(jobRepository::newExecutionId),
+                masterContext -> masterContext.jobContext().resumeJob(),
                 jobResult -> {
                     throw new IllegalStateException("Job already completed");
                 },
@@ -734,9 +768,10 @@ public class JobCoordinationService {
 
     /**
      * Return a summary of all jobs
-     * @deprecated Since 5.3, to be removed in 6.0. Use {@link #getJobAndSqlSummaryList()} instead
+     *
+     * @deprecated to be removed in 6.0. Use {@link #getJobAndSqlSummaryList()} instead
      */
-    @Deprecated
+    @Deprecated(since = "5.3", forRemoval = true)
     public CompletableFuture<List<JobSummary>> getJobSummaryList() {
         return getJobAndSqlSummaryList().thenApply(jobAndSqlSummaries -> jobAndSqlSummaries.stream()
                 .map(this::toJobSummary)
@@ -752,9 +787,9 @@ public class JobCoordinationService {
     /**
      * Return a summary of all jobs with sql data
      */
-    public CompletableFuture<List<JobAndSqlSummary>> getJobAndSqlSummaryList() {
+    public CompletableFuture<List<JobAndSqlSummaryIds>> getJobAndSqlSummaryList() {
         return submitToCoordinatorThread(() -> {
-            Map<Long, JobAndSqlSummary> jobs = new HashMap<>();
+            Map<Long, JobAndSqlSummaryIds> jobs = new HashMap<>();
             if (isMaster()) {
                 // running jobs
                 jobRepository.getJobRecords().stream()
@@ -769,9 +804,9 @@ public class JobCoordinationService {
                             // Pre-review note : volatile read at supplier, should not read under lock path.
                             // Q: Any other better way to get executionRecord?
                             JobExecutionRecord executionRecord = jobRepository.getJobExecutionRecord(r.getJobId());
-                            return new JobAndSqlSummary(
+                            return new JobAndSqlSummaryIds(
                                     false, r.getJobId(), 0, r.getJobNameOrId(), r.getJobStatus(), r.getCreationTime(),
-                                    r.getCompletionTime(), r.getFailureText(), null,
+                                    r.getCompletionTime(), r.getFailureText(), getSqlSummary(r.getJobConfig()),
                                     executionRecord == null || executionRecord.getSuspensionCause() == null ? null :
                                             executionRecord.getSuspensionCause().description(),
                                     r.isUserCancelled());
@@ -790,11 +825,8 @@ public class JobCoordinationService {
         });
     }
 
-    private JobAndSqlSummary getJobAndSqlSummary(LightMasterContext lmc) {
-        String query = lmc.getJobConfig().getArgument(JobConfigArguments.KEY_SQL_QUERY_TEXT);
-        Object unbounded = lmc.getJobConfig().getArgument(JobConfigArguments.KEY_SQL_UNBOUNDED);
-        SqlSummary sqlSummary = query != null && unbounded != null ?
-                new SqlSummary(query, Boolean.TRUE.equals(unbounded)) : null;
+    private JobAndSqlSummaryIds getJobAndSqlSummary(LightMasterContext lmc) {
+        SqlSummary sqlSummary = getSqlSummary(lmc.getJobConfig());
 
         // For simplicity, we assume here that light job is running iff LightMasterContext exists:
         // running jobs are not cancelled and others are not visible.
@@ -808,7 +840,7 @@ public class JobCoordinationService {
         // Also, future completion handlers (thenApply etc.) are not guaranteed to run in
         // any particular order and can be executed in parallel.
         //
-        // This is unlikely and we do not care however such scenario is possible:
+        // This is unlikely, and we do not care; however, such scenario is possible:
         // 1. user submits a light job
         // 2. user gets the job by id and joins it (separate Job proxy instance is necessary
         //    because different future will be used than for submit)
@@ -819,10 +851,19 @@ public class JobCoordinationService {
         // In such scenario finished job will be reported as running.
         //
         // Note: suspensionCause is not supported for light jobs.
-        return new JobAndSqlSummary(
+        return new JobAndSqlSummaryIds(
                 true, lmc.getJobId(), lmc.getJobId(), idToString(lmc.getJobId()),
                 RUNNING, lmc.getStartTime(), 0, null, sqlSummary, null,
                 false);
+    }
+
+    @Nullable
+    private static SqlSummary getSqlSummary(JobConfig jobConfig) {
+        String query = jobConfig.getArgument(JobConfigArguments.KEY_SQL_QUERY_TEXT);
+        Object unbounded = jobConfig.getArgument(JobConfigArguments.KEY_SQL_UNBOUNDED);
+        SqlSummary sqlSummary = query != null && unbounded != null ?
+                new SqlSummary(query, Boolean.TRUE.equals(unbounded)) : null;
+        return sqlSummary;
     }
 
     /**
@@ -843,6 +884,31 @@ public class JobCoordinationService {
     }
 
     /**
+     * Applies the specified listener registration if the job is not completed/failed.
+     * Otherwise, an {@link IllegalStateException} is thrown by the returned future.
+     */
+    public CompletableFuture<UUID> addJobStatusListener(long jobId, boolean isLightJob, Registration registration) {
+        if (isLightJob) {
+            Object mc = lightMasterContexts.get(jobId);
+            if (mc == null || mc == UNINITIALIZED_LIGHT_JOB_MARKER) {
+                throw new JobNotFoundException(jobId);
+            } else {
+                return completedFuture(((LightMasterContext) mc).addStatusListener(registration));
+            }
+        }
+        return callWithJob(jobId,
+                masterContext -> masterContext.addStatusListener(registration),
+                jobResult -> {
+                    throw cannotAddStatusListener(jobResult.getJobStatus());
+                },
+                jobRecord -> {
+                    JobEventService jobEventService = nodeEngine.getService(JobEventService.SERVICE_NAME);
+                    return jobEventService.handleAllRegistrations(jobId, registration).getId();
+                },
+                null);
+    }
+
+    /**
      * Add the given member to shutting down members. This will prevent
      * submission of more executions until the member actually leaves the
      * cluster. The returned future will complete when all executions of which
@@ -859,17 +925,17 @@ public class JobCoordinationService {
             return oldFuture;
         }
         if (removedMembers.containsKey(uuid)) {
-            logFine(logger, "NotifyMemberShutdownOperation received for a member that was already " +
+            logger.fine("NotifyMemberShutdownOperation received for a member that was already " +
                     "removed from the cluster: %s", uuid);
             return completedFuture(null);
         }
-        logFine(logger, "Added a shutting-down member: %s", uuid);
+        logger.fine("Added a shutting-down member: %s", uuid);
         CompletableFuture[] futures = masterContexts.values().stream()
-                                                    .map(mc -> mc.jobContext().onParticipantGracefulShutdown(uuid))
-                                                    .toArray(CompletableFuture[]::new);
+                .map(mc -> mc.jobContext().onParticipantGracefulShutdown(uuid))
+                .toArray(CompletableFuture[]::new);
         // Need to do this even if futures.length == 0, we need to perform the action in whenComplete
         CompletableFuture.allOf(futures)
-                         .whenComplete(withTryCatch(logger, (r, e) -> future.complete(null)));
+                .whenComplete(withTryCatch(logger, (r, e) -> future.complete(null)));
         return future;
     }
 
@@ -888,6 +954,14 @@ public class JobCoordinationService {
         return masterContexts.get(jobId);
     }
 
+    public void registerInvocationObserver(JobInvocationObserver observer) {
+        this.jobInvocationObservers.add(observer);
+    }
+
+    public void unregisterInvocationObserver(JobInvocationObserver observer) {
+        this.jobInvocationObservers.remove(observer);
+    }
+
     JetServiceBackend getJetServiceBackend() {
         return jetServiceBackend;
     }
@@ -904,7 +978,7 @@ public class JobCoordinationService {
         }
         // if there are any members in a shutdown process, don't start jobs
         if (!membersShuttingDown.isEmpty()) {
-            LoggingUtil.logFine(logger, "Not starting jobs because members are shutting down: %s",
+            logger.fine("Not starting jobs because members are shutting down: %s",
                     membersShuttingDown.keySet());
             return false;
         }
@@ -920,7 +994,7 @@ public class JobCoordinationService {
         PartitionServiceState state =
                 getInternalPartitionService().getPartitionReplicaStateChecker().getPartitionServiceState();
         if (state != PartitionServiceState.SAFE) {
-            logger.fine("Not starting jobs because partition replication is not in safe state, but in " + state);
+            logger.fine("Not starting jobs because partition replication is not in safe state, but in %s", state);
             return false;
         }
         if (!getInternalPartitionService().getPartitionStateManager().isInitialized()) {
@@ -928,9 +1002,9 @@ public class JobCoordinationService {
             return false;
         }
         if (nodeEngine.getNode().isClusterStateManagementAutomatic()
-            && !nodeEngine.getNode().isManagedClusterStable()) {
-            LoggingUtil.logFine(logger, "Not starting jobs because cluster is running in managed context "
-                            + "and is not yet stable. Current cluster topology intentL %s, "
+                && !nodeEngine.getNode().isManagedClusterStable()) {
+            logger.fine("Not starting jobs because cluster is running in managed context "
+                            + "and is not yet stable. Current cluster topology intent: %s, "
                             + "expected cluster size: %d, current: %d.",
                     nodeEngine.getNode().getClusterTopologyIntent(),
                     nodeEngine.getNode().currentSpecifiedReplicaCount(), nodeEngine.getClusterService().getSize());
@@ -1026,20 +1100,25 @@ public class JobCoordinationService {
         });
     }
 
+    MembersView membersView(JetMemberSelector memberSelector) {
+        return Util.getMembersView(nodeEngine);
+    }
+
     void onMemberAdded(MemberImpl addedMember) {
         // the member can re-join with the same UUID in certain scenarios
+        membersShuttingDown.remove(addedMember.getUuid());
         removedMembers.remove(addedMember.getUuid());
+        scheduleScaleUp(config.getScaleUpDelayMillis());
         if (addedMember.isLiteMember()) {
             return;
         }
 
         updateQuorumValues();
-        scheduleScaleUp(config.getScaleUpDelayMillis());
     }
 
     void onMemberRemoved(UUID uuid) {
         if (membersShuttingDown.remove(uuid) != null) {
-            logFine(logger, "Removed a shutting-down member: %s, now shuttingDownMembers=%s",
+            logger.fine("Removed a shutting-down member: %s, now shuttingDownMembers=%s",
                     uuid, membersShuttingDown.keySet());
         } else {
             removedMembers.put(uuid, System.nanoTime());
@@ -1064,7 +1143,7 @@ public class JobCoordinationService {
             // the order of operations is important.
             List<RawJobMetrics> jobMetrics =
                     masterContext.jobConfig().isStoreMetricsAfterJobCompletion()
-                            ? masterContext.jobContext().jobMetrics()
+                            ? masterContext.jobContext().persistentMetrics()
                             : null;
             jobRepository.completeJob(masterContext, jobMetrics, error, completionTime, userCancelled);
             if (removeMasterContext(masterContext)) {
@@ -1099,7 +1178,7 @@ public class JobCoordinationService {
             logger.severe("Master context for job " + idToString(jobId) + " not found to schedule restart");
             return;
         }
-        logger.fine("Scheduling restart on master for job " + masterContext.jobName());
+        logger.fine("Scheduling restart on master for job %s", masterContext.jobName());
         nodeEngine.getExecutionService().schedule(COORDINATOR_EXECUTOR_NAME, () -> restartJob(jobId),
                 RETRY_DELAY_IN_MILLIS, MILLISECONDS);
     }
@@ -1125,7 +1204,7 @@ public class JobCoordinationService {
             logger.severe("Master context for job " + idToString(jobId) + " not found to restart");
             return;
         }
-        tryStartJob(masterContext);
+        masterContext.jobContext().tryStartJob();
     }
 
     private void checkOperationalState() {
@@ -1158,7 +1237,7 @@ public class JobCoordinationService {
             // any partitions assigned. Jet doesn't use such members.
             int dataMembersWithPartitionsCount = Math.min(dataMembersCount, partitionCount);
             for (MasterContext mc : masterContexts.values()) {
-                allSucceeded &= mc.jobContext().maybeScaleUp(dataMembersWithPartitionsCount);
+                allSucceeded &= mc.maybeScaleUp(dataMembersWithPartitionsCount);
             }
             if (!allSucceeded) {
                 scheduleScaleUp(RETRY_DELAY_IN_MILLIS);
@@ -1242,7 +1321,7 @@ public class JobCoordinationService {
             // 3. We re-create the master context below
             JobResult jobResult = jobRepository.getJobResult(jobId);
             if (jobResult != null) {
-                logger.fine("Not starting job " + idToString(jobId) + ", already has result: " + jobResult);
+                logger.fine("Not starting job %s, already has result: %s", idToString(jobId), jobResult);
                 return jobResult.asCompletableFuture();
             }
 
@@ -1263,10 +1342,10 @@ public class JobCoordinationService {
         }
 
         if (jobExecutionRecord.isSuspended()) {
-            logFinest(logger, "MasterContext for suspended %s is created", masterContext.jobIdString());
+            logger.finest("MasterContext for suspended %s is created", masterContext.jobIdString());
         } else {
             logger.info("Starting job " + idToString(jobId) + ": " + reason);
-            tryStartJob(masterContext);
+            masterContext.jobContext().tryStartJob();
         }
 
         return masterContext.jobContext().jobCompletionFuture();
@@ -1277,8 +1356,8 @@ public class JobCoordinationService {
         long jobId = masterContext.jobId();
         JobResult jobResult = jobRepository.getJobResult(jobId);
         if (jobResult != null) {
-            logger.fine("Completing master context for " + masterContext.jobIdString()
-                    + " since already completed with result: " + jobResult);
+            logger.fine("Completing master context for %s since already completed with result: %s", masterContext.jobIdString(),
+                    jobResult);
             masterContext.jobContext().setFinalResult(jobResult.getFailureAsThrowable());
             return removeMasterContext(masterContext);
         }
@@ -1296,16 +1375,7 @@ public class JobCoordinationService {
         return false;
     }
 
-    private void tryStartJob(MasterContext masterContext) {
-        masterContext.jobContext().tryStartJob(jobRepository::newExecutionId);
-
-        if (masterContext.hasTimeout()) {
-            long remainingTime = masterContext.remainingTime(Clock.currentTimeMillis());
-            scheduleJobTimeout(masterContext.jobId(), Math.max(1, remainingTime));
-        }
-    }
-
-    private int getQuorumSize() {
+    int getQuorumSize() {
         return (getDataMemberCount() / 2) + 1;
     }
 
@@ -1314,7 +1384,7 @@ public class JobCoordinationService {
         return clusterService.getMembers(DATA_MEMBER_SELECTOR).size();
     }
 
-    private JobAndSqlSummary getJobAndSqlSummary(JobRecord record) {
+    private JobAndSqlSummaryIds getJobAndSqlSummary(JobRecord record) {
         MasterContext ctx = masterContexts.get(record.getJobId());
         long execId = ctx == null ? 0 : ctx.executionId();
         JobExecutionRecord executionRecord = jobRepository.getJobExecutionRecord(record.getJobId());
@@ -1346,8 +1416,8 @@ public class JobCoordinationService {
             userCancelled = status == FAILED &&
                     maybeTerminationRequest.map(TerminationRequest::isUserInitiated).orElse(false);
         }
-        return new JobAndSqlSummary(false, record.getJobId(), execId, record.getJobNameOrId(), status,
-                record.getCreationTime(), 0, null, null, suspensionCause,
+        return new JobAndSqlSummaryIds(false, record.getJobId(), execId, record.getJobNameOrId(), status,
+                record.getCreationTime(), 0, null, getSqlSummary(record.getConfig()), suspensionCause,
                 userCancelled);
     }
 
@@ -1395,6 +1465,11 @@ public class JobCoordinationService {
         jobRepository.cleanup(nodeEngine);
         if (!jobsScanned) {
             synchronized (lock) {
+                // Note that setting jobsScanned is required for Jet to accept submitted jobs.
+                // When a new cluster is started, job records IMap does not exist until first job is submitted.
+                // This causes slight possibility of accepting duplicated job in case of HotRestart,
+                // but that is acceptable risk.
+                // See comment in JobRepository.cleanup().
                 jobsScanned = true;
             }
         }
@@ -1405,10 +1480,12 @@ public class JobCoordinationService {
     }
 
     @SuppressWarnings("WeakerAccess")
-    // used by jet-enterprise
+        // used by jet-enterprise
     void assertIsMaster(String error) {
         if (!isMaster()) {
-            throw new JetException(error + ". Master address: " + nodeEngine.getClusterService().getMasterAddress());
+            throw new MasterNodeChangedException(
+                    error + ". Master address: " + nodeEngine.getClusterService().getMasterAddress()
+            );
         }
     }
 
@@ -1416,7 +1493,8 @@ public class JobCoordinationService {
         return nodeEngine.getClusterService().isMaster();
     }
 
-    @SuppressWarnings("unused") // used in jet-enterprise
+    @SuppressWarnings("unused")
+        // used in jet-enterprise
     NodeEngineImpl nodeEngine() {
         return nodeEngine;
     }
@@ -1484,11 +1562,11 @@ public class JobCoordinationService {
     public long[] findUnknownExecutions(long[] executionIds) {
         return Arrays.stream(executionIds).filter(key -> {
             Object lmc = lightMasterContexts.get(key);
-            return lmc == null || lmc instanceof LightMasterContext && ((LightMasterContext) lmc).isCancelled();
+            return lmc == null || lmc instanceof LightMasterContext lightMasterContext && lightMasterContext.isCancelled();
         }).toArray();
     }
 
-    private void scheduleJobTimeout(final long jobId, final long timeout) {
+    void scheduleJobTimeout(final long jobId, final long timeout) {
         if (timeout <= 0) {
             return;
         }

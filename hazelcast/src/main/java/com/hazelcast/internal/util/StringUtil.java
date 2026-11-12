@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.internal.util;
 
 import javax.annotation.Nullable;
+
 import java.nio.charset.StandardCharsets;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
@@ -32,19 +33,10 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import static java.lang.Character.isLetter;
-import static java.lang.Character.isLowerCase;
-import static java.lang.Character.toLowerCase;
-
 /**
  * Utility class for Strings.
  */
 public final class StringUtil {
-
-    /**
-     * Points to the System property 'line.separator'.
-     */
-    public static final String LINE_SEPARATOR = System.getProperty("line.separator");
 
     /**
      * LOCALE_INTERNAL is the default locale for string operations and number formatting. Initialized to
@@ -58,37 +50,7 @@ public final class StringUtil {
     public static final Pattern VERSION_PATTERN
             = Pattern.compile("^(\\d+)\\.(\\d+)(\\.(\\d+))?(-\\w+(?:-\\d+)?)?(-SNAPSHOT)?$");
 
-    /**
-     * Empty String.
-     */
-    public static final String EMPTY_STRING = "";
-
-    private static final String GETTER_PREFIX = "get";
-
     private StringUtil() {
-    }
-
-    /**
-     * Creates a UTF8_CHARSET string from a byte array.
-     *
-     * @param bytes  the byte array.
-     * @param offset the index of the first byte to decode
-     * @param length the number of bytes to decode
-     * @return the string created from the byte array.
-     */
-    public static String bytesToString(byte[] bytes, int offset, int length) {
-        return new String(bytes, offset, length, StandardCharsets.UTF_8);
-    }
-
-    /**
-     * Creates a UTF8_CHARSET string from a byte array.
-     *
-     * @param bytes the byte array.
-     * @return the string created from the byte array.
-     */
-    public static String bytesToString(byte[] bytes) {
-
-        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     /**
@@ -125,7 +87,7 @@ public final class StringUtil {
         if (s == null) {
             return true;
         }
-        return s.trim().isEmpty();
+        return s.isBlank();
     }
 
     /**
@@ -143,7 +105,7 @@ public final class StringUtil {
     /**
      * Check if any String from the provided Strings
      * @param values the strings to check
-     * @return true if at least one string of the {@param values} are not {@code null} and not blank
+     * @return true if at least one string of the {@code values} are not {@code null} and not blank
      */
     public static boolean isAnyNullOrEmptyAfterTrim(String... values) {
         if (values == null) {
@@ -164,27 +126,6 @@ public final class StringUtil {
             return s;
         }
         return s.toUpperCase(LOCALE_INTERNAL);
-    }
-
-    /**
-     * Converts the first character to lower case.
-     *
-     * Empty strings are ignored.
-     *
-     * @param s the given string
-     * @return the converted string.
-     */
-    public static String lowerCaseFirstChar(String s) {
-        if (s.isEmpty()) {
-            return s;
-        }
-
-        char first = s.charAt(0);
-        if (isLowerCase(first)) {
-            return s;
-        }
-
-        return toLowerCase(first) + s.substring(1);
     }
 
     /**
@@ -290,9 +231,6 @@ public final class StringUtil {
      * (4) patch version, eg "0"
      * (5) 1st -qualifier, if exists
      * (6) -SNAPSHOT qualifier, if exists
-     *
-     * @param version
-     * @return
      */
     public static String[] tokenizeVersionString(String version) {
         Matcher matcher = VERSION_PATTERN.matcher(version);
@@ -307,51 +245,12 @@ public final class StringUtil {
         }
     }
 
-    /**
-     * Convert getter into a property name
-     * Example: 'getFoo' is converted into 'foo'
-     *
-     * It's written defensively, when output is not a getter then it
-     * returns the original name.
-     *
-     * It only converts names starting with a get- prefix. When a getter
-     * starts with an is- prefix (=boolean) then it does not convert it.
-     *
-     * @param getterName
-     * @return property matching the given getter
-     */
-    public static String getterIntoProperty(String getterName) {
-        if (getterName == null) {
-            return getterName;
-        }
-        int length = getterName.length();
-        if (!getterName.startsWith(GETTER_PREFIX) || length <= GETTER_PREFIX.length()) {
-            return getterName;
-        }
-
-        String propertyName = getterName.substring(GETTER_PREFIX.length(), length);
-        char firstChar = propertyName.charAt(0);
-        if (isLetter(firstChar)) {
-            if (isLowerCase(firstChar)) {
-                //ok, apparently this is not a JavaBean getter, better leave it untouched
-                return getterName;
-            }
-            propertyName = toLowerCase(firstChar) + propertyName.substring(1, propertyName.length());
-        }
-        return propertyName;
-    }
-
-    /**
-     * Trim whitespaces. This method (compared to {@link String#trim()}) doesn't limit to space character.
-     *
-     * @param input string to trim
-     * @return {@code null} if provided value was {@code null}, input with removed leading and trailing whitespaces
-     */
-    public static String trim(String input) {
+    /** A {@code null}-safe version of {@link String#strip()} */
+    public static String strip(@Nullable String input) {
         if (input == null) {
             return null;
         }
-        return input.replaceAll("^\\s+|\\s+$", "");
+        return input.strip();
     }
 
     /**
@@ -360,11 +259,12 @@ public final class StringUtil {
      * @param input string to split
      * @return {@code null} if provided value was {@code null}, split parts otherwise (trimmed)
      */
-    public static String[] splitByComma(String input, boolean allowEmpty) {
+    @Nullable
+    public static String[] splitByComma(@Nullable String input, boolean allowEmpty) {
         if (input == null) {
             return null;
         }
-        String[] splitWithEmptyValues = trim(input).split("\\s*,\\s*", -1);
+        String[] splitWithEmptyValues = input.strip().split("\\s*,\\s*", -1);
         return allowEmpty ? splitWithEmptyValues : subtraction(splitWithEmptyValues, new String[]{""});
     }
 
@@ -404,22 +304,18 @@ public final class StringUtil {
     }
 
     /**
-     * Returns true if two strings are equals ignoring the letter case in {@link #LOCALE_INTERNAL} locale.
-     *
      * @param str1 first string to compare
      * @param str2 second string to compare
-     * @return true if the strings are equals ignoring the case
+     * @return {@code true} if the two strings are equals ignoring the letter case in {@link #LOCALE_INTERNAL} locale.
      */
+    @SuppressWarnings("java:S4973")
     public static boolean equalsIgnoreCase(String str1, String str2) {
-        return (str1 == null || str2 == null)
-                ? false
-                : (str1 == str2 || lowerCaseInternal(str1).equals(lowerCaseInternal(str2)));
+        return (str1 != null && str2 != null) && (str1 == str2 || lowerCaseInternal(str1).equals(lowerCaseInternal(str2)));
     }
 
     /**
      * Strips the trailing slash from the input string, if it is present
      *
-     * @param str
      * @return the string with trailing slash removed
      */
     public static String stripTrailingSlash(String str) {
@@ -485,7 +381,7 @@ public final class StringUtil {
     public static <T> String toString(Collection<T> collection) {
         return collection.stream()
                 .map(Objects::toString)
-                .collect(Collectors.joining(LINE_SEPARATOR));
+                .collect(Collectors.joining(System.lineSeparator()));
     }
 
     /**
@@ -496,23 +392,7 @@ public final class StringUtil {
     public static <T> String toString(T[] arr) {
         return Arrays.stream(arr)
                 .map(Objects::toString)
-                .collect(Collectors.joining(LINE_SEPARATOR));
-    }
-
-    /**
-     * Formats given XML String with the given indentation used. If the {@code input} XML string is {@code null}, or
-     * {@code indent} parameter is negative, or XML transformation fails, then the original value is returned unchanged. The
-     * {@link IllegalArgumentException} is thrown when {@code indent==0}.
-     *
-     * @param input the XML String
-     * @param indent indentation (number of spaces used for one indentation level)
-     * @return formatted XML String or the original String if the formatting fails.
-     * @throws IllegalArgumentException when indentation is equal to zero
-     * @deprecated Use directly {@link XmlUtil#format(String, int)}
-     */
-    @Deprecated
-    public static String formatXml(@Nullable String input, int indent) throws IllegalArgumentException {
-        return XmlUtil.format(input, indent);
+                .collect(Collectors.joining(System.lineSeparator()));
     }
 
     /**
@@ -548,5 +428,9 @@ public final class StringUtil {
             }
         }
         return new String(chars, 0, pos);
+    }
+
+    public static boolean isBoolean(String value) {
+        return value.equalsIgnoreCase("false") || value.equalsIgnoreCase("true");
     }
 }

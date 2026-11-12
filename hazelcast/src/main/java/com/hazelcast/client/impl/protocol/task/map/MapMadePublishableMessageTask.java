@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import java.util.Map;
 
 /**
  * Client Protocol Task for handling messages with type ID:
- * {@link com.hazelcast.client.impl.protocol.codec.ContinuousQueryMessageType#CONTINUOUSQUERY_MADEPUBLISHABLE}
+ * {@link com.hazelcast.client.impl.protocol.codec.ContinuousQueryMadePublishableCodec#REQUEST_MESSAGE_TYPE}
  */
 public class MapMadePublishableMessageTask
         extends AbstractAllPartitionsMessageTask<ContinuousQueryMadePublishableCodec.RequestParameters> {
@@ -82,5 +82,11 @@ public class MapMadePublishableMessageTask
     @Override
     protected Object reduce(Map<Integer, Object> map) {
         return !map.containsValue(Boolean.FALSE);
+    }
+
+    @Override
+    protected String getUserCodeNamespace() {
+        // This task is not Namespace-aware so it doesn't matter
+        return null;
     }
 }

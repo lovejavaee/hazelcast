@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,12 +17,12 @@
 package com.hazelcast.spi.impl.operationexecutor.slowoperationdetector;
 
 import com.hazelcast.internal.management.dto.SlowOperationDTO;
+import com.hazelcast.jet.impl.util.ReflectionUtils;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.LoggingService;
 import com.hazelcast.spi.impl.operationexecutor.OperationExecutor;
 import com.hazelcast.spi.impl.operationexecutor.OperationRunner;
 import com.hazelcast.spi.properties.HazelcastProperties;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -70,7 +70,6 @@ public final class SlowOperationDetector {
 
     private boolean isFirstLog = true;
 
-    @SuppressFBWarnings("EI_EXPOSE_REP2")
     public SlowOperationDetector(LoggingService loggingServices,
                                  OperationRunner[] genericOperationRunners,
                                  OperationRunner[] partitionOperationRunners,
@@ -94,7 +93,7 @@ public final class SlowOperationDetector {
     }
 
     public List<SlowOperationDTO> getSlowOperationDTOs() {
-        List<SlowOperationDTO> slowOperationDTOs = new ArrayList<SlowOperationDTO>(slowOperationLogs.size());
+        List<SlowOperationDTO> slowOperationDTOs = new ArrayList<>(slowOperationLogs.size());
         for (SlowOperationLog slowOperationLog : slowOperationLogs.values()) {
             slowOperationDTOs.add(slowOperationLog.createDTO());
         }
@@ -128,8 +127,6 @@ public final class SlowOperationDetector {
     }
 
     private final class DetectorThread extends Thread {
-
-        private final StringBuilder stackTraceStringBuilder = new StringBuilder();
         private volatile boolean running = true;
 
         private DetectorThread(String hzName) {
@@ -203,20 +200,12 @@ public final class SlowOperationDetector {
         }
 
         private String getStackTraceOrNull(OperationRunner operationRunner, Object operation) {
-            StackTraceElement[] stackTraceElements = operationRunner.currentThread().getStackTrace();
             // check if the operation is still the same, if not, we can't use this stacktrace
             if (operationRunner.currentTask() != operation) {
                 return null;
+            } else {
+                return ReflectionUtils.getStackTrace(operationRunner.currentThread());
             }
-            String prefix = "";
-            for (StackTraceElement stackTraceElement : stackTraceElements) {
-                stackTraceStringBuilder.append(prefix).append(stackTraceElement.toString());
-                prefix = "\n\t";
-            }
-
-            String stackTrace = stackTraceStringBuilder.toString();
-            stackTraceStringBuilder.setLength(0);
-            return stackTrace;
         }
 
         private SlowOperationLog getOrCreate(String stackTrace, Object operation) {

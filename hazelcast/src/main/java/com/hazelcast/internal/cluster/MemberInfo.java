@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,7 +39,6 @@ import static com.hazelcast.internal.serialization.impl.SerializationUtil.readMa
 import static com.hazelcast.internal.serialization.impl.SerializationUtil.writeMap;
 import static com.hazelcast.internal.util.MapUtil.createHashMap;
 
-// RU_COMPAT 5.2 No need to implement Versioned after 5.3 release
 public class MemberInfo implements IdentifiedDataSerializable, Versioned {
 
     private Address address;
@@ -192,6 +191,7 @@ public class MemberInfo implements IdentifiedDataSerializable, Versioned {
         if (!address.equals(that.address)) {
             return false;
         }
+
         return uuid != null ? uuid.equals(that.uuid) : that.uuid == null;
     }
 

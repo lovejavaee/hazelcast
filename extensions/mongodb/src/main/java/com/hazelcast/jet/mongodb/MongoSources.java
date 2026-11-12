@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import com.hazelcast.jet.mongodb.MongoSourceBuilder.Stream;
 import com.hazelcast.jet.pipeline.BatchSource;
 import com.hazelcast.jet.pipeline.DataConnectionRef;
 import com.hazelcast.jet.pipeline.StreamSource;
-import com.hazelcast.spi.annotation.Beta;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import org.bson.Document;
@@ -50,9 +49,10 @@ public final class MongoSources {
      * <p>
      * Example usage:
      * <pre>{@code
-     * BatchSource<Document> batchSource =
+     * BatchSource<MyDTO> batchSource =
      *         MongoSources.batch(() -> MongoClients.create("mongodb://127.0.0.1:27017"))
-     *                 .into("myDatabase", "myCollection")
+     *                 .database("myDatabase")
+     *                 .collection("myCollection", MyDTO.class)
      *                 .filter(new Document("age", new Document("$gt", 10)),
      *                 .projection(new Document("age", 1))
      *         );
@@ -64,7 +64,6 @@ public final class MongoSources {
      * @param clientSupplier a function that creates MongoDB client.
      * @return Batch Mongo source builder
      */
-    @Beta
     @Nonnull
     public static MongoSourceBuilder.Batch<Document> batch(@Nonnull SupplierEx<? extends MongoClient> clientSupplier) {
         return MongoSourceBuilder.batch(clientSupplier);
@@ -77,7 +76,8 @@ public final class MongoSources {
      * <pre>{@code
      * BatchSource<Document> batchSource =
      *         MongoSources.batch(dataConnectionRef("mongo"))
-     *                 .into("myDatabase", "myCollection")
+     *                 .database("myDatabase")
+     *                 .collection("myCollection")
      *                 .filter(new Document("age", new Document("$gt", 10)),
      *                 .projection(new Document("age", 1))
      *         );
@@ -92,7 +92,6 @@ public final class MongoSources {
      * @param dataConnectionRef a reference to mongo data connection
      * @return Batch Mongo source builder
      */
-    @Beta
     @Nonnull
     public static MongoSourceBuilder.Batch<Document> batch(@Nonnull DataConnectionRef dataConnectionRef) {
         return MongoSourceBuilder.batch(dataConnectionRef);
@@ -131,7 +130,6 @@ public final class MongoSources {
      * @param filter           filter object as a {@link Document}
      * @param projection       projection object as a {@link Document}
      */
-    @Beta
     @Nonnull
     public static BatchSource<Document> batch(
             @Nonnull String connectionString,
@@ -188,7 +186,6 @@ public final class MongoSources {
      * @param projection        projection object as a {@link Document}
      * @since 5.3
      */
-    @Beta
     @Nonnull
     public static BatchSource<Document> batch(
             @Nonnull DataConnectionRef dataConnectionRef,
@@ -217,8 +214,9 @@ public final class MongoSources {
      * Example usage:
      * <pre>{@code
      * StreamSource<Document> streamSource =
-     *         MongoSources.stream("batch-source", () -> MongoClients.create("mongodb://127.0.0.1:27017"))
-     *                 .into("myDatabase", "myCollection")
+     *         MongoSources.stream(() -> MongoClients.create("mongodb://127.0.0.1:27017"))
+     *                 .database("myDatabase")
+     *                 .collection("myCollection")
      *                 .filter(new Document("fullDocument.age", new Document("$gt", 10)),
      *                 .projection(new Document("fullDocument.age", 1))
      *         );
@@ -228,16 +226,13 @@ public final class MongoSources {
      *
      * @since 5.3
      *
-     * @param name descriptive name for the source (diagnostic purposes) client.
      * @param clientSupplier a function that creates MongoDB client.
      * @return Stream Mongo source builder
      */
-    @Beta
     @Nonnull
     public static MongoSourceBuilder.Stream<Document> stream(
-            @Nonnull String name,
             @Nonnull SupplierEx<? extends MongoClient> clientSupplier) {
-        return MongoSourceBuilder.stream(name, clientSupplier);
+        return MongoSourceBuilder.stream(clientSupplier);
     }
 
     /**
@@ -282,7 +277,6 @@ public final class MongoSources {
      * @param filter           filter object as a {@link Document}
      * @param projection       projection object as a {@link Document}
      */
-    @Beta
     @Nonnull
     public static StreamSource<? extends Document> stream(
             @Nonnull String connectionString,

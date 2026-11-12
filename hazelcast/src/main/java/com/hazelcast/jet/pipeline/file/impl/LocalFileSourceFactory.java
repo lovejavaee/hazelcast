@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import com.hazelcast.function.FunctionEx;
 import com.hazelcast.jet.JetException;
 import com.hazelcast.jet.core.ProcessorMetaSupplier;
 import com.hazelcast.jet.core.processor.SourceProcessors;
-import com.hazelcast.jet.impl.util.IOUtil;
 import com.hazelcast.jet.json.JsonUtil;
 import com.hazelcast.jet.pipeline.file.FileFormat;
 import com.hazelcast.jet.pipeline.file.JsonFileFormat;
@@ -28,14 +27,13 @@ import com.hazelcast.jet.pipeline.file.LinesTextFileFormat;
 import com.hazelcast.jet.pipeline.file.ParquetFileFormat;
 import com.hazelcast.jet.pipeline.file.RawBytesFileFormat;
 import com.hazelcast.jet.pipeline.file.TextFileFormat;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.annotation.Nonnull;
 import java.io.BufferedReader;
-import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.Charset;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.HashMap;
@@ -87,14 +85,13 @@ public class LocalFileSourceFactory implements FileSourceFactory {
                 fsc.isIgnoreFileNotFound(), mapFn);
     }
 
-    @SuppressFBWarnings("OBL_UNSATISFIED_OBLIGATION")
     private abstract static class AbstractReadFileFnProvider implements ReadFileFnProvider {
 
         @Nonnull @Override
         public <T> FunctionEx<Path, Stream<T>> createReadFileFn(@Nonnull FileFormat<T> format) {
             FunctionEx<InputStream, Stream<T>> mapInputStreamFn = mapInputStreamFn(format);
             return path -> {
-                FileInputStream fis = new FileInputStream(path.toFile());
+                InputStream fis = Files.newInputStream(path);
                 return mapInputStreamFn.apply(fis).onClose(() -> uncheckRun(fis::close));
             };
         }
@@ -114,7 +111,7 @@ public class LocalFileSourceFactory implements FileSourceFactory {
 
             return path -> {
                 // Jackson doesn't handle empty files
-                if (path.toFile().length() == 0) {
+                if (Files.size(path) == 0) {
                     return Stream.empty();
                 }
 
@@ -172,7 +169,7 @@ public class LocalFileSourceFactory implements FileSourceFactory {
         @Nonnull @Override
         @SuppressWarnings("unchecked")
         <T> FunctionEx<InputStream, Stream<T>> mapInputStreamFn(FileFormat<T> format) {
-            return is -> (Stream<T>) Stream.of(IOUtil.readFully(is));
+            return is -> (Stream<T>) Stream.of(is.readAllBytes());
         }
 
         @Nonnull @Override
@@ -188,7 +185,7 @@ public class LocalFileSourceFactory implements FileSourceFactory {
         <T> FunctionEx<InputStream, Stream<T>> mapInputStreamFn(FileFormat<T> format) {
             TextFileFormat textFileFormat = (TextFileFormat) format;
             String thisCharset = textFileFormat.charset().name();
-            return is -> (Stream<T>) Stream.of(new String(IOUtil.readFully(is), Charset.forName(thisCharset)));
+            return is -> (Stream<T>) Stream.of(new String(is.readAllBytes(), Charset.forName(thisCharset)));
         }
 
         @Nonnull @Override

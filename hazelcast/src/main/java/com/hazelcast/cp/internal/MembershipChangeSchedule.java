@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.hazelcast.cp.internal;
 import com.hazelcast.cp.CPGroupId;
 import com.hazelcast.cp.internal.raft.MembershipChangeMode;
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
@@ -152,10 +153,7 @@ public class MembershipChangeSchedule implements IdentifiedDataSerializable {
         public void writeData(ObjectDataOutput out) throws IOException {
             out.writeObject(groupId);
             out.writeLong(membersCommitIndex);
-            out.writeInt(members.size());
-            for (RaftEndpoint member : members) {
-                out.writeObject(member);
-            }
+            SerializationUtil.writeCollection(members, out);
             out.writeObject(memberToAdd);
             out.writeObject(memberToRemove);
         }
@@ -211,10 +209,7 @@ public class MembershipChangeSchedule implements IdentifiedDataSerializable {
         }
         out.writeObject(member);
         out.writeString(membershipChangeMode.name());
-        out.writeInt(changes.size());
-        for (CPGroupMembershipChange change : changes) {
-            out.writeObject(change);
-        }
+        SerializationUtil.writeList(changes, out);
     }
 
     @Override

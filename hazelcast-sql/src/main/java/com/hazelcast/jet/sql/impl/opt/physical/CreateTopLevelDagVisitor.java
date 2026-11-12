@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,6 +43,7 @@ import com.hazelcast.jet.sql.impl.HazelcastPhysicalScan;
 import com.hazelcast.jet.sql.impl.JetJoinInfo;
 import com.hazelcast.jet.sql.impl.ObjectArrayKey;
 import com.hazelcast.jet.sql.impl.aggregate.WindowUtils;
+import com.hazelcast.jet.sql.impl.connector.SqlConnector;
 import com.hazelcast.jet.sql.impl.connector.SqlConnector.VertexWithInputConfig;
 import com.hazelcast.jet.sql.impl.connector.SqlConnectorUtil;
 import com.hazelcast.jet.sql.impl.connector.map.IMapSqlConnector;
@@ -64,10 +65,13 @@ import com.hazelcast.sql.impl.optimizer.PlanObjectKey;
 import com.hazelcast.sql.impl.row.JetSqlRow;
 import com.hazelcast.sql.impl.schema.Table;
 import com.hazelcast.sql.impl.type.QueryDataType;
+import org.apache.calcite.plan.RelOptTable;
+import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.SingleRel;
 import org.apache.calcite.rex.RexProgram;
 
+import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -92,6 +96,7 @@ import static com.hazelcast.jet.sql.impl.connector.SqlConnectorUtil.getJetSqlCon
 import static com.hazelcast.jet.sql.impl.processors.RootResultConsumerSink.rootResultConsumerSink;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.singletonList;
+import static java.util.Objects.requireNonNull;
 
 public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
     // TODO https://github.com/hazelcast/hazelcast/issues/20383
@@ -105,22 +110,25 @@ public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
     private final Address localMemberAddress;
     private final WatermarkKeysAssigner watermarkKeysAssigner;
     private long watermarkThrottlingFrameSize = -1;
+    private final Map<String, List<Map<String, Expression<?>>>> partitionStrategyCandidates;
 
     private final DagBuildContextImpl dagBuildContext;
 
     public CreateTopLevelDagVisitor(
             NodeEngine nodeEngine,
             QueryParameterMetadata parameterMetadata,
-            @Nullable WatermarkKeysAssigner watermarkKeysAssigner,
-            Set<PlanObjectKey> usedViews
+            WatermarkKeysAssigner watermarkKeysAssigner,
+            Set<PlanObjectKey> usedViews,
+            @Nullable Map<String, List<Map<String, Expression<?>>>> partitionStrategyCandidates
     ) {
         super(new DAG());
         this.nodeEngine = nodeEngine;
         this.localMemberAddress = nodeEngine.getThisAddress();
         this.watermarkKeysAssigner = watermarkKeysAssigner;
         this.objectKeys.addAll(usedViews);
+        this.partitionStrategyCandidates = partitionStrategyCandidates;
 
-        dagBuildContext = new DagBuildContextImpl(getDag(), parameterMetadata);
+        dagBuildContext = new DagBuildContextImpl(nodeEngine, getDag(), parameterMetadata);
     }
 
     @Override
@@ -129,6 +137,7 @@ public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
 
         return dag.newUniqueVertex("Values", convenientSourceP(
                 ExpressionEvalContext::from,
+                ConsumerEx.noop(),
                 (context, buffer) -> {
                     values.forEach(vs -> vs.toValues(context).forEach(buffer::add));
                     buffer.close();
@@ -148,7 +157,7 @@ public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
         watermarkThrottlingFrameSize = WatermarkThrottlingFrameSizeCalculator.calculate(
                 (PhysicalRel) rel.getInput(), MOCK_EEC);
 
-        Table table = rel.getTable().unwrap(HazelcastTable.class).getTarget();
+        Table table = hazelcastTable(rel.getTable()).getTarget();
         collectObjectKeys(table);
 
         dagBuildContext.setTable(table);
@@ -164,7 +173,7 @@ public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
         watermarkThrottlingFrameSize = WatermarkThrottlingFrameSizeCalculator.calculate(
                 (PhysicalRel) rel.getInput(), MOCK_EEC);
 
-        Table table = rel.getTable().unwrap(HazelcastTable.class).getTarget();
+        Table table = hazelcastTable(rel.getTable()).getTarget();
         collectObjectKeys(table);
 
         dagBuildContext.setTable(table);
@@ -176,38 +185,42 @@ public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
 
     @Override
     public Vertex onUpdate(UpdatePhysicalRel rel) {
-        // currently it's not possible to have a unbounded UPDATE, but if we do, we'd need this calculation
-        watermarkThrottlingFrameSize = WatermarkThrottlingFrameSizeCalculator.calculate(
-                (PhysicalRel) rel.getInput(), MOCK_EEC);
+        // currently it's not possible to have an unbounded UPDATE, but if we do, we'd need this calculation
+        watermarkThrottlingFrameSize = WatermarkThrottlingFrameSizeCalculator.calculate(rel, MOCK_EEC);
 
-        Table table = rel.getTable().unwrap(HazelcastTable.class).getTarget();
+        Table table = hazelcastTable(rel.getTable()).getTarget();
 
         dagBuildContext.setTable(table);
         dagBuildContext.setRel(rel);
         Vertex vertex = getJetSqlConnector(table).updateProcessor(
-                dagBuildContext, rel.getUpdateColumnList(), wrap(rel.getSourceExpressionList()));
-        connectInput(rel.getInput(), vertex, null);
+                dagBuildContext, rel.getUpdateColumnList(), wrap(rel.getSourceExpressionList()),
+                wrap(rel.getPredicate()), rel.getInput() != null);
+        if (rel.getInput() != null) {
+            connectInput(rel.getInput(), vertex, null);
+        }
         return vertex;
     }
 
     @Override
     public Vertex onDelete(DeletePhysicalRel rel) {
-        // currently it's not possible to have a unbounded DELETE, but if we do, we'd need this calculation
-        watermarkThrottlingFrameSize = WatermarkThrottlingFrameSizeCalculator.calculate(
-                (PhysicalRel) rel.getInput(), MOCK_EEC);
+        // currently it's not possible to have an unbounded DELETE, but if we do, we'd need this calculation
+        watermarkThrottlingFrameSize = WatermarkThrottlingFrameSizeCalculator.calculate(rel, MOCK_EEC);
 
-        Table table = rel.getTable().unwrap(HazelcastTable.class).getTarget();
+        Table table = hazelcastTable(rel.getTable()).getTarget();
 
         dagBuildContext.setTable(table);
         dagBuildContext.setRel(rel);
-        Vertex vertex = getJetSqlConnector(table).deleteProcessor(dagBuildContext);
-        connectInput(rel.getInput(), vertex, null);
+        Vertex vertex = getJetSqlConnector(table).deleteProcessor(dagBuildContext,
+                wrap(rel.getPredicate()), rel.getInput() != null);
+        if (rel.getInput() != null) {
+            connectInput(rel.getInput(), vertex, null);
+        }
         return vertex;
     }
 
     @Override
     public Vertex onFullScan(FullScanPhysicalRel rel) {
-        HazelcastTable hazelcastTable = rel.getTable().unwrap(HazelcastTable.class);
+        HazelcastTable hazelcastTable = hazelcastTable(rel.getTable());
         Table table = hazelcastTable.getTarget();
         collectObjectKeys(table);
 
@@ -228,19 +241,26 @@ public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
 
         dagBuildContext.setTable(table);
         dagBuildContext.setRel(rel);
-        return getJetSqlConnector(table).fullScanReader(
+
+        List<Map<String, Expression<?>>> partitionStrategyCandidate = null;
+        if (partitionStrategyCandidates != null) {
+            partitionStrategyCandidate = partitionStrategyCandidates.get(table.getSqlName());
+        }
+
+        SqlConnector sqlConnector = getJetSqlConnector(table);
+        return sqlConnector.fullScanReader(
                 dagBuildContext,
                 wrap(rel.filter()),
                 wrap(rel.projection()),
+                partitionStrategyCandidate,
                 policyProvider != null
                         ? context -> policyProvider.apply(context, wmKey)
-                        : null
-        );
+                        : null);
     }
 
     @Override
     public Vertex onMapIndexScan(IndexScanMapPhysicalRel rel) {
-        Table table = rel.getTable().unwrap(HazelcastTable.class).getTarget();
+        Table table = hazelcastTable(rel.getTable()).getTarget();
         collectObjectKeys(table);
 
         dagBuildContext.setTable(table);
@@ -254,7 +274,8 @@ public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
                         wrap(rel.projection()),
                         rel.getIndexFilter(),
                         rel.getComparator(),
-                        rel.isDescending()
+                        rel.isDescending(),
+                        rel.requiresSort()
                 );
     }
 
@@ -307,7 +328,7 @@ public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
         Edge edge = between(sortVertex, combineVertex)
                 .ordered(comparator)
                 .distributeTo(localMemberAddress)
-                .allToOne("");
+                .allToOne();
         dag.edge(edge);
 
         return combineVertex;
@@ -324,7 +345,8 @@ public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
                         localMemberAddress
                 )
         );
-        connectInput(rel.getInput(), vertex, edge -> edge.distributeTo(localMemberAddress).allToOne(""));
+        connectInput(rel.getInput(), vertex, edge ->
+                edge.distributeTo(localMemberAddress).allToOne());
         return vertex;
     }
 
@@ -351,7 +373,8 @@ public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
                         localMemberAddress
                 )
         );
-        connectInput(rel.getInput(), vertex, edge -> edge.distributeTo(localMemberAddress).allToOne(""));
+        connectInput(rel.getInput(), vertex, edge ->
+                edge.distributeTo(localMemberAddress).allToOne());
         return vertex;
     }
 
@@ -447,7 +470,8 @@ public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
                             aggregateOperation,
                             resultMapping,
                             watermarkKey));
-            connectInput(rel.getInput(), vertex, edge -> edge.distributeTo(localMemberAddress).allToOne(""));
+            connectInput(rel.getInput(), vertex, edge ->
+                    edge.distributeTo(localMemberAddress).allToOne());
             return vertex;
         } else {
             assert rel.numStages() == 2;
@@ -487,10 +511,11 @@ public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
         return vertex;
     }
 
+    @Override
     public Vertex onNestedLoopJoin(JoinNestedLoopPhysicalRel rel) {
         assert rel.getRight() instanceof HazelcastPhysicalScan : rel.getRight().getClass();
 
-        Table rightTable = rel.getRight().getTable().unwrap(HazelcastTable.class).getTarget();
+        Table rightTable = hazelcastTable(rel.getRight().getTable()).getTarget();
         collectObjectKeys(rightTable);
 
         dagBuildContext.setTable(rightTable);
@@ -606,13 +631,11 @@ public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
                 (PhysicalRel) rootRel.getInput(), MOCK_EEC);
 
         RelNode input = rootRel.getInput();
-
         Expression<?> fetch = ConstantExpression.create(Long.MAX_VALUE, QueryDataType.BIGINT);
         Expression<?> offset = ConstantExpression.create(0L, QueryDataType.BIGINT);
 
         // We support only top-level LIMIT ... OFFSET.
-        if (input instanceof LimitPhysicalRel) {
-            LimitPhysicalRel limit = (LimitPhysicalRel) input;
+        if (input instanceof LimitPhysicalRel limit) {
             if (limit.fetch() != null) {
                 fetch = limit.fetch(dagBuildContext.getParameterMetadata());
             }
@@ -631,7 +654,8 @@ public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
         // We use distribute-to-one edge to send all the items to the initiator member.
         // Such edge has to be partitioned, but the sink is LP=1 anyway, so we can use
         // allToOne with any key, it goes to a single processor on a single member anyway.
-        connectInput(input, vertex, edge -> edge.distributeTo(localMemberAddress).allToOne(""));
+        connectInput(input, vertex, edge -> edge.distributeTo(localMemberAddress)
+                .allToOne());
         return vertex;
     }
 
@@ -757,7 +781,8 @@ public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
      * @param vertex The vertex for {@code rel}
      */
     private void connectInputPreserveCollation(SingleRel rel, Vertex vertex) {
-        boolean preserveCollation = rel.getTraitSet().getCollation().getFieldCollations().size() > 0;
+        RelCollation collation = requireNonNull(rel.getTraitSet().getCollation(), "collation must not be null");
+        boolean preserveCollation = !collation.getFieldCollations().isEmpty();
         Vertex inputVertex = connectInput(rel.getInput(), vertex,
                 preserveCollation ? Edge::isolated : null);
 
@@ -776,5 +801,11 @@ public class CreateTopLevelDagVisitor extends CreateDagVisitorBase<Vertex> {
         if (objectKey != null) {
             objectKeys.add(objectKey);
         }
+    }
+
+    @Nonnull
+    private static HazelcastTable hazelcastTable(RelOptTable rel) {
+        requireNonNull(rel, "relation must not be null");
+        return requireNonNull(rel.unwrap(HazelcastTable.class), "given relation is not a HazelcastTable, but should be");
     }
 }

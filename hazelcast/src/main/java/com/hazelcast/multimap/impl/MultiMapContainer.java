@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -138,8 +138,8 @@ public class MultiMapContainer extends MultiMapContainerSupport {
         if (multiMapValue == null) {
             return false;
         }
-        MultiMapRecord record = new MultiMapRecord(binary ? value : nodeEngine.toObject(value));
-        return multiMapValue.getCollection(false).contains(record);
+        MultiMapRecord multiMapRecord = new MultiMapRecord(binary ? value : nodeEngine.toObject(value));
+        return multiMapValue.getCollection(false).contains(multiMapRecord);
     }
 
     public boolean containsValue(boolean binary, Data value) {
@@ -292,12 +292,12 @@ public class MultiMapContainer extends MultiMapContainerSupport {
 
         for (Object value : values) {
             long recordId = nextId();
-            MultiMapRecord record = new MultiMapRecord(recordId, isBinary ? serializationService.toData(value) : value);
-            records.add(record);
+            MultiMapRecord multiMapRecord = new MultiMapRecord(recordId, isBinary ? serializationService.toData(value) : value);
+            records.add(multiMapRecord);
         }
     }
 
-    @SuppressWarnings("NonAtomicOperationOnVolatileField")
+    @SuppressWarnings({"NonAtomicOperationOnVolatileField", "squid:S3078"})
     private void setMergedStatistics(MultiMapMergeTypes<Object, Object> mergingEntry, MultiMapValue multiMapValue) {
         multiMapValue.setHits(mergingEntry.getHits());
         lastAccessTime = Math.max(lastAccessTime, mergingEntry.getLastAccessTime());

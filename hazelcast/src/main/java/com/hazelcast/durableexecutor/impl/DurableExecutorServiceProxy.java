@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -149,6 +149,7 @@ public class DurableExecutorServiceProxy extends AbstractDistributedObject<Distr
     }
 
     @Nonnull
+    @Override
     public <T> DurableExecutorServiceFuture<T> submit(@Nonnull Callable<T> task) {
         int partitionId = getTaskPartitionId(task);
         return submitToPartition(task, partitionId, null);
@@ -269,7 +270,7 @@ public class DurableExecutorServiceProxy extends AbstractDistributedObject<Distr
             sequence = future.join();
         } catch (CompletionException t) {
             InternalCompletableFuture<T> completedFuture = completedExceptionally(t.getCause());
-            return new DurableExecutorServiceDelegateFuture<T>(completedFuture, serializationService, null, -1);
+            return new DurableExecutorServiceDelegateFuture<>(completedFuture, serializationService, null, -1);
         } catch (CancellationException e) {
             return new DurableExecutorServiceDelegateFuture<>(future, serializationService, null, -1);
         }
@@ -287,8 +288,8 @@ public class DurableExecutorServiceProxy extends AbstractDistributedObject<Distr
     }
 
     private <T> int getTaskPartitionId(Callable<T> task) {
-        if (task instanceof PartitionAware) {
-            Object partitionKey = ((PartitionAware) task).getPartitionKey();
+        if (task instanceof PartitionAware aware) {
+            Object partitionKey = aware.getPartitionKey();
             if (partitionKey != null) {
                 return getPartitionId(partitionKey);
             }

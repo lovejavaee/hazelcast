@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ import java.util.UUID;
 import static com.hazelcast.cp.internal.datastructures.semaphore.AcquireResult.AcquireStatus.FAILED;
 import static com.hazelcast.cp.internal.datastructures.semaphore.AcquireResult.AcquireStatus.SUCCESSFUL;
 import static com.hazelcast.cp.internal.datastructures.semaphore.AcquireResult.AcquireStatus.WAIT_KEY_ADDED;
-import static com.hazelcast.cp.internal.session.AbstractProxySessionManager.NO_SESSION_ID;
+import static com.hazelcast.cp.internal.session.ProxySessionManager.NO_SESSION_ID;
 import static com.hazelcast.internal.util.UUIDSerializationUtil.readUUID;
 import static com.hazelcast.internal.util.UUIDSerializationUtil.writeUUID;
 import static com.hazelcast.internal.util.Preconditions.checkNotNegative;
@@ -140,7 +140,7 @@ public class Semaphore extends BlockingResource<AcquireInvocationKey> implements
         return new AcquireResult(SUCCESSFUL, key.permits(), cancelled);
     }
 
-    @SuppressWarnings("NonAtomicOperationOnVolatileField")
+    @SuppressWarnings({"NonAtomicOperationOnVolatileField", "squid:S3078"})
     private void assignPermitsToInvocation(SemaphoreEndpoint endpoint, UUID invocationUid, int permits) {
         long sessionId = endpoint.sessionId();
         if (sessionId == NO_SESSION_ID) {
@@ -148,11 +148,7 @@ public class Semaphore extends BlockingResource<AcquireInvocationKey> implements
             return;
         }
 
-        SessionSemaphoreState state = sessionStates.get(sessionId);
-        if (state == null) {
-            state = new SessionSemaphoreState();
-            sessionStates.put(sessionId, state);
-        }
+        SessionSemaphoreState state = sessionStates.computeIfAbsent(sessionId, x -> new SessionSemaphoreState());
 
         BiTuple<UUID, Integer> prev = state.invocationRefUids.put(endpoint.threadId(), BiTuple.of(invocationUid, permits));
         if (prev == null || !prev.element1.equals(invocationUid)) {
@@ -173,7 +169,7 @@ public class Semaphore extends BlockingResource<AcquireInvocationKey> implements
      * successful release if there are any. Returns cancelled wait keys after
      * failed release if there are any.
      */
-    @SuppressWarnings("NonAtomicOperationOnVolatileField")
+    @SuppressWarnings({"NonAtomicOperationOnVolatileField", "squid:S3078"})
     ReleaseResult release(SemaphoreEndpoint endpoint, UUID invocationUid, int permits) {
         checkPositive(permits, "Permits should be positive!");
 
@@ -256,7 +252,7 @@ public class Semaphore extends BlockingResource<AcquireInvocationKey> implements
     }
 
     /**
-     * Assigns all available permits to the <sessionId, threadId> endpoint.
+     * Assigns all available permits to the {@code <sessionId, threadId>} endpoint.
      * Permits are not assigned if the drain request is a retry of a successful
      * drain request of a session-aware proxy. Permits are assigned again if
      * the drain request is a retry of a successful drain request of
@@ -299,11 +295,7 @@ public class Semaphore extends BlockingResource<AcquireInvocationKey> implements
 
         long sessionId = endpoint.sessionId();
         if (sessionId != NO_SESSION_ID) {
-            SessionSemaphoreState state = sessionStates.get(sessionId);
-            if (state == null) {
-                state = new SessionSemaphoreState();
-                sessionStates.put(sessionId, state);
-            }
+            SessionSemaphoreState state = sessionStates.computeIfAbsent(sessionId, x -> new SessionSemaphoreState());
 
             long threadId = endpoint.threadId();
             Integer response = state.getInvocationResponse(threadId, invocationUid);
@@ -341,6 +333,15 @@ public class Semaphore extends BlockingResource<AcquireInvocationKey> implements
 
             sessionStates.remove(sessionId);
         }
+    }
+
+    // exists for testing
+    int getInvocationRefUidCount() {
+        int count = 0;
+        for (SessionSemaphoreState state : sessionStates.values()) {
+            count += state.invocationRefUids.size();
+        }
+        return count;
     }
 
     @Override
@@ -422,7 +423,7 @@ public class Semaphore extends BlockingResource<AcquireInvocationKey> implements
     private static class SessionSemaphoreState {
 
         /**
-         * map of threadId -> <invocationUid, permits> to track last operation of each endpoint
+         * map of threadId -> {@code <invocationUid, permits>} to track last operation of each endpoint
          */
         private final Long2ObjectHashMap<BiTuple<UUID, Integer>> invocationRefUids = new Long2ObjectHashMap<>();
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,17 +25,18 @@ import com.hazelcast.internal.config.mergepolicies.CustomMapMergePolicy;
 import com.hazelcast.internal.config.mergepolicies.CustomMapMergePolicyNoTypeVariable;
 import com.hazelcast.internal.config.mergepolicies.LastStoredTimeMergePolicy;
 import com.hazelcast.internal.config.mergepolicies.LastStoredTimeMergePolicyNoTypeVariable;
+import com.hazelcast.spi.merge.DiscardMergePolicy;
 import com.hazelcast.spi.merge.ExpirationTimeMergePolicy;
 import com.hazelcast.spi.merge.HigherHitsMergePolicy;
 import com.hazelcast.spi.merge.HyperLogLogMergePolicy;
+import com.hazelcast.spi.merge.PassThroughMergePolicy;
 import com.hazelcast.spi.merge.PutIfAbsentMergePolicy;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.Before;
-import org.junit.Rule;
-import org.junit.rules.ExpectedException;
 
-import static org.hamcrest.CoreMatchers.containsString;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Tests the integration of the {@link MergePolicyValidator}
@@ -43,19 +44,18 @@ import static org.hamcrest.CoreMatchers.containsString;
  */
 public abstract class AbstractMergePolicyValidatorIntegrationTest extends HazelcastTestSupport {
 
-    @Rule
-    public ExpectedException expectedException = ExpectedException.none();
-
-    MergePolicyConfig putIfAbsentMergePolicy;
-    MergePolicyConfig hyperLogLogMergePolicy;
-    MergePolicyConfig higherHitsMergePolicy;
-    MergePolicyConfig invalidMergePolicyConfig;
-    MergePolicyConfig expirationTimeMergePolicy;
-    MergePolicyConfig lastStoredTimeMergePolicy;
-    MergePolicyConfig lastStoredTimeMergePolicyNoTypeVariable;
-    MergePolicyConfig complexCustomMergePolicy;
-    MergePolicyConfig customMapMergePolicy;
-    MergePolicyConfig customMapMergePolicyNoTypeVariable;
+    protected MergePolicyConfig putIfAbsentMergePolicy;
+    protected MergePolicyConfig hyperLogLogMergePolicy;
+    protected MergePolicyConfig higherHitsMergePolicy;
+    protected MergePolicyConfig invalidMergePolicyConfig;
+    protected MergePolicyConfig expirationTimeMergePolicy;
+    protected MergePolicyConfig lastStoredTimeMergePolicy;
+    protected MergePolicyConfig lastStoredTimeMergePolicyNoTypeVariable;
+    protected MergePolicyConfig complexCustomMergePolicy;
+    protected MergePolicyConfig customMapMergePolicy;
+    protected MergePolicyConfig customMapMergePolicyNoTypeVariable;
+    protected MergePolicyConfig passThroughMergePolicy;
+    protected MergePolicyConfig discardMergePolicy;
 
     private TestHazelcastInstanceFactory factory;
 
@@ -63,6 +63,10 @@ public abstract class AbstractMergePolicyValidatorIntegrationTest extends Hazelc
     public final void setUp() {
         putIfAbsentMergePolicy = new MergePolicyConfig()
                 .setPolicy(PutIfAbsentMergePolicy.class.getSimpleName());
+        passThroughMergePolicy = new MergePolicyConfig()
+                .setPolicy(PassThroughMergePolicy.class.getSimpleName());
+        discardMergePolicy = new MergePolicyConfig()
+                .setPolicy(DiscardMergePolicy.class.getSimpleName());
         hyperLogLogMergePolicy = new MergePolicyConfig()
                 .setPolicy(HyperLogLogMergePolicy.class.getName());
         higherHitsMergePolicy = new MergePolicyConfig()
@@ -85,33 +89,43 @@ public abstract class AbstractMergePolicyValidatorIntegrationTest extends Hazelc
         factory = createHazelcastInstanceFactory();
     }
 
-    abstract void addConfig(Config config, String name, MergePolicyConfig mergePolicyConfig);
+    protected abstract void addConfig(Config config, String name, MergePolicyConfig mergePolicyConfig);
 
-    HazelcastInstance getHazelcastInstance(String name, MergePolicyConfig mergePolicyConfig) {
+    protected HazelcastInstance getHazelcastInstance(String name, MergePolicyConfig mergePolicyConfig) {
         Config config = smallInstanceConfig();
         addConfig(config, name, mergePolicyConfig);
 
         return factory.newHazelcastInstance(config);
     }
 
-    void expectCardinalityEstimatorException() {
-        expectedException.expect(InvalidConfigurationException.class);
-        expectedException.expectMessage(containsString("CardinalityEstimator"));
+    protected void expectCardinalityEstimatorException(ThrowingCallable toRun) {
+        assertThatThrownBy(toRun)
+                .isInstanceOf(InvalidConfigurationException.class)
+                        .hasMessageContaining("CardinalityEstimator");
     }
 
-    void expectedHigherHitsException() {
-        expectedException.expect(InvalidConfigurationException.class);
-        expectedException.expectMessage(containsString(higherHitsMergePolicy.getPolicy()));
+    protected void expectedHigherHitsException(ThrowingCallable toRun) {
+        assertThatThrownBy(toRun)
+                .isInstanceOf(InvalidConfigurationException.class)
+                        .hasMessageContaining(higherHitsMergePolicy.getPolicy());
     }
 
-    void expectedInvalidMergePolicyException() {
-        expectedException.expect(InvalidConfigurationException.class);
-        expectedException.expectMessage(containsString(invalidMergePolicyConfig.getPolicy()));
+    protected void expectedInvalidMergePolicyException(ThrowingCallable toRun) {
+        assertThatThrownBy(toRun)
+                .isInstanceOf(InvalidConfigurationException.class)
+                        .hasMessageContaining(invalidMergePolicyConfig.getPolicy());
     }
 
-    void expectedMapStatisticsDisabledException(MergePolicyConfig mergePolicyConfig) {
-        expectedException.expect(InvalidConfigurationException.class);
-        expectedException.expectMessage(containsString(mergePolicyConfig.getPolicy()));
-        expectedException.expectMessage(containsString("perEntryStatsEnabled field of map-config"));
+    protected void expectedMapStatisticsDisabledException(MergePolicyConfig mergePolicyConfig, ThrowingCallable toRun) {
+        assertThatThrownBy(toRun)
+                .isInstanceOf(InvalidConfigurationException.class)
+                        .hasMessageContaining(mergePolicyConfig.getPolicy())
+                                .hasMessageContaining("perEntryStatsEnabled field of map-config");
+    }
+
+    protected void expectInvalidConfigurationException(ThrowingCallable toRun, MergePolicyConfig mergePolicyConfig) {
+        assertThatThrownBy(toRun)
+                .isInstanceOf(InvalidConfigurationException.class)
+                .hasMessageContaining(mergePolicyConfig.getPolicy());
     }
 }

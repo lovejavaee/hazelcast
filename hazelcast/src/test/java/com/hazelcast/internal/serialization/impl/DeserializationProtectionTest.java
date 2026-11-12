@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,8 +32,6 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
-import java.io.IOException;
-
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -52,7 +50,7 @@ public class DeserializationProtectionTest extends HazelcastTestSupport {
 
     @Before
     @After
-    public void killAllHazelcastInstances() throws IOException {
+    public void killAllHazelcastInstances() {
         TestDeserialized.isDeserialized = false;
     }
 
@@ -119,7 +117,7 @@ public class DeserializationProtectionTest extends HazelcastTestSupport {
     }
 
     private void assertDeserializationFails(JavaSerializationFilterConfig javaSerializationFilterConfig,
-            boolean keyOwnedByTarget) {
+                                            boolean keyOwnedByTarget) {
         TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(2);
         Config config = new Config();
         config.getSerializationConfig().setJavaSerializationFilterConfig(javaSerializationFilterConfig);

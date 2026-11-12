@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.cp.internal.raft.impl;
 
 import com.hazelcast.config.cp.RaftAlgorithmConfig;
+import com.hazelcast.core.HazelcastException;
 import com.hazelcast.cp.CPGroupId;
 import com.hazelcast.cp.CPMember;
 import com.hazelcast.cp.exception.LeaderDemotedException;
@@ -29,7 +30,8 @@ import com.hazelcast.cp.internal.raft.impl.command.UpdateRaftGroupMembersCmd;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendFailureResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendRequest;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendSuccessResponse;
-import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshot;
+import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshotRequest;
+import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshotResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.PreVoteRequest;
 import com.hazelcast.cp.internal.raft.impl.dto.PreVoteResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.TriggerLeaderElection;
@@ -38,7 +40,8 @@ import com.hazelcast.cp.internal.raft.impl.dto.VoteResponse;
 import com.hazelcast.cp.internal.raft.impl.handler.AppendFailureResponseHandlerTask;
 import com.hazelcast.cp.internal.raft.impl.handler.AppendRequestHandlerTask;
 import com.hazelcast.cp.internal.raft.impl.handler.AppendSuccessResponseHandlerTask;
-import com.hazelcast.cp.internal.raft.impl.handler.InstallSnapshotHandlerTask;
+import com.hazelcast.cp.internal.raft.impl.handler.InstallSnapshotRequestHandlerTask;
+import com.hazelcast.cp.internal.raft.impl.handler.InstallSnapshotResponseHandlerTask;
 import com.hazelcast.cp.internal.raft.impl.handler.PreVoteRequestHandlerTask;
 import com.hazelcast.cp.internal.raft.impl.handler.PreVoteResponseHandlerTask;
 import com.hazelcast.cp.internal.raft.impl.handler.TriggerLeaderElectionHandlerTask;
@@ -46,6 +49,7 @@ import com.hazelcast.cp.internal.raft.impl.handler.VoteRequestHandlerTask;
 import com.hazelcast.cp.internal.raft.impl.handler.VoteResponseHandlerTask;
 import com.hazelcast.cp.internal.raft.impl.log.LogEntry;
 import com.hazelcast.cp.internal.raft.impl.log.RaftLog;
+import com.hazelcast.cp.internal.raft.impl.log.SnapshotChunk;
 import com.hazelcast.cp.internal.raft.impl.log.SnapshotEntry;
 import com.hazelcast.cp.internal.raft.impl.persistence.NopRaftStateStore;
 import com.hazelcast.cp.internal.raft.impl.persistence.RaftStateStore;
@@ -73,6 +77,7 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.concurrent.TimeUnit;
@@ -90,24 +95,28 @@ import static com.hazelcast.cp.internal.raft.impl.log.SnapshotEntry.isNonInitial
 import static com.hazelcast.cp.internal.raft.impl.state.RaftState.newRaftState;
 import static com.hazelcast.cp.internal.raft.impl.state.RaftState.restoreRaftState;
 import static com.hazelcast.internal.util.Preconditions.checkNotNull;
-import static java.lang.Math.min;
+import static java.lang.String.format;
 import static java.util.Arrays.sort;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 /**
  * Implementation of {@link RaftNode}.
  */
 @SuppressWarnings({"checkstyle:methodcount", "checkstyle:classdataabstractioncoupling", "checkstyle:classfanoutcomplexity"})
-public final class RaftNodeImpl implements RaftNode {
+public class RaftNodeImpl implements RaftNode {
 
     private static final int LEADER_ELECTION_TIMEOUT_RANGE = 1000;
     private static final long RAFT_NODE_INIT_DELAY_MILLIS = 500;
     private static final float RATIO_TO_KEEP_LOGS_AFTER_SNAPSHOT = 0.1f;
+    private static final long METADATA_CHUNK_INDEX = -1L;
+    private static final int METADATA_CHUNK_NUMBER = 0;
 
-    private final CPGroupId groupId;
-    private final ILogger logger;
-    private final RaftState state;
-    private final RaftIntegration raftIntegration;
+    protected final CPGroupId groupId;
+    protected final ILogger logger;
+    protected final RaftState state;
+    protected final RaftIntegration raftIntegration;
+    private final ChunkedSnapshotInstaller chunkedSnapshotInstaller;
     private final Long2ObjectHashMap<InternalCompletableFuture> futures = new Long2ObjectHashMap<>();
 
     private final long heartbeatPeriodInMillis;
@@ -120,15 +129,20 @@ public final class RaftNodeImpl implements RaftNode {
     private final int maxNumberOfLogsToKeepAfterSnapshot;
     private final Runnable appendRequestBackoffResetTask;
     private final Runnable flushTask;
+    private final RaftStateStore stateStore;
 
     private long lastAppendEntriesTimestamp;
+    private long appendFailureResponsesSent;
     private boolean appendRequestBackoffResetTaskScheduled;
     private boolean flushTaskSubmitted;
+    private long lastSnapshotBuildDurationMs;
+    private long snapshotBuildCount;
+
     private volatile RaftNodeStatus status = INITIAL;
 
     @SuppressWarnings("checkstyle:executablestatementcount")
-    private RaftNodeImpl(CPGroupId groupId, RaftEndpoint localMember, Collection<RaftEndpoint> members, RaftStateStore stateStore,
-                         RaftAlgorithmConfig raftAlgorithmConfig, RaftIntegration raftIntegration) {
+    RaftNodeImpl(CPGroupId groupId, RaftEndpoint localMember, Collection<RaftEndpoint> members, RaftStateStore stateStore,
+                 RaftAlgorithmConfig raftAlgorithmConfig, RaftIntegration raftIntegration) {
         checkNotNull(groupId);
         checkNotNull(localMember);
         checkNotNull(members);
@@ -149,17 +163,19 @@ public final class RaftNodeImpl implements RaftNode {
         this.state = newRaftState(groupId, localMember, members, logCapacity, stateStore);
         this.logger = getLogger(RaftNode.class);
         this.appendRequestBackoffResetTask = new AppendRequestBackoffResetTask();
+        this.stateStore = stateStore;
         if (stateStore instanceof NopRaftStateStore) {
-           this.flushTask = null;
-           this.flushTaskSubmitted = true;
+            this.flushTask = null;
+            this.flushTaskSubmitted = true;
         } else {
             this.flushTask = new FlushTask();
         }
+        this.chunkedSnapshotInstaller = new ChunkedSnapshotInstaller(this);
     }
 
     @SuppressWarnings("checkstyle:executablestatementcount")
-    private RaftNodeImpl(CPGroupId groupId, RestoredRaftState restoredState, RaftStateStore stateStore,
-                         RaftAlgorithmConfig config, RaftIntegration raftIntegration) {
+    RaftNodeImpl(CPGroupId groupId, RestoredRaftState restoredState, RaftStateStore stateStore,
+                 RaftAlgorithmConfig config, RaftIntegration raftIntegration) {
         checkNotNull(groupId);
         checkNotNull(stateStore);
         checkNotNull(raftIntegration);
@@ -178,12 +194,14 @@ public final class RaftNodeImpl implements RaftNode {
         this.state = restoreRaftState(groupId, restoredState, logCapacity, stateStore);
         this.logger = getLogger(RaftNode.class);
         this.appendRequestBackoffResetTask = new AppendRequestBackoffResetTask();
+        this.stateStore = stateStore;
         if (stateStore instanceof NopRaftStateStore) {
             this.flushTask = null;
             this.flushTaskSubmitted = true;
         } else {
             this.flushTask = new FlushTask();
         }
+        this.chunkedSnapshotInstaller = new ChunkedSnapshotInstaller(this);
     }
 
     /**
@@ -221,6 +239,47 @@ public final class RaftNodeImpl implements RaftNode {
     public static RaftNodeImpl restoreRaftNode(CPGroupId groupId, RestoredRaftState restoredState, RaftAlgorithmConfig config,
                                                RaftIntegration integration, RaftStateStore raftStateStore) {
         return new RaftNodeImpl(groupId, restoredState, raftStateStore, config, integration);
+    }
+
+    /**
+     * Processes an incoming snapshot chunk request from a leader.
+     */
+    public void processSnapshotChunk(InstallSnapshotRequest request) {
+        chunkedSnapshotInstaller.processChunk(request);
+    }
+
+    /**
+     * Wall-clock duration (ms) of the most recently completed local snapshot build including failed attempts.
+     * Holds its last value between builds.
+     */
+    public long getLastSnapshotBuildDurationMs() {
+        return lastSnapshotBuildDurationMs;
+    }
+
+    /**
+     * Cumulative number of local snapshot builds taken so far, including failed attempts.
+     */
+    public long getSnapshotBuildCount() {
+        return snapshotBuildCount;
+    }
+
+    /**
+     * Wall-clock duration (ms) of the most recently completed snapshot transfer from a leader.
+     * Holds its last value between transfers.
+     */
+    public long getLastSnapshotTransferDurationMs() {
+        return chunkedSnapshotInstaller.getLastSnapshotTransferDurationMs();
+    }
+
+    /**
+     * Cumulative number of snapshot transfers successfully installed from a leader.
+     */
+    public long getSnapshotTransferCount() {
+        return chunkedSnapshotInstaller.getSnapshotTransferCount();
+    }
+
+    public RaftIntegration getRaftIntegration() {
+        return raftIntegration;
     }
 
     public ILogger getLogger(Class clazz) {
@@ -289,9 +348,7 @@ public final class RaftNodeImpl implements RaftNode {
                 invalidateFuturesFrom(state.commitIndex() + 1);
                 LeaderState leaderState = state.leaderState();
                 if (leaderState != null) {
-                    for (BiTuple<Object, InternalCompletableFuture> t : leaderState.queryState().operations()) {
-                        t.element2.completeExceptionally(new LeaderDemotedException(state.localEndpoint(), null));
-                    }
+                    leaderState.queryState().fail(new LeaderDemotedException(state.localEndpoint(), null));
                 }
                 state.completeLeadershipTransfer(new LeaderDemotedException(state.localEndpoint(), null));
                 setStatus(TERMINATED);
@@ -332,8 +389,8 @@ public final class RaftNodeImpl implements RaftNode {
             return;
         }
 
-        logger.fine("Starting Raft node: " + state.localEndpoint() + " for " + groupId + " with " + state.memberCount()
-                + " members: " + state.members());
+        logger.fine("Starting Raft node: " + state.localEndpoint() + " for " + groupId
+                + " with " + state.memberCount() + " members: " + state.members());
 
         execute(() -> {
             if (status == TERMINATED) {
@@ -409,8 +466,13 @@ public final class RaftNodeImpl implements RaftNode {
     }
 
     @Override
-    public void handleInstallSnapshot(InstallSnapshot request) {
-        execute(new InstallSnapshotHandlerTask(this, request));
+    public void handleInstallSnapshotRequest(InstallSnapshotRequest request) {
+        execute(new InstallSnapshotRequestHandlerTask(this, request));
+    }
+
+    @Override
+    public void handleInstallSnapshotResponse(InstallSnapshotResponse response) {
+        execute(new InstallSnapshotResponseHandlerTask(this, response));
     }
 
     @Override
@@ -419,10 +481,19 @@ public final class RaftNodeImpl implements RaftNode {
     }
 
     @Override
+    public void handleTriggerLeadershipRebalance() {
+        // no-op
+    }
+
+    @Override
     public InternalCompletableFuture replicate(Object operation) {
         InternalCompletableFuture resultFuture = raftIntegration.newCompletableFuture();
-        execute(new ReplicateTask(this, operation, resultFuture));
+        execute(createReplicationTask(operation, resultFuture));
         return resultFuture;
+    }
+
+    public ReplicateTask createReplicationTask(Object operation, InternalCompletableFuture resultFuture) {
+        return new ReplicateTask(this, operation, resultFuture);
     }
 
     @Override
@@ -452,6 +523,11 @@ public final class RaftNodeImpl implements RaftNode {
         InternalCompletableFuture resultFuture = raftIntegration.newCompletableFuture();
         raftIntegration.execute(new InitLeadershipTransferTask(this, endpoint, resultFuture));
         return resultFuture;
+    }
+
+    @Override
+    public boolean autoStepDownWhenLeaderForGroup() {
+        return false;
     }
 
     @Override
@@ -558,6 +634,8 @@ public final class RaftNodeImpl implements RaftNode {
      * <ul>
      * <li>Node is terminating, terminated or stepped down.
      * See {@link RaftNodeStatus}.</li>
+     * <li>The leader has applied its own removal from the group, hence it is no
+     * longer part of the quorum that would have to acknowledge the query.</li>
      * <li>If the leader has not yet marked an entry from its current term
      * committed. See Section 6.4 of Raft Dissertation.</li>
      * <li>There are already
@@ -567,6 +645,11 @@ public final class RaftNodeImpl implements RaftNode {
      */
     public boolean canQueryLinearizable() {
         if (isTerminatedOrSteppedDown()) {
+            return false;
+        }
+
+        // a leaving leader is no longer part of the query quorum, so it stops serving these reads
+        if (!state.lastGroupMembers().isKnownMember(getLocalMember())) {
             return false;
         }
 
@@ -607,7 +690,6 @@ public final class RaftNodeImpl implements RaftNode {
      * Schedules periodic heartbeat task when a new leader is elected.
      */
     private void scheduleHeartbeat() {
-        broadcastAppendRequest();
         schedule(new HeartbeatTask(), heartbeatPeriodInMillis);
     }
 
@@ -633,6 +715,7 @@ public final class RaftNodeImpl implements RaftNode {
 
     public void send(AppendFailureResponse response, RaftEndpoint target) {
         raftIntegration.send(response, target);
+        appendFailureResponsesSent++;
     }
 
     public void send(TriggerLeaderElection request, RaftEndpoint target) {
@@ -655,12 +738,11 @@ public final class RaftNodeImpl implements RaftNode {
      * Log entries between follower's known nextIndex and latest appended entry index are sent in a batch.
      * Batch size can be {@link RaftAlgorithmConfig#getAppendRequestMaxEntryCount()} at most.
      * <p>
-     * If follower's nextIndex is behind the latest snapshot index, then {@link InstallSnapshot} request is sent.
+     * If follower's nextIndex is behind the latest snapshot index, then {@link InstallSnapshotRequest} request is sent.
      * <p>
      * If leader doesn't know follower's matchIndex (if {@code matchIndex == 0}), then an empty append-entries is sent
      * to save bandwidth until leader learns the matchIndex of the follower.
      */
-    @SuppressWarnings({"checkstyle:npathcomplexity", "checkstyle:cyclomaticcomplexity", "checkstyle:methodlength"})
     public void sendAppendRequest(RaftEndpoint follower) {
         if (!raftIntegration.isReachable(follower)) {
             return;
@@ -669,6 +751,7 @@ public final class RaftNodeImpl implements RaftNode {
         RaftLog raftLog = state.log();
         LeaderState leaderState = state.leaderState();
         FollowerState followerState = leaderState.getFollowerState(follower);
+
         if (followerState.isAppendRequestBackoffSet()) {
             // The follower still has not sent a response for the last append request.
             // We will send a new append request either when the follower sends a response
@@ -678,85 +761,216 @@ public final class RaftNodeImpl implements RaftNode {
 
         long nextIndex = followerState.nextIndex();
 
-        // if the first log entry to be sent is put into the snapshot, check if we still keep it in the log
-        // if we still keep that log entry and its previous entry, we don't need to send a snapshot
-
-        if (nextIndex <= raftLog.snapshotIndex()
-                && (!raftLog.containsLogEntry(nextIndex) || (nextIndex > 1 && !raftLog.containsLogEntry(nextIndex - 1)))) {
-            InstallSnapshot installSnapshot = new InstallSnapshot(state.localEndpoint(), state.term(), raftLog.snapshot(),
-                    leaderState.queryRound());
-            if (logger.isFineEnabled()) {
-                logger.fine("Sending " + installSnapshot + " to " + follower + " since next index: " + nextIndex
-                        + " <= snapshot index: " + raftLog.snapshotIndex());
-            }
-
-            // no need to submit the flush task here because we send committed state...
-            raftIntegration.send(installSnapshot, follower);
-            followerState.setMaxAppendRequestBackoff();
-            scheduleAppendAckResetTask();
+        if (shouldSendSnapshot(raftLog, nextIndex)) {
+            sendSnapshotRequest(follower);
             return;
         }
 
-        int prevEntryTerm = 0;
-        long prevEntryIndex = 0;
-        LogEntry[] entries;
-        boolean shouldBackoff = true;
+        sendAppendEntries(follower, raftLog, leaderState, followerState, nextIndex);
+    }
 
-        if (nextIndex > 1) {
-            prevEntryIndex = nextIndex - 1;
-            LogEntry prevEntry = (raftLog.snapshotIndex() == prevEntryIndex)
-                    ? raftLog.snapshot() : raftLog.getLogEntry(prevEntryIndex);
-            assert prevEntry != null : "Prev entry index: " + prevEntryIndex + ", snapshot: " + raftLog.snapshotIndex();
-            prevEntryTerm = prevEntry.term();
+    private boolean shouldSendSnapshot(RaftLog raftLog, long nextIndex) {
+        // if the first log entry to be sent is put into the snapshot,
+        // check if we still keep it in the log if we still keep that log
+        // entry and its previous entry, we don't need to send a snapshot
+        return nextIndex <= raftLog.snapshotIndex()
+                && (!raftLog.containsLogEntry(nextIndex)
+                || (nextIndex > 1 && !raftLog.containsLogEntry(nextIndex - 1)));
+    }
 
-            long matchIndex = followerState.matchIndex();
-            if (matchIndex == 0) {
-                // Until the leader has discovered where it and the follower's logs match,
-                // the leader can send AppendEntries with no entries (like heartbeats) to save bandwidth.
-                // We still need to enable append request backoff here because we do not want to bombard
-                // the follower before we learn its match index
-                entries = new LogEntry[0];
-            } else if (nextIndex <= raftLog.lastLogOrSnapshotIndex()) {
-                // Then, once the matchIndex immediately precedes the nextIndex,
-                // the leader should begin to send the actual entries
-                long end = min(nextIndex + appendRequestMaxEntryCount, raftLog.lastLogOrSnapshotIndex());
-                entries = raftLog.getEntriesBetween(nextIndex, end);
-            } else {
-                // The follower has caught up with the leader. Sending an empty append request as a heartbeat...
-                entries = new LogEntry[0];
-                shouldBackoff = false;
-            }
-        } else if (nextIndex == 1 && raftLog.lastLogOrSnapshotIndex() > 0) {
-            // Entries will be sent to the follower for the first time...
-            long end = min(nextIndex + appendRequestMaxEntryCount, raftLog.lastLogOrSnapshotIndex());
-            entries = raftLog.getEntriesBetween(nextIndex, end);
+    private void sendSnapshotRequest(RaftEndpoint follower) {
+        initiateFollowerSnapshotSync(follower);
+    }
+
+    /**
+     * Triggers a follower to synchronize with the leader's current snapshot.
+     * <p>
+     * This is done by calling the main snapshot-sending method with special
+     * parameters. This signals that the follower is out of date and should be
+     * sent snapshot metadata, which will cause it to reset and begin a new
+     * full synchronization.
+     *
+     * @param follower The endpoint of the follower that needs to sync up.
+     */
+    private void initiateFollowerSnapshotSync(RaftEndpoint follower) {
+        logger.fine("Forcing a full snapshot sync for follower %s", follower);
+
+        sendNextSnapshotChunk(follower, METADATA_CHUNK_INDEX, METADATA_CHUNK_NUMBER);
+    }
+
+    public void sendNextSnapshotChunk(RaftEndpoint follower, long requestedSnapshotIndex, int requestedChunkNumber) {
+        // 1. Get the current state and snapshot details from the leader.
+        final LeaderState leaderState = state.leaderState();
+        final SnapshotEntry snapshotEntry = state.log().snapshot();
+
+        if (snapshotEntry.snapshotChunks().isEmpty()) {
+            throw new IllegalStateException("No chunks extracted from snapshot");
+        }
+
+        final long currentSnapshotIndex = snapshotEntry.index();
+
+        // 2. Handle cases where the follower's request is invalid or outdated.
+        // Guard Clause: Follower is asking for a snapshot
+        // that is newer than ours. This shouldn't happen.
+        if (requestedSnapshotIndex > currentSnapshotIndex) {
+            logger.warning(format("Ignoring request from %s for a future snapshot. "
+                            + "Follower wants index %d, but we only have index %d.",
+                    follower, requestedSnapshotIndex, currentSnapshotIndex));
+            return;
+        }
+
+        // 3. Determine which chunk to send: metadata or actual data.
+        SnapshotChunk chunkToSend;
+        // If the follower is behind, it needs to start over. We send only
+        // the metadata of our *new* snapshot. This prompts the follower
+        // to reset its state and request the new snapshot from scratch.
+        // see ChunkedSnapshotInstaller#validateAndStoreChunk#isFromNewerSnapshot
+        if (requestedSnapshotIndex < currentSnapshotIndex) {
+            logger.info(format("Follower %s is behind (wants index %d, we have %d). "
+                            + "Sending current snapshot metadata to force a reset.",
+                    follower, requestedSnapshotIndex, currentSnapshotIndex));
+            chunkToSend = createMetadataChunk(snapshotEntry);
         } else {
-            // There is no entry in the Raft log. Sending an empty append request as a heartbeat...
-            entries = new LogEntry[0];
-            shouldBackoff = false;
+            // Happy Path: The follower is requesting
+            // a chunk of the current snapshot.
+            List<SnapshotChunk> snapshotChunks = snapshotEntry.snapshotChunks();
+            if (requestedChunkNumber < 0 || requestedChunkNumber >= snapshotChunks.size()) {
+                logger.warning(format("Received invalid chunk number %d (total chunks: %d) from %s for snapshot index %d",
+                        requestedChunkNumber, snapshotChunks.size(), follower, currentSnapshotIndex));
+                return;
+            }
+            chunkToSend = snapshotChunks.get(requestedChunkNumber);
+            logger.fine("Sending snapshot chunk %d (0-based) of %d to follower %s for index %d.",
+                    requestedChunkNumber, chunkToSend.chunkCount(), follower, currentSnapshotIndex);
         }
 
-        AppendRequest request = new AppendRequest(getLocalMember(), state.term(), prevEntryTerm, prevEntryIndex,
-                state.commitIndex(), entries, leaderState.queryRound());
-
-        if (logger.isFineEnabled()) {
-            logger.fine("Sending " + request + " to " + follower + " with next index: " + nextIndex);
+        // This check handles cases where the chunk couldn't be created or found.
+        if (chunkToSend == null) {
+            logger.severe(format("Failed to get snapshot chunk %d (0-based) for follower %s at index %d. Aborting.",
+                    requestedChunkNumber, follower, currentSnapshotIndex));
+            return;
         }
+
+        // 4. Build and send the snapshot request to the follower.
+        final FollowerState followerState = leaderState.getFollowerState(follower);
+        final InstallSnapshotRequest request = new InstallSnapshotRequest(
+                state.localEndpoint(),
+                state.term(),
+                chunkToSend,
+                leaderState.queryRound(),
+                followerState.setMaxAppendRequestBackoff()
+        );
+
+        raftIntegration.send(request, follower);
+        scheduleAppendAckResetTask();
+    }
+
+    private static SnapshotChunk createMetadataChunk(SnapshotEntry snapshotEntry) {
+        List<SnapshotChunk> chunks = snapshotEntry.snapshotChunks();
+        return ((SnapshotChunk) new SnapshotChunk()
+                .setChunkCount(chunks.size())
+                .setChunkNumber(METADATA_CHUNK_NUMBER)
+                .setGroupMembers(snapshotEntry.groupMembers())
+                .setGroupMembersLogIndex(snapshotEntry.groupMembersLogIndex())
+                .setSnapshotTerm(snapshotEntry.term())
+                .setIndex(snapshotEntry.index())
+                .setOperation(null));
+    }
+
+    private void sendAppendEntries(RaftEndpoint follower, RaftLog raftLog,
+                                   LeaderState leaderState, FollowerState followerState,
+                                   long nextIndex) {
+        final LogEntry[] entries = prepareLogEntries(raftLog, followerState, nextIndex);
+        final boolean shouldBackoff = shouldSetBackoff(raftLog, followerState, nextIndex);
+
+        if (shouldBackoff) {
+            followerState.setAppendRequestBackoff();
+        }
+
+        final long prevEntryIndex = nextIndex > 1 ? nextIndex - 1 : 0;
+        final int prevEntryTerm = getPreviousEntryTerm(raftLog, prevEntryIndex);
+
+        AppendRequest request = new AppendRequest(
+                getLocalMember(),
+                state.term(),
+                prevEntryTerm,
+                prevEntryIndex,
+                state.commitIndex(),
+                entries,
+                leaderState.queryRound(),
+                followerState.flowControlSequenceNumber()
+        );
+
+        logger.fine("Sending %s to %s with next index: %d", request, follower, nextIndex);
 
         raftIntegration.send(request, follower);
 
-        if (entries.length > 0 && entries[entries.length - 1].index() > leaderState.flushedLogIndex()) {
-            // if I am sending any non-flushed entry to the follower, I should trigger the flush task.
-            // I hope that I will flush before receiving append responses from half of the followers...
-            // This is a very critical optimization because
-            // it makes the leader and followers flush in parallel...
+        if (shouldTriggerFlush(entries, leaderState)) {
             submitFlushTask();
         }
 
         if (shouldBackoff) {
-            followerState.setAppendRequestBackoff();
             scheduleAppendAckResetTask();
         }
+    }
+
+    private LogEntry[] prepareLogEntries(RaftLog raftLog, FollowerState followerState, long nextIndex) {
+        // Return empty array for heartbeats when no entries are needed
+        if (nextIndex > 1 && followerState.matchIndex() == 0) {
+            // Until the leader has discovered where it and the follower's
+            // logs match, the leader can send AppendEntries with no
+            // entries (like heartbeats) to save bandwidth. We still need
+            // to enable append request backoff here because we do not want
+            // to bombard the follower before we learn its match index
+            return new LogEntry[0];
+        }
+
+        if (nextIndex > raftLog.lastLogOrSnapshotIndex()) {
+            // Follower is caught up with leader, send empty heartbeat
+            return new LogEntry[0];
+        }
+
+        if (raftLog.lastLogOrSnapshotIndex() == 0 && nextIndex == 1) {
+            // No entries in Raft log, send empty heartbeat
+            return new LogEntry[0];
+        }
+
+        // Send entries to follower, either for first time or when
+        // the matchIndex immediately precedes the nextIndex,
+        // the leader should begin to send the actual entries
+        long end = Math.min(nextIndex + appendRequestMaxEntryCount, raftLog.lastLogOrSnapshotIndex());
+        return raftLog.getEntriesBetween(nextIndex, end);
+    }
+
+    @SuppressWarnings("checkstyle:booleanexpressioncomplexity")
+    private boolean shouldSetBackoff(RaftLog raftLog, FollowerState followerState, long nextIndex) {
+        return (nextIndex == 1 && raftLog.lastLogOrSnapshotIndex() > 0)
+                || (nextIndex > 1 && followerState.matchIndex() == 0)
+                || (nextIndex > 1 && nextIndex <= raftLog.lastLogOrSnapshotIndex());
+    }
+
+    private int getPreviousEntryTerm(RaftLog raftLog, long prevEntryIndex) {
+        if (prevEntryIndex == 0) {
+            return 0;
+        }
+        LogEntry prevEntry = raftLog.snapshotIndex() == prevEntryIndex
+                ? raftLog.snapshot()
+                : raftLog.getLogEntry(prevEntryIndex);
+        if (prevEntry == null) {
+            throw new IllegalStateException(
+                    format("Previous entry not found: index=%d, snapshot=%d",
+                            prevEntryIndex, raftLog.snapshotIndex()));
+        }
+        return prevEntry.term();
+    }
+
+    private boolean shouldTriggerFlush(LogEntry[] entries, LeaderState leaderState) {
+        // if I am sending any non-flushed entry to the follower, I should trigger the flush task.
+        // I hope that I will flush before receiving append responses from half of the followers...
+        // This is a very critical optimization because
+        // it makes the leader and followers flush in parallel...
+        return entries.length > 0
+                && entries[entries.length - 1].index() > leaderState.flushedLogIndex();
     }
 
     /**
@@ -809,7 +1023,7 @@ public final class RaftNodeImpl implements RaftNode {
      */
     private void applyLogEntry(LogEntry entry) {
         if (logger.isFineEnabled()) {
-            logger.fine("Processing " + entry);
+            logger.fine("Processing %s", entry);
         }
 
         Object response = null;
@@ -817,10 +1031,9 @@ public final class RaftNodeImpl implements RaftNode {
         if (operation instanceof RaftGroupCmd) {
             if (operation instanceof DestroyRaftGroupCmd) {
                 groupDestroyed();
-            } else if (operation instanceof UpdateRaftGroupMembersCmd) {
+            } else if (operation instanceof UpdateRaftGroupMembersCmd op) {
                 if (state.lastGroupMembers().index() < entry.index()) {
                     setStatus(UPDATING_GROUP_MEMBER_LIST);
-                    UpdateRaftGroupMembersCmd op = (UpdateRaftGroupMembersCmd) operation;
                     updateGroupMembers(entry.index(), op.getMembers());
                 }
 
@@ -828,7 +1041,7 @@ public final class RaftNodeImpl implements RaftNode {
                 assert state.lastGroupMembers().index() == entry.index();
 
                 state.commitGroupMembers();
-                UpdateRaftGroupMembersCmd cmd = (UpdateRaftGroupMembersCmd) operation;
+                UpdateRaftGroupMembersCmd cmd = op;
                 if (cmd.getMember().equals(state.localEndpoint()) && cmd.getMode() == MembershipChangeMode.REMOVE) {
                     setStatus(STEPPED_DOWN);
                     // If I am the leader, I may have some waiting futures whose operations are already committed
@@ -858,10 +1071,6 @@ public final class RaftNodeImpl implements RaftNode {
 
     public void updateLastAppendEntriesTimestamp() {
         lastAppendEntriesTimestamp = Clock.currentTimeMillis();
-    }
-
-    public long lastAppendEntriesTimestamp() {
-        return lastAppendEntriesTimestamp;
     }
 
     public RaftState state() {
@@ -908,8 +1117,8 @@ public final class RaftNodeImpl implements RaftNode {
     public void completeFuture(long entryIndex, Object response) {
         InternalCompletableFuture f = futures.remove(entryIndex);
         if (f != null) {
-            if (response instanceof Throwable) {
-                f.completeExceptionally((Throwable) response);
+            if (response instanceof Throwable throwable) {
+                f.completeExceptionally(throwable);
             } else {
                 f.complete(response);
             }
@@ -959,19 +1168,8 @@ public final class RaftNodeImpl implements RaftNode {
         }
     }
 
-    /**
-     * Takes a snapshot if the advance in {@code commitIndex} is equal to
-     * {@link RaftAlgorithmConfig#getCommitIndexAdvanceCountToSnapshot()}.
-     * <p>
-     * Snapshot is not created if the Raft group is being destroyed.
-     */
-    @SuppressWarnings("checkstyle:npathcomplexity")
+    @SuppressWarnings({"checkstyle:MethodLength", "checkstyle:NPathComplexity"})
     private void takeSnapshotIfCommitIndexAdvanced() {
-        long commitIndex = state.commitIndex();
-        if ((commitIndex - state.log().snapshotIndex()) < commitIndexAdvanceCountToSnapshot) {
-            return;
-        }
-
         if (isTerminatedOrSteppedDown()) {
             // If the status is TERMINATING, it means the status is normally ACTIVE
             // and there is an appended but not committed RaftGroupCmd.
@@ -979,50 +1177,101 @@ public final class RaftNodeImpl implements RaftNode {
             return;
         }
 
-        RaftLog log = state.log();
-        Object snapshot = raftIntegration.takeSnapshot(commitIndex);
-        if (snapshot instanceof Throwable) {
-            Throwable t = (Throwable) snapshot;
-            logger.severe("Could not take snapshot at commit index: " + commitIndex, t);
+        final long commitIndex = state.commitIndex();
+
+        // Regular appends may have made an incomplete received snapshot stale.
+        // Clean it up even when a new local snapshot is not yet due.
+        chunkedSnapshotInstaller.cleanupStaleTransferIfNeeded();
+
+        if ((commitIndex - state.log().snapshotIndex())
+                < commitIndexAdvanceCountToSnapshot) {
             return;
         }
 
-        int snapshotTerm = log.getLogEntry(commitIndex).term();
-        RaftGroupMembers members = state.committedGroupMembers();
-        SnapshotEntry snapshotEntry = new SnapshotEntry(snapshotTerm, commitIndex, snapshot, members.index(), members.members());
+        logger.fine("Taking chunked snapshot at commit index: %d", commitIndex);
 
-        long highestLogIndexToTruncate = commitIndex - maxNumberOfLogsToKeepAfterSnapshot;
-        LeaderState leaderState = state.leaderState();
-        if (leaderState != null) {
-            long[] matchIndices = leaderState.matchIndices();
-            // Last slot is reserved for leader index and always zero.
+        long buildStartNanos = System.nanoTime();
+        try {
+            RaftLog log = state.log();
+            int snapshotTerm = log.getLogEntry(commitIndex).term();
+            RaftGroupMembers members = state.committedGroupMembers();
 
-            // If there is at least one follower with unknown match index,
-            // its log can be close to the leader's log so we are keeping the old log entries.
-            boolean allMatchIndicesKnown = Arrays.stream(matchIndices, 0, matchIndices.length - 1)
-                                                 .noneMatch(i -> i == 0);
+            List<SnapshotChunk> chunksFromSnapshot;
+            try {
+                chunksFromSnapshot = raftIntegration.takeGroupSnapshotChunks(
+                        snapshotTerm, commitIndex, members.members(), members.index());
+            } catch (Throwable t) {
+                logger.severe("Could not take snapshot at commit index: " + commitIndex, t);
+                return;
+            }
 
-            if (allMatchIndicesKnown) {
-                // Otherwise, we will keep the log entries until the minimum match index
-                // that is bigger than (commitIndex - maxNumberOfLogsToKeepAfterSnapshot).
-                // If there is no such follower (all of the minority followers are far behind),
-                // then there is no need to keep the old log entries.
-                highestLogIndexToTruncate = Arrays.stream(matchIndices)
-                                                  // No need to keep any log entry if all followers are up to date
-                                                  .filter(i -> i < commitIndex)
-                                                  .filter(i -> i > commitIndex - maxNumberOfLogsToKeepAfterSnapshot)
-                                                  // We should not delete the smallest matchIndex
-                                                  .map(i -> i - 1)
-                                                  .sorted()
-                                                  .findFirst()
-                                                  .orElse(commitIndex);
+            logger.fine("SnapshotChunk creation result: created %d chunks", chunksFromSnapshot.size());
+
+            try {
+                persistAndFlushSnapshotChunks(chunksFromSnapshot, commitIndex);
+            } catch (IOException e) {
+                throw new HazelcastException(e);
+            }
+
+            long highestLogIndexToTruncate = commitIndex - maxNumberOfLogsToKeepAfterSnapshot;
+            LeaderState leaderState = state.leaderState();
+            if (leaderState != null) {
+                long[] matchIndices = leaderState.matchIndices();
+                // Last slot is reserved for leader index and always zero.
+
+                // If there is at least one follower with unknown match index,
+                // its log can be close to the leader's log so we are keeping the old log entries.
+                boolean allMatchIndicesKnown = Arrays.stream(matchIndices, 0, matchIndices.length - 1)
+                        .noneMatch(i -> i == 0);
+
+                if (allMatchIndicesKnown) {
+                    // Otherwise, we will keep the log entries until the minimum match index
+                    // that is bigger than (commitIndex - maxNumberOfLogsToKeepAfterSnapshot).
+                    // If there is no such follower (all of the minority followers are far behind),
+                    // then there is no need to keep the old log entries.
+                    highestLogIndexToTruncate = Arrays.stream(matchIndices)
+                            // No need to keep any log entry if all followers are up to date
+                            .filter(i -> i < commitIndex)
+                            .filter(i -> i > commitIndex - maxNumberOfLogsToKeepAfterSnapshot)
+                            // We should not delete the smallest matchIndex
+                            .map(i -> i - 1)
+                            .sorted()
+                            .findFirst()
+                            .orElse(commitIndex);
+                }
+            }
+
+            // we flushed the snapshot to the storage.
+            // it is safe to modify the memory state now.
+
+            SnapshotEntry snapshotEntry = new SnapshotEntry(snapshotTerm, commitIndex,
+                    chunksFromSnapshot, members.index(), members.members());
+
+            int truncatedEntryCount = log.setSnapshot(snapshotEntry, highestLogIndexToTruncate, true);
+
+            logger.fine("%s is taken, %d entries are truncated.", snapshotEntry, truncatedEntryCount);
+        } finally {
+            lastSnapshotBuildDurationMs = NANOSECONDS.toMillis(System.nanoTime() - buildStartNanos);
+            snapshotBuildCount++;
+        }
+    }
+
+    private void persistAndFlushSnapshotChunks(List<SnapshotChunk> chunksFromSnapshot, long snapshotIndex)
+            throws IOException {
+
+        for (SnapshotChunk chunk : chunksFromSnapshot) {
+            try {
+                stateStore.persistSnapshotChunk(chunk);
+            } catch (IOException e) {
+                throw new HazelcastException(format("Persist failed at snapshot index: %d, chunkNumber: %d(0-based)",
+                        chunk.index(), chunk.chunkNumber()), e);
             }
         }
 
-        int truncatedEntryCount = log.setSnapshot(snapshotEntry, highestLogIndexToTruncate);
-
-        if (logger.isFineEnabled()) {
-            logger.fine(snapshotEntry + " is taken, " + truncatedEntryCount + " entries are truncated.");
+        try {
+            stateStore.flushLogs();
+        } catch (IOException e) {
+            throw new HazelcastException(format("Flush failed at snapshot index: %d", snapshotIndex), e);
         }
     }
 
@@ -1050,7 +1299,7 @@ public final class RaftNodeImpl implements RaftNode {
             logger.info(truncated + " entries are truncated to install " + snapshot);
         }
 
-        raftIntegration.restoreSnapshot(snapshot.operation(), snapshot.index());
+        raftIntegration.restoreSnapshot(snapshot);
 
         // If I am installing a snapshot, it means I am still present in the last member list,
         // but it is possible that the last entry I appended before the snapshot could be a membership change.
@@ -1069,18 +1318,19 @@ public final class RaftNodeImpl implements RaftNode {
     }
 
     private void initRestoredState() {
-        SnapshotEntry snapshot = state.log().snapshot();
-        if (isNonInitial(snapshot)) {
+        SnapshotEntry snapshotEntry = state.log().snapshot();
+
+        if (isNonInitial(snapshotEntry)) {
             printMemberState();
-            raftIntegration.restoreSnapshot(snapshot.operation(), snapshot.index());
+            raftIntegration.restoreSnapshot(snapshotEntry);
             if (logger.isFineEnabled()) {
-                logger.info(snapshot + " is restored.");
+                logger.info(snapshotEntry + " is restored.");
             } else {
-                logger.info("Snapshot is restored at commitIndex=" + snapshot.index());
+                logger.info("Snapshot is restored at commitIndex=" + snapshotEntry.index());
             }
         }
 
-        applyRestoredRaftGroupCommands(snapshot);
+        applyRestoredRaftGroupCommands(snapshotEntry);
     }
 
     private void applyRestoredRaftGroupCommands(SnapshotEntry snapshot) {
@@ -1153,7 +1403,32 @@ public final class RaftNodeImpl implements RaftNode {
      */
     public void updateGroupMembers(long logIndex, Collection<RaftEndpoint> members) {
         state.updateGroupMembers(logIndex, members);
+        failPendingQueriesIfLeaving();
         printMemberState();
+    }
+
+    /**
+     * Fails the queries that are waiting for a heartbeat round if the local Raft
+     * node has just applied its own removal. Those queries were admitted while
+     * this node was still a member, so completing them would count the vote of
+     * a non-member towards the quorum of the new member list.
+     * <p>
+     * Although {@link LeaderDemotedException} is designed for another case, we use
+     * it here since invocations internally retry when they receive it.
+     */
+    private void failPendingQueriesIfLeaving() {
+        LeaderState leaderState = state.leaderState();
+        if (leaderState == null || state.lastGroupMembers().isKnownMember(getLocalMember())) {
+            return;
+        }
+
+        QueryState queryState = leaderState.queryState();
+        if (queryState.queryCount() == 0) {
+            return;
+        }
+
+        logger.warning("Failing " + queryState.queryCount() + " queries since this node is leaving the group");
+        queryState.fail(new LeaderDemotedException(state.localEndpoint(), null));
     }
 
     /**
@@ -1203,12 +1478,13 @@ public final class RaftNodeImpl implements RaftNode {
     public void toFollower(int term) {
         LeaderState leaderState = state.leaderState();
         if (leaderState != null) {
-            for (BiTuple<Object, InternalCompletableFuture> t : leaderState.queryState().operations()) {
-                t.element2.completeExceptionally(new LeaderDemotedException(state.localEndpoint(), null));
-            }
+            leaderState.queryState().fail(new LeaderDemotedException(state.localEndpoint(), null));
         }
 
-        state.toFollower(term);
+        // Suppress pre-voting for one leader election timeout after this demotion.
+        // Otherwise, if no leader is known, LeaderFailureDetectionTask immediately starts
+        // another election, causing repeated term increments and election churn.
+        state.toFollower(term, Clock.currentTimeMillis() + getLeaderElectionTimeoutInMillis());
         printMemberState();
     }
 
@@ -1239,7 +1515,9 @@ public final class RaftNodeImpl implements RaftNode {
         state.toLeader();
         appendEntryAfterLeaderElection();
         printMemberState();
+        broadcastAppendRequest();
         scheduleHeartbeat();
+        raftIntegration.onNewLeaderElected(groupId);
     }
 
     private long findQuorumMatchIndex() {
@@ -1262,7 +1540,7 @@ public final class RaftNodeImpl implements RaftNode {
 
         long quorumMatchIndex = indices[(indices.length - 1) / 2];
         if (logger.isFineEnabled()) {
-            logger.fine("Quorum match index: " + quorumMatchIndex + ", indices: " + Arrays.toString(indices));
+            logger.fine("Quorum match index: %s, indices: %s", quorumMatchIndex, Arrays.toString(indices));
         }
 
         return quorumMatchIndex;
@@ -1283,7 +1561,7 @@ public final class RaftNodeImpl implements RaftNode {
                 commitEntries(quorumMatchIndex);
                 return true;
             } else if (logger.isFineEnabled()) {
-                logger.fine("Cannot commit " + entry + " since an entry from the current term: " + state.term() + " is needed.");
+                logger.fine("Cannot commit %s since an entry from the current term: %s is needed.", entry, state.term());
             }
         }
         return false;
@@ -1291,7 +1569,7 @@ public final class RaftNodeImpl implements RaftNode {
 
     private void commitEntries(long commitIndex) {
         if (logger.isFineEnabled()) {
-            logger.fine("Setting commit index: " + commitIndex);
+            logger.fine("Setting commit index: %s", commitIndex);
         }
         state.commitIndex(commitIndex);
 
@@ -1340,9 +1618,23 @@ public final class RaftNodeImpl implements RaftNode {
         }
     }
 
-    private boolean isHeartbeatTimedOut(long timestamp) {
+    public boolean isHeartbeatTimedOut(long timestamp) {
         long missedHeartbeatThreshold = maxMissedLeaderHeartbeatCount * heartbeatPeriodInMillis;
         return timestamp + missedHeartbeatThreshold < Clock.currentTimeMillis();
+    }
+
+    public boolean isHeartbeatTimedOut() {
+        return isHeartbeatTimedOut(lastAppendEntriesTimestamp);
+    }
+
+    public boolean isLeaderAvailable() {
+        RaftEndpoint leader = state.leader();
+        return (leader != null) && raftIntegration.isReachable(leader) && !isHeartbeatTimedOut();
+    }
+
+    // Used for testing to validate raft log reconciliation; see RaftLogReconciliationTest
+    public long getAppendFailureResponsesSent() {
+        return appendFailureResponsesSent;
     }
 
     /**
@@ -1392,14 +1684,14 @@ public final class RaftNodeImpl implements RaftNode {
 
                 RaftEndpoint leader = state.leader();
                 if (leader == null) {
-                    if (state.role() == FOLLOWER) {
+                    if (state.role() == FOLLOWER && !state.isPreVoteBackoffActive()) {
                         logger.warning("We are FOLLOWER and there is no current leader. Will start new election round...");
                         runPreVoteTask();
                     }
                 } else if (!raftIntegration.isReachable(leader)) {
                     logger.warning("Current leader " + leader + " is not reachable. Will start new election round...");
                     resetLeaderAndStartElection();
-                } else if (isHeartbeatTimedOut(lastAppendEntriesTimestamp)) {
+                } else if (isHeartbeatTimedOut()) {
                     // Even though leader endpoint is reachable by raft-integration,
                     // leader itself may be crashed and another member may be restarted on the same endpoint.
                     logger.warning("Current leader " + leader + "'s heartbeats are timed-out. Will start new election round...");
@@ -1437,22 +1729,24 @@ public final class RaftNodeImpl implements RaftNode {
         @Override
         protected void innerRun() {
             appendRequestBackoffResetTaskScheduled = false;
-            LeaderState leaderState = state.leaderState();
 
-            if (leaderState != null) {
-                Map<RaftEndpoint, FollowerState> followerStates = leaderState.getFollowerStates();
-                for (Entry<RaftEndpoint, FollowerState> entry : followerStates.entrySet()) {
-                    FollowerState followerState = entry.getValue();
-                    if (!followerState.isAppendRequestBackoffSet()) {
-                        continue;
-                    }
+            LeaderState leaderState = state.leaderState();
+            if (leaderState == null) {
+                return;
+            }
+
+            Map<RaftEndpoint, FollowerState> followerStates = leaderState.getFollowerStates();
+            for (Entry<RaftEndpoint, FollowerState> entry : followerStates.entrySet()) {
+                FollowerState followerState = entry.getValue();
+                if (followerState.isAppendRequestBackoffSet()) {
                     if (followerState.completeAppendRequestBackoffRound()) {
                         // This follower has not sent a response to the last append request.
                         // Send another append request
                         sendAppendRequest(entry.getKey());
+                    } else {
+                        // Schedule the task again, we still have backoff flag set followers
+                        scheduleAppendAckResetTask();
                     }
-                    // Schedule the task again, we still have backoff flag set followers
-                    scheduleAppendAckResetTask();
                 }
             }
         }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,17 +45,11 @@ public class RaftDataServiceDataSerializerHook implements DataSerializerHook {
 
     @Override
     public DataSerializableFactory createFactory() {
-        return typeId -> {
-            switch (typeId) {
-                case WAIT_KEY_CONTAINER:
-                    return new WaitKeyContainer();
-                case EXPIRE_WAIT_KEYS_OP:
-                    return new ExpireWaitKeysOp();
-                case DESTROY_RAFT_OBJECT_OP:
-                    return new DestroyRaftObjectOp();
-                default:
-                    throw new IllegalArgumentException("Undefined type: " + typeId);
-            }
+        return typeId -> switch (typeId) {
+            case WAIT_KEY_CONTAINER -> new WaitKeyContainer<>();
+            case EXPIRE_WAIT_KEYS_OP -> new ExpireWaitKeysOp();
+            case DESTROY_RAFT_OBJECT_OP -> new DestroyRaftObjectOp();
+            default -> throw new IllegalArgumentException("Undefined type: " + typeId);
         };
     }
 }

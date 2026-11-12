@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -93,7 +93,7 @@ public final class ConcurrentInboundEdgeStream {
             this.priority = priority;
             logger = prefixedLogger(Logger.getLogger(getClass()), debugName);
             if (logger.isFinestEnabled()) {
-                logger.finest("Coalescing " + conveyor.queueCount() + " input queues");
+                logger.finest("Coalescing %s input queues", conveyor.queueCount());
             }
         }
 
@@ -200,11 +200,10 @@ public final class ConcurrentInboundEdgeStream {
                         conveyor.removeQueue(queueIndex);
                         receivedBarriers.clear(queueIndex);
                         specialItemsStash.addAll(coalescers.queueDone(queueIndex));
-                    } else if (itemDetector.item instanceof Watermark) {
-                        Watermark watermark = (Watermark) itemDetector.item;
+                    } else if (itemDetector.item instanceof Watermark watermark) {
                         specialItemsStash.addAll(coalescers.observeWm(queueIndex, watermark));
-                    } else if (itemDetector.item instanceof SnapshotBarrier) {
-                        observeBarrier(queueIndex, (SnapshotBarrier) itemDetector.item);
+                    } else if (itemDetector.item instanceof SnapshotBarrier barrier) {
+                        observeBarrier(queueIndex, barrier);
                         tracker.madeProgress();
                     } else {
                         assert false : "should never get here";
@@ -287,8 +286,8 @@ public final class ConcurrentInboundEdgeStream {
 
             @Override
             public boolean test(Object o) {
-                if (o instanceof SpecialBroadcastItem) {
-                    item = (SpecialBroadcastItem) o;
+                if (o instanceof SpecialBroadcastItem broadcastItem) {
+                    item = broadcastItem;
                     return false;
                 } else {
                     normalItemObserved = true;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,10 @@
 
 package com.hazelcast.json.internal;
 
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonToken;
-import com.fasterxml.jackson.core.json.ReaderBasedJsonParser;
-import com.fasterxml.jackson.core.json.UTF8StreamJsonParser;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.JsonToken;
+import tools.jackson.core.json.ReaderBasedJsonParser;
+import tools.jackson.core.json.UTF8StreamJsonParser;
 import com.hazelcast.core.HazelcastException;
 import com.hazelcast.internal.json.JsonReducedValueParser;
 import com.hazelcast.internal.json.JsonValue;
@@ -42,7 +42,7 @@ public final class JsonSchemaHelper {
     /**
      * Creates a {@link JsonPattern} for given query path. If the path
      * matches a terminal value in the schema, then the schema is
-     * returned. Otherwise this method returns null. If given path
+     * returned. Otherwise, this method returns null. If given path
      * has "any", pattern is created only upto that part. The rest is
      * omitted.
      *
@@ -51,7 +51,6 @@ public final class JsonSchemaHelper {
      * @param path          query path
      * @return              a pattern object matching the path or null
      *                      when path does not match a terminal value
-     * @throws IOException
      */
     @SuppressWarnings("checkstyle:npathcomplexity")
     public static JsonPattern createPattern(NavigableJsonInputAdapter input, JsonSchemaNode schemaNode, JsonPathCursor path) {
@@ -157,8 +156,6 @@ public final class JsonSchemaHelper {
      * Creates a description out of a JsonValue. The parser must be
      * pointing to the start of the input.
      *
-     * @param parser
-     * @return
      * @throws IOException
      */
     public static JsonSchemaNode createSchema(JsonParser parser) throws IOException {
@@ -176,7 +173,7 @@ public final class JsonSchemaHelper {
                 parent.addChild(nameValue);
                 parent = structNode;
                 nameLocation = -1;
-            } else if (currentToken == JsonToken.FIELD_NAME) {
+            } else if (currentToken == JsonToken.PROPERTY_NAME) {
                 nameLocation = (int) getTokenLocation(parser);
             } else if (currentToken.isStructEnd()) {
                 parent = parent.getParent();
@@ -209,9 +206,9 @@ public final class JsonSchemaHelper {
 
     private static long getTokenLocation(JsonParser parser) {
         if (parser instanceof ReaderBasedJsonParser) {
-            return parser.getTokenLocation().getCharOffset();
+            return parser.currentTokenLocation().getCharOffset();
         } else if (parser instanceof UTF8StreamJsonParser) {
-            return parser.getTokenLocation().getByteOffset();
+            return parser.currentTokenLocation().getByteOffset();
         } else {
             throw new HazelcastException("Provided parser does not support location: "
                     + parser.getClass().getName());

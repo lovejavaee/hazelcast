@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,16 +20,43 @@ import com.hazelcast.internal.server.tcp.TcpServerConnectionManager_AbstractConn
 import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.Before;
+import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
+
+import static com.hazelcast.instance.EndpointQualifier.MEMBER;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 @RunWith(HazelcastSerialClassRunner.class)
 @Category(QuickTest.class)
 public class Select_TcpIpConnectionManager_ConnectMemberTest extends TcpServerConnectionManager_AbstractConnectMemberTest {
 
     @Before
+    @Override
     public void setup() throws Exception {
         networkingFactory = new Select_NioNetworkingFactory();
         super.setup();
+    }
+
+    @Test
+    public void outboundPipelineDoesNotSpinWhileWaitingForProtocolConfirmation() {
+        tcpServerA.start();
+        tcpServerA.getConnectionManager(MEMBER).getOrConnect(addressB);
+
+        NioNetworking networking = (NioNetworking) tcpServerA.getNetworking();
+        assertTrueEventually(() -> assertEquals(1, networking.getChannels().size()));
+
+        NioChannel channel = networking.getChannels().iterator().next();
+        NioOutboundPipeline pipeline = channel.outboundPipeline();
+        assertTrueEventually(() -> {
+            // Only the 3 byte HZC cluster protocol header should have been written
+            assertEquals(3, channel.bytesWritten());
+            assertTrue(pipeline.totalFramesPending() > 0);
+        });
+
+        long processCount = pipeline.processCount.get();
+        sleepMillis(100);
+        assertTrue(pipeline.processCount.get() - processCount < 100);
     }
 }

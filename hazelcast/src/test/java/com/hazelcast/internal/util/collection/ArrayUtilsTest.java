@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,16 +27,12 @@ import org.junit.runner.RunWith;
 import java.util.Arrays;
 
 import static com.hazelcast.internal.util.collection.ArrayUtils.replaceFirst;
-import static org.hamcrest.Matchers.arrayWithSize;
-import static org.hamcrest.Matchers.emptyArray;
-import static org.hamcrest.Matchers.not;
-import static org.hamcrest.Matchers.sameInstance;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -54,8 +50,8 @@ public class ArrayUtilsTest extends HazelcastTestSupport {
         Object[] original = new Object[0];
         Object[] result = ArrayUtils.createCopy(original);
 
-        assertThat(result, not(sameInstance(original)));
-        assertThat(result, emptyArray());
+        assertThat(result).isNotSameAs(original);
+        assertThat(result).isEmpty();
     }
 
     @Test
@@ -65,32 +61,9 @@ public class ArrayUtilsTest extends HazelcastTestSupport {
         original[0] = o;
 
         Object[] result = ArrayUtils.createCopy(original);
-        assertThat(result, not(sameInstance(original)));
-        assertThat(result, arrayWithSize(1));
-        assertThat(result[0], sameInstance(o));
-    }
-
-
-    @Test
-    public void copyWithoutNulls_whenSrcHasNullItem_thenDoNotCopyItIntoTarget() {
-        Object[] src = new Object[1];
-        src[0] = null;
-        Object[] dst = new Object[0];
-
-        ArrayUtils.copyWithoutNulls(src, dst);
-        assertThat(dst, emptyArray());
-    }
-
-    @Test
-    public void copyWithoutNulls_whenSrcHasNonNullItem_thenCopyItIntoTarget() {
-        Object[] src = new Object[1];
-        Object o = new Object();
-        src[0] = o;
-        Object[] dst = new Object[1];
-
-        ArrayUtils.copyWithoutNulls(src, dst);
-        assertThat(dst, arrayWithSize(1));
-        assertThat(dst[0], sameInstance(o));
+        assertThat(result).isNotSameAs(original);
+        assertThat(result).hasSize(1);
+        assertThat(result[0]).isSameAs(o);
     }
 
     @Test
@@ -147,12 +120,23 @@ public class ArrayUtilsTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void getItemAtPositionOrNull_whenSmallerArray_thenReturNull() {
+    public void getItemAtPositionOrNull_whenSmallerArray_thenReturnNull() {
         Object obj = new Object();
         Object[] src = new Object[1];
         src[0] = obj;
 
         Object result = ArrayUtils.getItemAtPositionOrNull(src, 1);
+
+        assertNull(result);
+    }
+
+    @Test
+    public void getItemAtPositionOrNull_whenNegative_thenReturnNull() {
+        Object obj = new Object();
+        Object[] src = new Object[1];
+        src[0] = obj;
+
+        Object result = ArrayUtils.getItemAtPositionOrNull(src, -1);
 
         assertNull(result);
     }

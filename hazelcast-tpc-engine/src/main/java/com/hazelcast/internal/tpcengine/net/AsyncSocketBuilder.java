@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ import com.hazelcast.internal.tpcengine.Reactor;
  * <p/>
  * This builder assumes TCP/IPv4. For different types of sockets
  * new configuration options on this builder need to be added or
- * a the {@link Reactor#newAsyncSocketBuilder()} needs to be modified.
+ * {@link Reactor#newAsyncSocketBuilder()} needs to be modified.
  * <p/>
  * Cast to specific builder for specialized options when available.
  */
@@ -74,6 +74,16 @@ public interface AsyncSocketBuilder {
      * @throws IllegalStateException when build already has been called.
      */
     AsyncSocketBuilder setReader(AsyncSocketReader reader);
+
+    /**
+     * Sets the AsyncSocketWriter.
+     *
+     * @param writer the AsyncSocketWriter
+     * @return this
+     * @throws NullPointerException  if reader is null.
+     * @throws IllegalStateException when build already has been called.
+     */
+    AsyncSocketBuilder setWriter(AsyncSocketWriter writer);
 
     /**
      * Builds the {@link AsyncSocket}.

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,9 @@
 package com.hazelcast.map.impl.mapstore;
 
 import com.hazelcast.config.Config;
-import com.hazelcast.core.EntryEvent;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.map.IMap;
 import com.hazelcast.map.MapStore;
-import com.hazelcast.map.listener.EntryAddedListener;
 import com.hazelcast.map.listener.EntryLoadedListener;
 import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
@@ -223,7 +221,7 @@ public class LoadAllTest extends AbstractMapStoreTest {
     }
 
     private static Set<Integer> selectKeysToLoad(int rangeStart, int rangeEnd) {
-        final Set<Integer> keysToLoad = new HashSet<Integer>();
+        final Set<Integer> keysToLoad = new HashSet<>();
         for (int i = rangeStart; i < rangeEnd; i++) {
             keysToLoad.add(i);
         }
@@ -236,22 +234,8 @@ public class LoadAllTest extends AbstractMapStoreTest {
         }
     }
 
-    private static void addListener(IMap map, final CountDownLatch counter) {
-        map.addEntryListener(new EntryAddedListener<Object, Object>() {
-            @Override
-            public void entryAdded(EntryEvent<Object, Object> event) {
-                counter.countDown();
-            }
-        }, true);
-    }
-
     private static void addLoadedListener(IMap map, final CountDownLatch counter) {
-        map.addEntryListener(new EntryLoadedListener<Object, Object>() {
-            @Override
-            public void entryLoaded(EntryEvent<Object, Object> event) {
-                counter.countDown();
-            }
-        }, true);
+        map.addEntryListener((EntryLoadedListener<Object, Object>) event -> counter.countDown(), true);
     }
 
     private static void evictRange(IMap<Integer, Integer> map, int rangeStart, int rangeEnd) {
@@ -262,7 +246,7 @@ public class LoadAllTest extends AbstractMapStoreTest {
 
     private static class SimpleStore implements MapStore<Integer, Integer> {
 
-        private ConcurrentMap<Integer, Integer> store = new ConcurrentHashMap<Integer, Integer>();
+        private final ConcurrentMap<Integer, Integer> store = new ConcurrentHashMap<>();
 
         @Override
         public void store(Integer key, Integer value) {
@@ -292,7 +276,7 @@ public class LoadAllTest extends AbstractMapStoreTest {
 
         @Override
         public Map<Integer, Integer> loadAll(Collection<Integer> keys) {
-            final Map<Integer, Integer> map = new HashMap<Integer, Integer>();
+            final Map<Integer, Integer> map = new HashMap<>();
             for (Integer key : keys) {
                 map.put(key, load(key));
             }

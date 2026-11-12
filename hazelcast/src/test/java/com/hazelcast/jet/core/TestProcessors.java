@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,6 @@ import javax.annotation.Nonnull;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -45,6 +44,7 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
+import static com.hazelcast.internal.util.ExceptionUtil.sneakyThrow;
 import static com.hazelcast.jet.Traversers.traverseArray;
 import static com.hazelcast.jet.Traversers.traverseItems;
 import static com.hazelcast.jet.Traversers.traverseIterable;
@@ -53,7 +53,6 @@ import static com.hazelcast.jet.Util.entry;
 import static com.hazelcast.jet.core.BroadcastKey.broadcastKey;
 import static com.hazelcast.jet.core.ProcessorMetaSupplier.preferLocalParallelismOne;
 import static com.hazelcast.jet.impl.JetEvent.jetEvent;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.sneakyThrow;
 import static com.hazelcast.test.HazelcastTestSupport.sleepMillis;
 import static java.util.stream.Collectors.toList;
 import static org.junit.Assert.assertEquals;
@@ -64,7 +63,7 @@ public final class TestProcessors {
 
     private static final ILogger LOGGER = Logger.getLogger(HazelcastTestSupport.class);
     private static final Random RANDOM = new Random();
-    private static final Set<String> errors = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private static final Set<String> errors = ConcurrentHashMap.newKeySet();
 
     private TestProcessors() { }
 
@@ -309,7 +308,7 @@ public final class TestProcessors {
 
     public static class MockPS implements ProcessorSupplier {
 
-        static AtomicInteger initCount = new AtomicInteger();
+        public static AtomicInteger initCount = new AtomicInteger();
         static AtomicInteger closeCount = new AtomicInteger();
         static volatile int nodeCount;
 
@@ -377,7 +376,6 @@ public final class TestProcessors {
             initCalled = true;
             initCount.incrementAndGet();
 
-
             if (initBlocks) {
                 blockingSemaphore.acquire();
                 Thread.sleep(RANDOM.nextInt(500));
@@ -442,12 +440,12 @@ public final class TestProcessors {
         static volatile boolean saveToSnapshotCalled;
         static Semaphore blockingSemaphore = new Semaphore(0, true);
 
-        private SupplierEx<Throwable> initError;
-        private SupplierEx<Throwable> processError;
-        private SupplierEx<Throwable> completeError;
-        private SupplierEx<Throwable> closeError;
-        private SupplierEx<Throwable> onSnapshotCompleteError;
-        private SupplierEx<Throwable> saveToSnapshotError;
+        private SupplierEx<? extends Throwable> initError;
+        private SupplierEx<? extends Throwable> processError;
+        private SupplierEx<? extends Throwable> completeError;
+        private SupplierEx<? extends Throwable> closeError;
+        private SupplierEx<? extends Throwable> onSnapshotCompleteError;
+        private SupplierEx<? extends Throwable> saveToSnapshotError;
         private boolean initBlocks;
 
         private boolean isCooperative;
@@ -458,32 +456,32 @@ public final class TestProcessors {
             return isCooperative;
         }
 
-        public MockP setInitError(SupplierEx<Throwable> initError) {
+        public MockP setInitError(SupplierEx<? extends Throwable> initError) {
             this.initError = initError;
             return this;
         }
 
-        public MockP setProcessError(SupplierEx<Throwable> processError) {
+        public MockP setProcessError(SupplierEx<? extends Throwable> processError) {
             this.processError = processError;
             return this;
         }
 
-        public MockP setCompleteError(SupplierEx<Throwable> completeError) {
+        public MockP setCompleteError(SupplierEx<? extends Throwable> completeError) {
             this.completeError = completeError;
             return this;
         }
 
-        public MockP setOnSnapshotCompleteError(SupplierEx<Throwable> e) {
+        public MockP setOnSnapshotCompleteError(SupplierEx<? extends Throwable> e) {
             this.onSnapshotCompleteError = e;
             return this;
         }
 
-        public MockP setSaveToSnapshotError(SupplierEx<Throwable> e) {
+        public MockP setSaveToSnapshotError(SupplierEx<? extends Throwable> e) {
             this.saveToSnapshotError = e;
             return this;
         }
 
-        public MockP setCloseError(SupplierEx<Throwable> closeError) {
+        public MockP setCloseError(SupplierEx<? extends Throwable> closeError) {
             this.closeError = closeError;
             return this;
         }
@@ -495,6 +493,10 @@ public final class TestProcessors {
 
         public static void unblock() {
             blockingSemaphore.release();
+        }
+
+        public static void unblockAll() {
+            blockingSemaphore.release(Integer.MAX_VALUE);
         }
 
         public MockP nonCooperative() {
@@ -713,11 +715,11 @@ public final class TestProcessors {
         static List<Address> members;
         static List<List<Object>> lists;
 
-        List<Object> getListAt(int i) {
+        public List<Object> getListAt(int i) {
             return lists.get(i);
         }
 
-        List<List<Object>> getLists() {
+        public List<List<Object>> getLists() {
             return lists;
         }
 

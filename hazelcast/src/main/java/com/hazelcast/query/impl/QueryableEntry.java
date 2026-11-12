@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -62,11 +62,7 @@ public abstract class QueryableEntry<K, V> implements Extractable, Map.Entry<K, 
         return extractAttributeValue(attributeName);
     }
 
-    public abstract K getKey();
-
     public abstract Data getKeyData();
-
-    public abstract V getValue();
 
     public abstract Data getValueData();
 
@@ -91,8 +87,7 @@ public abstract class QueryableEntry<K, V> implements Extractable, Map.Entry<K, 
         Object attributeValue = getAttributeValue(attributeName);
         if (attributeValue == null) {
             return NULL_CONVERTER;
-        } else if (attributeValue instanceof MultiResult) {
-            MultiResult multiResult = (MultiResult) attributeValue;
+        } else if (attributeValue instanceof MultiResult multiResult) {
             for (Object result : multiResult.getResults()) {
                 if (result != null) {
                     AttributeType attributeType = extractAttributeType(result);

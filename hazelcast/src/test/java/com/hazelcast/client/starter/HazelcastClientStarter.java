@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,7 +43,6 @@ public class HazelcastClientStarter {
         return newHazelcastClient(version, null, enterprise);
     }
 
-    @SuppressWarnings("unchecked")
     public static HazelcastInstance newHazelcastClient(String version, ClientConfig clientConfig, boolean enterprise) {
         return newHazelcastClient(version, clientConfig, enterprise, Collections.emptyList());
     }
@@ -65,15 +64,7 @@ public class HazelcastClientStarter {
             Method newHazelcastInstanceMethod = hazelcastClass.getMethod("newHazelcastClient", configClass);
             Object delegate = newHazelcastInstanceMethod.invoke(null, config);
             return (HazelcastInstance) proxyObjectForStarter(HazelcastStarter.class.getClassLoader(), delegate);
-        } catch (ClassNotFoundException e) {
-            throw rethrowGuardianException(e);
-        } catch (NoSuchMethodException e) {
-            throw rethrowGuardianException(e);
-        } catch (IllegalAccessException e) {
-            throw rethrowGuardianException(e);
-        } catch (InvocationTargetException e) {
-            throw rethrowGuardianException(e);
-        } catch (InstantiationException e) {
+        } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | InvocationTargetException | InstantiationException e) {
             throw rethrowGuardianException(e);
         } finally {
             if (contextClassLoader != null) {

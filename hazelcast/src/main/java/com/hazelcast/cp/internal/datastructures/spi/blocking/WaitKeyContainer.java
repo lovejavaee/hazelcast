@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.cp.internal.datastructures.spi.blocking;
 
 import com.hazelcast.cp.internal.datastructures.RaftDataServiceDataSerializerHook;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
@@ -108,11 +109,7 @@ public class WaitKeyContainer<W extends WaitKey> implements IdentifiedDataSerial
     @Override
     public void writeData(ObjectDataOutput out) throws IOException {
         out.writeObject(key);
-        Collection<W> retries = retries();
-        out.writeInt(retries.size());
-        for (W retry : retries) {
-            out.writeObject(retry);
-        }
+        SerializationUtil.writeCollection(retries(), out);
     }
 
     @Override
@@ -129,6 +126,7 @@ public class WaitKeyContainer<W extends WaitKey> implements IdentifiedDataSerial
         }
     }
 
+    @Override
     public String toString() {
         return "WaitKeyContainer{" + "key=" + key + ", retries=" + retries() + '}';
     }

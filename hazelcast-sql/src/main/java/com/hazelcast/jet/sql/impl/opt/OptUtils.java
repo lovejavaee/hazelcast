@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,6 @@ import com.hazelcast.jet.sql.impl.schema.HazelcastTable;
 import com.hazelcast.jet.sql.impl.schema.JetTable;
 import com.hazelcast.jet.sql.impl.validate.types.HazelcastJsonType;
 import com.hazelcast.jet.sql.impl.validate.types.HazelcastObjectType;
-import com.hazelcast.jet.sql.impl.validate.types.HazelcastObjectTypeReference;
 import com.hazelcast.jet.sql.impl.validate.types.HazelcastTypeUtils;
 import com.hazelcast.sql.impl.QueryParameterMetadata;
 import com.hazelcast.sql.impl.expression.Expression;
@@ -37,6 +36,7 @@ import com.hazelcast.sql.impl.plan.node.PlanNodeSchema;
 import com.hazelcast.sql.impl.schema.Table;
 import com.hazelcast.sql.impl.schema.TableField;
 import com.hazelcast.sql.impl.type.QueryDataType;
+import com.hazelcast.sql.impl.type.QueryDataType.QueryDataTypeField;
 import org.apache.calcite.plan.ConventionTraitDef;
 import org.apache.calcite.plan.HazelcastRelOptCluster;
 import org.apache.calcite.plan.RelOptCluster;
@@ -127,6 +127,9 @@ public final class OptUtils {
      * @return Logical input.
      */
     public static RelNode toPhysicalInput(RelNode rel) {
+        if (rel == null) {
+            return null;
+        }
         return RelOptRule.convert(rel, toPhysicalConvention(rel.getTraitSet()));
     }
 
@@ -285,9 +288,9 @@ public final class OptUtils {
     @SuppressWarnings("unchecked")
     @Nullable
     public static <T> T findMatchingRel(RelNode node, RelOptRuleOperand operandPredicate) {
-        if (node instanceof RelSubset) {
+        if (node instanceof RelSubset subset) {
             RelNode res = null;
-            for (RelNode rel : ((RelSubset) node).getRels()) {
+            for (RelNode rel : subset.getRels()) {
                 if (operandPredicate.matches(rel)) {
                     if (res != null) {
                         throw new RuntimeException("multiple matches found");
@@ -321,8 +324,7 @@ public final class OptUtils {
 
     public static RexVisitor<Expression<?>> createRexToExpressionVisitor(
             PlanNodeFieldTypeProvider schema,
-            QueryParameterMetadata parameterMetadata
-    ) {
+            QueryParameterMetadata parameterMetadata) {
         return new RexToExpressionVisitor(schema, parameterMetadata);
     }
 
@@ -348,49 +350,41 @@ public final class OptUtils {
         }
     }
 
-    private static RelDataType convertCustomType(QueryDataType fieldType, RelDataTypeFactory typeFactory) {
-        final Map<String, RelDataType> dataTypeMap = new HashMap<>();
-        convertCustomTypeRecursively(fieldType, typeFactory, dataTypeMap);
-        return dataTypeMap.get(fieldType.getObjectTypeName());
+    private static RelDataType convertCustomType(QueryDataType type, RelDataTypeFactory typeFactory) {
+        Map<String, HazelcastObjectType> typeMap = new HashMap<>();
+        HazelcastObjectType converted = convertCustomType(type, typeFactory, typeMap);
+        HazelcastObjectType.finalizeFields(typeMap.values());
+        return converted;
     }
 
-    private static void convertCustomTypeRecursively(
+    private static HazelcastObjectType convertCustomType(
             QueryDataType type,
             RelDataTypeFactory typeFactory,
-            Map<String, RelDataType> typeMap
+            Map<String, HazelcastObjectType> typeMap
     ) {
-        if (typeMap.get(type.getObjectTypeName()) != null) {
-            return;
+        HazelcastObjectType converted = typeMap.get(type.getObjectTypeName());
+        if (converted != null) {
+            return converted;
         }
 
-        final List<HazelcastObjectType.Field> fields = new ArrayList<>();
-        final HazelcastObjectTypeReference typeRef = new HazelcastObjectTypeReference();
-        typeMap.put(type.getObjectTypeName(), typeRef);
+        converted = new HazelcastObjectType(type.getObjectTypeName());
+        typeMap.put(type.getObjectTypeName(), converted);
 
         for (int i = 0; i < type.getObjectFields().size(); i++) {
-            final String fieldName = type.getObjectFields().get(i).getName();
-            final QueryDataType fieldType = type.getObjectFields().get(i).getDataType();
+            QueryDataTypeField field = type.getObjectFields().get(i);
+            QueryDataType fieldType = field.getType();
 
-            RelDataType fieldRelDataType;
-            if (fieldType.isCustomType()) {
-                fieldRelDataType = typeMap.get(fieldType.getObjectTypeName());
-                if (fieldRelDataType == null) {
-                    convertCustomTypeRecursively(fieldType, typeFactory, typeMap);
-                    fieldRelDataType = typeMap.get(fieldType.getObjectTypeName());
-                }
-            } else {
-                fieldRelDataType = typeFactory.createTypeWithNullability(
-                        typeFactory.createSqlType(HazelcastTypeUtils.toCalciteType(fieldType)),
-                        true
-                );
-            }
-
-            fields.add(new HazelcastObjectType.Field(fieldName, i, fieldRelDataType));
+            RelDataType convertedFieldType = fieldType.isCustomType()
+                    ? convertCustomType(fieldType, typeFactory, typeMap)
+                    : typeFactory.createTypeWithNullability(
+                            typeFactory.createSqlType(HazelcastTypeUtils.toCalciteType(fieldType)),
+                            true
+                    );
+            converted.addField(new HazelcastObjectType.Field(field.getName(), i, convertedFieldType));
         }
 
-        typeRef.setOriginal(new HazelcastObjectType(type.getObjectTypeName(), fields));
+        return converted;
     }
-
 
     private static RelDataType convertOtherType(QueryDataType fieldType) {
         switch (fieldType.getTypeFamily()) {
@@ -434,7 +428,7 @@ public final class OptUtils {
             return null;
         }
 
-        int keyIndex = findKeyIndex(table.getTarget());
+        int keyIndex = findPrimaryKeyIndex(table.getTarget());
         switch (filter.getKind()) {
             // WHERE __key = true, calcite simplifies to just `WHERE __key`
             case INPUT_REF: {
@@ -462,13 +456,19 @@ public final class OptUtils {
         }
     }
 
-    public static int findKeyIndex(Table table) {
+    /**
+     * Returns the index of the primary key field in the given `table`. If
+     * there's no primary key, or if there's more than ona primary key field, it
+     * returns -1.
+     */
+    public static int findPrimaryKeyIndex(Table table) {
         List<String> primaryKey = SqlConnectorUtil.getJetSqlConnector(table).getPrimaryKey(table);
-        // just single field keys supported at the moment
-        assert primaryKey.size() == 1;
+        if (primaryKey.size() != 1) {
+            return -1;
+        }
 
         int keyIndex = table.getFieldIndex(primaryKey.get(0));
-        assert keyIndex > -1;
+        assert keyIndex >= 0;
 
         return keyIndex;
     }
@@ -565,7 +565,7 @@ public final class OptUtils {
         for (int i = 0; i < calcProgram.getProjectList().size(); i++) {
             int expressionIndex = calcProgram.getProjectList().get(i).getIndex();
             RexNode expr = calcProgram.getExprList().get(expressionIndex);
-            if (expr instanceof RexInputRef && ((RexInputRef) expr).getIndex() == inputFieldIndex) {
+            if (expr instanceof RexInputRef ref && ref.getIndex() == inputFieldIndex) {
                 return i;
             }
         }

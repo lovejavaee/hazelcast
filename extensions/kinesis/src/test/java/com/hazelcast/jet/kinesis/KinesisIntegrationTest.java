@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,6 @@
 
 package com.hazelcast.jet.kinesis;
 
-import com.amazonaws.SDKGlobalConfiguration;
-import com.amazonaws.services.kinesis.AmazonKinesisAsync;
-import com.amazonaws.services.kinesis.model.PutRecordsResult;
-import com.amazonaws.services.kinesis.model.Shard;
 import com.hazelcast.function.SupplierEx;
 import com.hazelcast.jet.JetException;
 import com.hazelcast.jet.Job;
@@ -34,7 +30,6 @@ import com.hazelcast.jet.pipeline.Sink;
 import com.hazelcast.jet.pipeline.StreamSource;
 import com.hazelcast.jet.pipeline.WindowDefinition;
 import com.hazelcast.jet.pipeline.test.AssertionCompletedException;
-import com.hazelcast.jet.test.SerialTest;
 import com.hazelcast.test.annotation.NightlyTest;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -43,6 +38,9 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.containers.localstack.LocalStackContainer.Service;
+import software.amazon.awssdk.services.kinesis.KinesisAsyncClient;
+import software.amazon.awssdk.services.kinesis.model.PutRecordsResponse;
+import software.amazon.awssdk.services.kinesis.model.Shard;
 
 import java.util.Collections;
 import java.util.List;
@@ -53,13 +51,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
-import static com.amazonaws.services.kinesis.model.ShardIteratorType.AFTER_SEQUENCE_NUMBER;
-import static com.amazonaws.services.kinesis.model.ShardIteratorType.AT_SEQUENCE_NUMBER;
-import static com.amazonaws.services.kinesis.model.ShardIteratorType.AT_TIMESTAMP;
-import static com.amazonaws.services.kinesis.model.ShardIteratorType.LATEST;
-import static com.amazonaws.services.kinesis.model.ShardIteratorType.TRIM_HORIZON;
+import static com.hazelcast.jet.TestedVersions.LOCALSTACK_IMAGE;
 import static com.hazelcast.jet.aggregate.AggregateOperations.counting;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.peel;
+import static com.hazelcast.jet.core.JobAssertions.assertThat;
+import static com.hazelcast.internal.util.ExceptionUtil.isOrHasCause;
+import static com.hazelcast.jet.impl.util.JetExceptionUtil.peel;
 import static com.hazelcast.jet.pipeline.test.Assertions.assertCollectedEventually;
 import static com.hazelcast.test.DockerTestUtil.assumeDockerEnabled;
 import static java.util.concurrent.Executors.newFixedThreadPool;
@@ -68,15 +64,21 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-import static org.testcontainers.utility.DockerImageName.parse;
+import static software.amazon.awssdk.services.kinesis.model.ShardIteratorType.AFTER_SEQUENCE_NUMBER;
+import static software.amazon.awssdk.services.kinesis.model.ShardIteratorType.AT_SEQUENCE_NUMBER;
+import static software.amazon.awssdk.services.kinesis.model.ShardIteratorType.AT_TIMESTAMP;
+import static software.amazon.awssdk.services.kinesis.model.ShardIteratorType.LATEST;
+import static software.amazon.awssdk.services.kinesis.model.ShardIteratorType.TRIM_HORIZON;
 
+@SuppressWarnings("StaticVariableName")
+@Category(NightlyTest.class)
 public class KinesisIntegrationTest extends AbstractKinesisTest {
 
     public static LocalStackContainer localStack;
-    public static final AtomicInteger threadCounter = new AtomicInteger(0);
+    public static final AtomicInteger threadCounter = new AtomicInteger();
 
     private static AwsConfig AWS_CONFIG;
-    private static AmazonKinesisAsync KINESIS;
+    private static KinesisAsyncClient KINESIS;
     private static KinesisTestHelper HELPER;
     private static boolean useRealKinesis;
 
@@ -86,30 +88,23 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
 
     @BeforeClass
     public static void beforeClass() {
-        assumeDockerEnabled();
-        //Newer version of localstack with arm64 support fails in KinesisIntegrationTest
-        assumeNoArm64Architecture();
-
-        localStack = new LocalStackContainer(parse("localstack/localstack")
-                .withTag("0.12.3"))
-                .withServices(Service.KINESIS);
-        localStack.start();
-
         // To run with real kinesis AWS credentials need be available
         // to be loaded by DefaultAWSCredentialsProviderChain.
         // Keep in mind the real Kinesis is paid service and once you
         // run it you should ensure that cleanup happened correctly.
         useRealKinesis = Boolean.parseBoolean(System.getProperty("run.with.real.kinesis", "false"));
 
-        System.setProperty(SDKGlobalConfiguration.AWS_CBOR_DISABLE_SYSTEM_PROPERTY, "true");
-        // with the jackson versions we use (2.11.x) Localstack doesn't without disabling CBOR
-        // https://github.com/localstack/localstack/issues/3208
-
         if (useRealKinesis) {
             AWS_CONFIG = new AwsConfig()
                     .withEndpoint("https://kinesis.us-east-1.amazonaws.com")
                     .withRegion("us-east-1");
         } else {
+            assumeDockerEnabled();
+
+            localStack = new LocalStackContainer(LOCALSTACK_IMAGE)
+                    .withServices(Service.KINESIS);
+            localStack.start();
+
             AWS_CONFIG = new AwsConfig()
                     .withEndpoint("http://" + localStack.getHost() + ":" + localStack.getMappedPort(4566))
                     .withRegion(localStack.getRegion())
@@ -122,7 +117,7 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
     @AfterClass
     public static void afterClass() {
         if (KINESIS != null) {
-            KINESIS.shutdown();
+            KINESIS.close();
         }
 
         if (localStack != null) {
@@ -131,7 +126,6 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
     }
 
     @Test
-    @Category(SerialTest.class)
     public void timestampsAndWatermarks() {
         HELPER.createStream(1);
 
@@ -153,12 +147,11 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
         } catch (CompletionException ce) {
             Throwable cause = peel(ce);
             assertInstanceOf(JetException.class, cause);
-            assertInstanceOf(AssertionCompletedException.class, cause.getCause());
+            assertTrue(isOrHasCause(cause, AssertionCompletedException.class));
         }
     }
 
     @Test
-    @Category(SerialTest.class)
     public void customProjection() {
         HELPER.createStream(1);
 
@@ -169,9 +162,9 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
             Pipeline pipeline = Pipeline.create();
             StreamSource<String> source = kinesisSource()
                     .withProjectionFn((r, s) -> {
-                        byte[] payload = new byte[r.getData().remaining()];
-                        r.getData().get(payload);
-                        return r.getSequenceNumber();
+                        byte[] payload = new byte[r.data().asByteBuffer().remaining()];
+                        r.data().asByteBuffer().get(payload);
+                        return r.sequenceNumber();
                     })
                     .build();
             pipeline.readFrom(source)
@@ -188,12 +181,12 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
         } catch (CompletionException ce) {
             Throwable cause = peel(ce);
             assertTrue(cause instanceof JetException);
-            assertTrue(cause.getCause() instanceof AssertionCompletedException);
+            assertTrue(isOrHasCause(cause, AssertionCompletedException.class));
         }
     }
 
     @Test
-    public void testCustomSinkExecutorService() throws Exception {
+    public void testCustomSinkExecutorService() {
         HELPER.createStream(1);
 
         threadCounter.set(0);
@@ -205,7 +198,7 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
                 .withExecutorServiceSupplier(sinkExecutorSupplier)
                 .build();
 
-        sendMessages(MESSAGES, sink);
+        sendMessages(messages(0, MESSAGES), sink);
         assertTrueEventually(() -> assertEquals(MEMBER_COUNT, threadCounter.get()));
 
         try {
@@ -224,24 +217,23 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
         } catch (CompletionException ce) {
             Throwable cause = peel(ce);
             assertTrue(cause instanceof JetException);
-            assertTrue(cause.getCause() instanceof AssertionCompletedException);
+            assertTrue(isOrHasCause(cause, AssertionCompletedException.class));
         }
     }
 
     @Test
-    @Category(SerialTest.class)
     public void staticStream_1Shard() {
         staticStream(1);
     }
 
     @Test
-    @Category({SerialTest.class, NightlyTest.class})
+    @Category(NightlyTest.class)
     public void staticStream_2Shards() {
         staticStream(2);
     }
 
     @Test
-    @Category({SerialTest.class, NightlyTest.class})
+    @Category(NightlyTest.class)
     public void staticStream_50Shards() {
         staticStream(50);
     }
@@ -256,7 +248,7 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
     }
 
     @Test
-    @Category({SerialTest.class, NightlyTest.class})
+    @Category(NightlyTest.class)
     public void dynamicStream_2Shards_mergeBeforeData() {
         HELPER.createStream(2);
 
@@ -275,13 +267,12 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
     }
 
     @Test
-    @Category(SerialTest.class)
     public void dynamicStream_2Shards_mergeDuringData() {
         dynamicStream_mergesDuringData(2, 1);
     }
 
     @Test
-    @Category({SerialTest.class, NightlyTest.class})
+    @Category(NightlyTest.class)
     public void dynamicStream_50Shards_mergesDuringData() {
         //important to test with more shards than can fit in a single list shards response
         dynamicStream_mergesDuringData(50, 5);
@@ -314,7 +305,7 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
     }
 
     @Test
-    @Category({SerialTest.class, NightlyTest.class})
+    @Category(NightlyTest.class)
     public void dynamicStream_1Shard_splitBeforeData() {
         HELPER.createStream(1);
 
@@ -331,13 +322,12 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
     }
 
     @Test
-    @Category(SerialTest.class)
     public void dynamicStream_1Shard_splitsDuringData() {
         dynamicStream_splitsDuringData(1, 3);
     }
 
     @Test
-    @Category({SerialTest.class, NightlyTest.class})
+    @Category(NightlyTest.class)
     public void dynamicStream_10Shards_splitsDuringData() {
         dynamicStream_splitsDuringData(10, 10);
     }
@@ -367,13 +357,11 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
     }
 
     @Test
-    @Category(SerialTest.class)
     public void restart_staticStream_graceful() {
         restart_staticStream(true);
     }
 
     @Test
-    @Category(SerialTest.class)
     public void restart_staticStream_non_graceful() {
         restart_staticStream(false);
     }
@@ -397,13 +385,12 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
     }
 
     @Test
-    @Category(SerialTest.class)
     public void restart_dynamicStream_graceful() {
         restart_dynamicStream(true);
     }
 
     @Test
-    @Category({SerialTest.class, NightlyTest.class})
+    @Category(NightlyTest.class)
     public void restart_dynamicStream_non_graceful() {
         restart_dynamicStream(false);
     }
@@ -441,7 +428,6 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
     }
 
     @Test
-    @Category(SerialTest.class)
     public void jobsStartedBeforeStreamExists() {
         Map<String, List<String>> expectedMessages = sendMessages(100);
         Job job = hz().getJet().newJob(getPipeline(kinesisSource().build()));
@@ -484,7 +470,7 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
                 .withInitialShardIteratorRule(".*", AT_TIMESTAMP.name(), Long.toString(timestamp))
                 .build();
         Job job = hz().getJet().newJob(getPipeline(source));
-        assertJobStatusEventually(job, JobStatus.RUNNING);
+        assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
 
         //check job has read only records from after the marked time
         assertMessages(expectedMessages(100, 200), true, false);
@@ -506,7 +492,7 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
                 .withInitialShardIteratorRule(".*", LATEST.name(), null)
                 .build();
         Job job = hz().getJet().newJob(getPipeline(source));
-        assertJobStatusEventually(job, JobStatus.RUNNING);
+        assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
 
         // need to be sure that reading the shard has commenced ...
         SECONDS.sleep(3);
@@ -532,7 +518,7 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
                 .withInitialShardIteratorRule(".*", TRIM_HORIZON.name(), null)
                 .build();
         Job job = hz().getJet().newJob(getPipeline(source));
-        assertJobStatusEventually(job, JobStatus.RUNNING);
+        assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
 
         //send some more messages and check that the job reads both old and new records
         HELPER.putRecords(messages(100, 200));
@@ -553,7 +539,7 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
         //start a new job which reads records in its default way
         StreamSource<Map.Entry<String, byte[]>> source = kinesisSource().build();
         Job job = hz().getJet().newJob(getPipeline(source));
-        assertJobStatusEventually(job, JobStatus.RUNNING);
+        assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
 
         //send some more messages and check that the job reads both old and new records
         HELPER.putRecords(messages(100, 200));
@@ -565,15 +551,15 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
         HELPER.createStream(1);
 
         //send out some records, make sure they are in the shard
-        PutRecordsResult putRecordsResult = HELPER.putRecords(messages(0, 100));
+        PutRecordsResponse putRecordsResult = HELPER.putRecords(messages(0, 100));
         Job initialJob = hz().getJet().newJob(getPipeline(kinesisSource().build()));
         assertMessages(expectedMessages(0, 100), true, false);
         initialJob.cancel();
         results.clear();
 
-        String sequenceNumber = putRecordsResult.getRecords().get(50).getSequenceNumber();
+        String sequenceNumber = putRecordsResult.records().get(50).sequenceNumber();
 
-        //start a new job which reads records from the sequence nomber (inclusive)
+        //start a new job which reads records from the sequence number (inclusive)
         StreamSource<Map.Entry<String, byte[]>> source = kinesisSource()
                 .withInitialShardIteratorRule(".*", AT_SEQUENCE_NUMBER.name(), sequenceNumber)
                 .build();
@@ -586,15 +572,15 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
         HELPER.createStream(1);
 
         //send out some records, make sure they are in the shard
-        PutRecordsResult putRecordsResult = HELPER.putRecords(messages(0, 100));
+        PutRecordsResponse putRecordsResult = HELPER.putRecords(messages(0, 100));
         Job initialJob = hz().getJet().newJob(getPipeline(kinesisSource().build()));
         assertMessages(expectedMessages(0, 100), true, false);
         initialJob.cancel();
         results.clear();
 
-        String sequenceNumber = putRecordsResult.getRecords().get(50).getSequenceNumber();
+        String sequenceNumber = putRecordsResult.records().get(50).sequenceNumber();
 
-        //start a new job which reads records from the sequence nomber (inclusive)
+        //start a new job which reads records from the sequence number (inclusive)
         StreamSource<Map.Entry<String, byte[]>> source = kinesisSource()
                 .withInitialShardIteratorRule(".*", AFTER_SEQUENCE_NUMBER.name(), sequenceNumber)
                 .build();
@@ -622,7 +608,7 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
         StreamSource<Map.Entry<String, byte[]>> source = kinesisSource()
                 .withExecutorServiceSupplier(sourceExecutorSupplier).build();
         Job job = hz().getJet().newJob(getPipeline(source));
-        assertJobStatusEventually(job, JobStatus.RUNNING);
+        assertThat(job).eventuallyHasStatus(JobStatus.RUNNING);
 
         // send some more messages and check that the job reads both old and new records
         HELPER.putRecords(messages(100, 200));
@@ -634,10 +620,10 @@ public class KinesisIntegrationTest extends AbstractKinesisTest {
 
     private void assertOpenShards(int count, Shard... excludedShards) {
         assertTrueEventually(() -> {
-            Set<String> openShards = listOpenShards().stream().map(Shard::getShardId).collect(Collectors.toSet());
+            Set<String> openShards = listOpenShards().stream().map(Shard::shardId).collect(Collectors.toSet());
             assertEquals(count, openShards.size());
             for (Shard excludedShard : excludedShards) {
-                assertFalse(openShards.contains(excludedShard.getShardId()));
+                assertFalse(openShards.contains(excludedShard.shardId()));
             }
         });
 

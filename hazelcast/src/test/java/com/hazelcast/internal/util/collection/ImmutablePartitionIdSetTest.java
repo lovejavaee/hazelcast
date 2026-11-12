@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.PrimitiveIterator;
 
@@ -135,5 +136,18 @@ public class ImmutablePartitionIdSetTest {
             assertEquals(i, iterator.nextInt());
             i++;
         }
+    }
+
+    @Test
+    public void test_equals_and_hashCode_between_mutable_and_immutable() {
+        int count = 6;
+        java.util.List<Integer> ids = Arrays.asList(1, 2, 3, 4, 5, 6);
+
+        PartitionIdSet mutableSet = new PartitionIdSet(count, ids);
+        ImmutablePartitionIdSet immutableSet = new ImmutablePartitionIdSet(count, ids);
+
+        assertEquals("Sets with same IDs should be equal", mutableSet, immutableSet);
+        assertEquals("Equality must be symmetric", immutableSet, mutableSet);
+        assertEquals("HashCodes must match", mutableSet.hashCode(), immutableSet.hashCode());
     }
 }

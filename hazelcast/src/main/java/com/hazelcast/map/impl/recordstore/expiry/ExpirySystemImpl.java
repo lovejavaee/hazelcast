@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.hazelcast.config.MapConfig;
 import com.hazelcast.internal.eviction.ClearExpiredRecordsTask;
 import com.hazelcast.internal.eviction.ExpiredKey;
 import com.hazelcast.internal.nearcache.impl.invalidation.InvalidationQueue;
+import com.hazelcast.internal.nio.Disposable;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.util.ExceptionUtil;
 import com.hazelcast.internal.util.MapUtil;
@@ -330,17 +331,18 @@ public class ExpirySystemImpl implements ExpirySystem {
         tryToSendBackupExpiryOp();
 
         if (logger.isFinestEnabled()) {
-            logProgress(maxScannableCount, scannedCount, expiredCount, scanLoopStartNanos);
+            logProgress(maxScannableCount, scannedCount,
+                    expiredCount, scanLoopStartNanos, backup);
         }
     }
 
 
     private void logProgress(int maxScannableCount, int scannedCount,
-                             int expiredCount, long scanLoopStartNanos) {
-        logger.finest(String.format("mapName: %s, partitionId: %d, partitionSize: %d, "
-                        + "maxScannableCount: %d, scannedCount: %d, expiredCount: %d, "
-                        + "remainedCount: %d, scanTookNanos: %d"
-                , recordStore.getName(), recordStore.getPartitionId(), recordStore.size()
+                             int expiredCount, long scanLoopStartNanos, boolean backup) {
+        logger.finest(String.format("mapName=%s, partitionId=%d, backup=%s, partitionSize=%d, "
+                        + "maxScannableCount=%d, scannedCount=%d, expiredCount=%d, "
+                        + "remainedCount=%d, scanTookNanos=%d"
+                , recordStore.getName(), recordStore.getPartitionId(), backup, recordStore.size()
                 , maxScannableCount, scannedCount, expiredCount, expireTimeByKey.size(),
                 (System.nanoTime() - scanLoopStartNanos)));
     }
@@ -374,7 +376,7 @@ public class ExpirySystemImpl implements ExpirySystem {
 
         int scannedCount = 0;
         Iterator<Map.Entry<Data, ExpiryMetadata>> cachedIterator = getOrInitCachedIterator();
-        while (scannedCount++ < MAX_SAMPLE_AT_A_TIME && cachedIterator.hasNext()) {
+        while (scannedCount < MAX_SAMPLE_AT_A_TIME && cachedIterator.hasNext()) {
             Map.Entry<Data, ExpiryMetadata> entry = cachedIterator.next();
             Data key = entry.getKey();
             ExpiryMetadata expiryMetadata = entry.getValue();
@@ -385,6 +387,8 @@ public class ExpirySystemImpl implements ExpirySystem {
                 batchOfExpired.add(key);
                 batchOfExpired.add(expiryReason);
             }
+
+            scannedCount++;
         }
         return scannedCount;
     }
@@ -424,9 +428,10 @@ public class ExpirySystemImpl implements ExpirySystem {
     }
 
     // this method is overridden
+    @Nonnull
     @Override
-    public void destroy() {
-        getOrCreateExpireTimeByKeyMap(false).clear();
+    public Disposable createDisposable() {
+        return () -> getOrCreateExpireTimeByKeyMap(false).clear();
     }
 
     @Override

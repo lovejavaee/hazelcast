@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.hazelcast.cache;
 
+import javax.annotation.Nullable;
 import javax.cache.event.EventType;
 
 /**
@@ -74,7 +75,7 @@ public enum CacheEventType {
     private static final int MAX_TYPE_ID = PARTITION_LOST.type;
     private static final CacheEventType[] CACHED_VALUES = values();
 
-    private int type;
+    private final int type;
 
     CacheEventType(final int type) {
         this.type = type;
@@ -96,14 +97,39 @@ public enum CacheEventType {
     }
 
     /**
+     * Converts a {@link CacheEventType} into JCache {@link EventType}.
+     * <p>This method performs a direct enum-to-enum mapping used by * {@link javax.cache.event.CacheEntryListener}
+     * implementations in the JCache (JSR-107) public API.
+     *
+     * @return the corresponding {@link EventType}, or {@code null} if no mapping exists
+     */
+    @Nullable
+    public EventType toJCacheEventType() {
+        return switch (this) {
+            case CREATED -> EventType.CREATED;
+            case UPDATED -> EventType.UPDATED;
+            case REMOVED -> EventType.REMOVED;
+            case EXPIRED -> EventType.EXPIRED;
+            // not standard JCache event types
+            case EVICTED,
+                 INVALIDATED,
+                 COMPLETED,
+                 EXPIRATION_TIME_UPDATED,
+                 PARTITION_LOST -> null;
+        };
+    }
+
+    /**
      * Converts a {@link CacheEventType} into {@link EventType}.
      * Just an Enum type conversion takes place.
      *
      * @param cacheEventType a {@link CacheEventType}.
      * @return same event of {@link EventType} enum.
+     *
+     * @deprecated Use {@link #toJCacheEventType()} instead.
      */
+    @Deprecated(since = "6.0", forRemoval = true)
     public static EventType convertToEventType(CacheEventType cacheEventType) {
         return EventType.valueOf(cacheEventType.name());
     }
-
 }

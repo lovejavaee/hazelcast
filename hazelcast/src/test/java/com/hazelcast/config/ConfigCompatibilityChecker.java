@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,11 +19,13 @@ package com.hazelcast.config;
 import com.hazelcast.config.CacheSimpleConfig.ExpiryPolicyFactoryConfig;
 import com.hazelcast.config.CacheSimpleConfig.ExpiryPolicyFactoryConfig.DurationConfig;
 import com.hazelcast.config.CacheSimpleConfig.ExpiryPolicyFactoryConfig.TimedExpiryPolicyFactoryConfig;
+import com.hazelcast.config.cp.CPMapConfig;
 import com.hazelcast.config.tpc.TpcConfig;
 import com.hazelcast.config.cp.CPSubsystemConfig;
 import com.hazelcast.config.cp.FencedLockConfig;
 import com.hazelcast.config.cp.RaftAlgorithmConfig;
 import com.hazelcast.config.cp.SemaphoreConfig;
+import com.hazelcast.config.security.AccessControlServiceConfig;
 import com.hazelcast.config.security.JaasAuthenticationConfig;
 import com.hazelcast.config.security.KerberosAuthenticationConfig;
 import com.hazelcast.config.security.KerberosIdentityConfig;
@@ -32,6 +34,7 @@ import com.hazelcast.config.security.RealmConfig;
 import com.hazelcast.config.security.TlsAuthenticationConfig;
 import com.hazelcast.config.security.TokenIdentityConfig;
 import com.hazelcast.config.security.UsernamePasswordIdentityConfig;
+import com.hazelcast.config.vector.VectorCollectionConfig;
 import com.hazelcast.core.HazelcastException;
 import com.hazelcast.instance.EndpointQualifier;
 import com.hazelcast.internal.config.AliasedDiscoveryConfigUtils;
@@ -53,7 +56,6 @@ import static com.hazelcast.internal.config.AliasedDiscoveryConfigUtils.aliasedD
 import static com.hazelcast.internal.config.ConfigUtils.lookupByPattern;
 import static java.text.MessageFormat.format;
 import static java.util.Collections.singletonMap;
-import static org.codehaus.groovy.runtime.InvokerHelper.asList;
 import static org.junit.Assert.assertEquals;
 
 public class ConfigCompatibilityChecker {
@@ -110,7 +112,6 @@ public class ConfigCompatibilityChecker {
         checkCompatibleConfigs("reliable topic", c1, c2, c1.getReliableTopicConfigs(), c2.getReliableTopicConfigs(),
                 new ReliableTopicConfigChecker());
         checkCompatibleConfigs("cache", c1, c2, c1.getCacheConfigs(), c2.getCacheConfigs(), new CacheSimpleConfigChecker());
-        checkCompatibleConfigs("executor", c1, c2, c1.getExecutorConfigs(), c2.getExecutorConfigs(), new ExecutorConfigChecker());
         checkCompatibleConfigs("durable executor", c1, c2, c1.getDurableExecutorConfigs(), c2.getDurableExecutorConfigs(),
                 new DurableExecutorConfigChecker());
         checkCompatibleConfigs("scheduled executor", c1, c2, c1.getScheduledExecutorConfigs(), c2.getScheduledExecutorConfigs(),
@@ -145,7 +146,10 @@ public class ConfigCompatibilityChecker {
                 new DataConnectionConfigChecker());
         checkCompatibleConfigs("tpc", c1, c2, singletonMap("", c1.getTpcConfig()),
                 singletonMap("", c2.getTpcConfig()), new TpcConfigChecker());
-
+        checkCompatibleConfigs("user-code-namespaces", c1, c2, singletonMap("", c1.getNamespacesConfig()),
+                singletonMap("", c2.getNamespacesConfig()), new UserCodeNamespacesConfigChecker());
+        checkCompatibleConfigs("vector collections", c1.getVectorCollectionConfigs(), c2.getVectorCollectionConfigs(),
+                new VectorCollectionConfigsChecker());
         return true;
     }
 
@@ -720,6 +724,13 @@ public class ConfigCompatibilityChecker {
         }
     }
 
+    private static class UserCodeNamespacesConfigChecker extends ConfigChecker<UserCodeNamespacesConfig> {
+        @Override
+        boolean check(UserCodeNamespacesConfig c1, UserCodeNamespacesConfig c2) {
+            return nullSafeEqual(c1, c2);
+        }
+    }
+
 
     public static class CPSubsystemConfigChecker extends ConfigChecker<CPSubsystemConfig> {
 
@@ -741,7 +752,9 @@ public class ConfigCompatibilityChecker {
                             && c1.isPersistenceEnabled() == c2.isPersistenceEnabled()
                             && c1.getBaseDir().getAbsoluteFile().equals(c2.getBaseDir().getAbsoluteFile())
                             && c1.getDataLoadTimeoutSeconds() == c2.getDataLoadTimeoutSeconds()
-                            && c1.getCPMemberPriority() == c2.getCPMemberPriority();
+                            && c1.getCPMemberPriority() == c2.getCPMemberPriority()
+                            && c1.getCPMapLimit() == c2.getCPMapLimit()
+                            && c1.isAutoStepDownWhenLeader() == c2.isAutoStepDownWhenLeader();
 
             if (!cpSubsystemConfigValuesEqual) {
                 return false;
@@ -795,6 +808,22 @@ public class ConfigCompatibilityChecker {
                     return false;
                 }
                 if (e.getValue().getLockAcquireLimit() != s2.getLockAcquireLimit()) {
+                    return false;
+                }
+            }
+
+            Map<String, CPMapConfig> maps1 = c1.getCpMapConfigs();
+
+            if (maps1.size() != c2.getCpMapConfigs().size()) {
+                return false;
+            }
+
+            for (Entry<String, CPMapConfig> e : maps1.entrySet()) {
+                CPMapConfig c2CPMapConfig = c2.findCPMapConfig(e.getKey());
+                if (c2CPMapConfig == null) {
+                    return false;
+                }
+                if (e.getValue().getMaxSizeMb() != c2CPMapConfig.getMaxSizeMb()) {
                     return false;
                 }
             }
@@ -872,7 +901,9 @@ public class ConfigCompatibilityChecker {
                 return false;
             }
 
-            return c1.getStatementTimeoutMillis() == c2.getStatementTimeoutMillis();
+            return c1.getStatementTimeoutMillis() == c2.getStatementTimeoutMillis()
+                    && c1.isCatalogPersistenceEnabled() == c2.isCatalogPersistenceEnabled()
+                    && nullSafeEqual(c1.getJavaReflectionFilterConfig(), c2.getJavaReflectionFilterConfig());
         }
 
         @Override
@@ -989,6 +1020,7 @@ public class ConfigCompatibilityChecker {
                     && nullSafeEqual(c1.getInMemoryFormat(), c2.getInMemoryFormat())
                     && nullSafeEqual(c1.getMetadataPolicy(), c2.getMetadataPolicy())
                     && nullSafeEqual(c1.isStatisticsEnabled(), c2.isStatisticsEnabled())
+                    && nullSafeEqual(c1.getOversizedEntryThresholdBytes(), c2.getOversizedEntryThresholdBytes())
                     && nullSafeEqual(c1.getCacheDeserializedValues(), c2.getCacheDeserializedValues())
                     && nullSafeEqual(c1.getBackupCount(), c2.getBackupCount())
                     && nullSafeEqual(c1.getAsyncBackupCount(), c2.getAsyncBackupCount())
@@ -1243,7 +1275,7 @@ public class ConfigCompatibilityChecker {
             Set<EndpointQualifier> t1EndpointQualifiers = t1.getEndpointConfigs().keySet();
             Set<EndpointQualifier> t2EndpointQualifiers = t2.getEndpointConfigs().keySet();
             isCollectionCompatible(t1EndpointQualifiers, t2EndpointQualifiers,
-                    new ConfigChecker<EndpointQualifier>() {
+                    new ConfigChecker<>() {
                         @Override
                         boolean check(EndpointQualifier t1, EndpointQualifier t2) {
                             return t1.equals(t2);
@@ -1373,8 +1405,7 @@ public class ConfigCompatibilityChecker {
                     && (c1.getSocketKeepCount() == c2.getSocketKeepCount())
                     && nullSafeEqual(c1.getTpcSocketConfig(), c2.getTpcSocketConfig());
 
-            if (c1 instanceof ServerSocketEndpointConfig) {
-                ServerSocketEndpointConfig s1 = (ServerSocketEndpointConfig) c1;
+            if (c1 instanceof ServerSocketEndpointConfig s1) {
                 ServerSocketEndpointConfig s2 = (ServerSocketEndpointConfig) c2;
                 return compatible && nullSafeEqual(s1.getPort(), s2.getPort())
                         && nullSafeEqual(s1.getPortCount(), s2.getPortCount())
@@ -1691,6 +1722,7 @@ public class ConfigCompatibilityChecker {
         boolean check(SecurityConfig c1, SecurityConfig c2) {
             return c1 == c2 || !(c1 == null || c2 == null)
                     && nullSafeEqual(c1.isEnabled(), c2.isEnabled())
+                    && nullSafeEqual(c1.isPermissionPriorityGrant(), c2.isPermissionPriorityGrant())
                     && (c1.getOnJoinPermissionOperation() == c2.getOnJoinPermissionOperation())
                     && nullSafeEqual(c1.getClientBlockUnmappedActions(), c2.getClientBlockUnmappedActions())
                     && nullSafeEqual(c1.getClientRealm(), c2.getClientRealm())
@@ -1729,7 +1761,15 @@ public class ConfigCompatibilityChecker {
                     && isCompatible(c1.getUsernamePasswordIdentityConfig(), c2.getUsernamePasswordIdentityConfig())
                     && isCompatible(c1.getTokenIdentityConfig(), c2.getTokenIdentityConfig())
                     && isCompatible(c1.getKerberosIdentityConfig(), c2.getKerberosIdentityConfig())
+                    && isCompatible(c1.getAccessControlServiceConfig(), c2.getAccessControlServiceConfig())
                     ;
+        }
+
+        private static boolean isCompatible(AccessControlServiceConfig c1,
+                AccessControlServiceConfig c2) {
+            return c1 == c2 || (c1 != null && c2 != null
+                    && nullSafeEqual(c1.getFactoryClassName(), c2.getFactoryClassName())
+                    && nullSafeEqual(c1.getProperties(), c2.getProperties()));
         }
 
         private static boolean isCompatible(UsernamePasswordIdentityConfig c1, UsernamePasswordIdentityConfig c2) {
@@ -1851,8 +1891,8 @@ public class ConfigCompatibilityChecker {
                 return false;
             }
 
-            List<PermissionConfig> configs1 = asList(c1.toArray());
-            List<PermissionConfig> configs2 = asList(c2.toArray());
+            List<PermissionConfig> configs1 = List.copyOf(c1);
+            Set<PermissionConfig> configs2 = Set.copyOf(c2);
 
             for (PermissionConfig a : configs1) {
                 if (!configs2.contains(a)) {
@@ -1977,6 +2017,14 @@ public class ConfigCompatibilityChecker {
         boolean check(PartitioningAttributeConfig c1, PartitioningAttributeConfig c2) {
             return c1 == c2 || !(c1 == null || c2 == null)
                     && nullSafeEqual(c1.getAttributeName(), c2.getAttributeName());
+        }
+    }
+
+
+    private static class VectorCollectionConfigsChecker extends ConfigChecker<Map<String, VectorCollectionConfig>> {
+        @Override
+        boolean check(Map<String, VectorCollectionConfig> t1, Map<String, VectorCollectionConfig> t2) {
+            return Objects.equals(t1, t2);
         }
     }
 

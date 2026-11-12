@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,13 +20,11 @@ import com.hazelcast.aggregation.Aggregators;
 import com.hazelcast.client.test.TestHazelcastFactory;
 import com.hazelcast.config.Config;
 import com.hazelcast.config.IndexType;
-import com.hazelcast.core.EntryEvent;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.internal.serialization.SerializationService;
 import com.hazelcast.internal.serialization.impl.DefaultSerializationServiceBuilder;
-import com.hazelcast.map.impl.querycache.utils.Employee;
-import com.hazelcast.map.listener.EntryAddedListener;
+import com.hazelcast.map.listener.NoopMapListener;
 import com.hazelcast.projection.Projections;
 import com.hazelcast.query.PagingPredicate;
 import com.hazelcast.query.PartitionPredicate;
@@ -111,7 +109,7 @@ public class PagingPredicateTest extends HazelcastTestSupport {
 
         int value = 9;
         Set<Integer> whole = new HashSet<>(size);
-        while (keySet.size() > 0) {
+        while (!keySet.isEmpty()) {
             for (Integer integer : keySet) {
                 assertTrue(integer > value);
                 value = integer;
@@ -124,7 +122,7 @@ public class PagingPredicateTest extends HazelcastTestSupport {
         PagingPredicate<Integer, Integer> predicate2 = Predicates.pagingPredicate(pageSize);
         value = 9;
         keySet = map2.localKeySet(predicate2);
-        while (keySet.size() > 0) {
+        while (!keySet.isEmpty()) {
             for (Integer integer : keySet) {
                 assertTrue(integer > value);
                 value = integer;
@@ -160,7 +158,7 @@ public class PagingPredicateTest extends HazelcastTestSupport {
         PagingPredicate<Integer, Integer> predicate = Predicates.pagingPredicate(pageSize);
 
         Collection<Integer> values = map.values(predicate);
-        while (values.size() > 0) {
+        while (!values.isEmpty()) {
             assertEquals(pageSize, values.size());
             set.addAll(values);
 
@@ -174,8 +172,8 @@ public class PagingPredicateTest extends HazelcastTestSupport {
     @Test
     public void testPagingWithFilteringAndComparator() {
         Predicate<Integer, Integer> lessEqual = Predicates.lessEqual("this", 8);
-        PagingPredicate<Integer, Integer> predicate
-                = Predicates.pagingPredicate(lessEqual, new TestComparator(false, IterationType.VALUE), pageSize);
+        PagingPredicate<Integer, Integer> predicate =
+                Predicates.pagingPredicate(lessEqual, new TestComparator(false, IterationType.VALUE), pageSize);
 
         Collection<Integer> values = map.values(predicate);
         assertIterableEquals(values, 8, 7, 6, 5, 4);
@@ -328,8 +326,9 @@ public class PagingPredicateTest extends HazelcastTestSupport {
             map.set(i, i);
         }
 
-        int resultSize = map.entrySet(new PagingPredicateImpl<Integer, Integer>(Predicates.equal("this", size), pageSize) {
+        int resultSize = map.entrySet(new PagingPredicateImpl<>(Predicates.equal("this", size), pageSize) {
             @Override
+            @SuppressWarnings("rawtypes")
             public boolean apply(Map.Entry mapEntry) {
                 fail("full scan is not expected");
                 return false;
@@ -424,7 +423,7 @@ public class PagingPredicateTest extends HazelcastTestSupport {
 
         map.addIndex(IndexType.SORTED, "id");
 
-        Predicate innerPredicate = Predicates.lessThan("id", 2);
+        var innerPredicate = Predicates.lessThan("id", 2);
         PagingPredicate<Integer, Employee> predicate = Predicates.pagingPredicate(innerPredicate, 2);
 
         Collection<Employee> values;
@@ -545,43 +544,43 @@ public class PagingPredicateTest extends HazelcastTestSupport {
     // Paging predicate validation tests
     @Test(expected = IllegalArgumentException.class)
     public void testAddLocalEntryListenerThrowsWithPagingPredicate() {
-        map.addLocalEntryListener(new NoopMapListener(), PAGING_PREDICATE, true);
+        map.addLocalEntryListener(new NoopMapListener<>(), PAGING_PREDICATE, true);
     }
 
     @Test(expected = IllegalArgumentException.class)
     public void testAddLocalEntryListenerThrowsWithPredicateIncludingPagingPredicate() {
-        map.addLocalEntryListener(new NoopMapListener(), PREDICATE_INCLUDING_PAGING_PREDICATE, true);
+        map.addLocalEntryListener(new NoopMapListener<>(), PREDICATE_INCLUDING_PAGING_PREDICATE, true);
     }
 
     @Test(expected = IllegalArgumentException.class)
     public void testAddLocalEntryListenerWithKeyThrowsWithPagingPredicate() {
-        map.addLocalEntryListener(new NoopMapListener(), PAGING_PREDICATE, 2, true);
+        map.addLocalEntryListener(new NoopMapListener<>(), PAGING_PREDICATE, 2, true);
     }
 
     @Test(expected = IllegalArgumentException.class)
     public void testAddLocalEntryListenerWithKeyThrowsWithPredicateIncludingPagingPredicate() {
-        map.addLocalEntryListener(new NoopMapListener(), PREDICATE_INCLUDING_PAGING_PREDICATE, 2,
+        map.addLocalEntryListener(new NoopMapListener<>(), PREDICATE_INCLUDING_PAGING_PREDICATE, 2,
                 true);
     }
 
     @Test(expected = IllegalArgumentException.class)
     public void testAddEntryListenerThrowsWithPagingPredicate() {
-        map.addEntryListener(new NoopMapListener(), PAGING_PREDICATE, true);
+        map.addEntryListener(new NoopMapListener<>(), PAGING_PREDICATE, true);
     }
 
     @Test(expected = IllegalArgumentException.class)
     public void testAddEntryListenerThrowsWithPredicateIncludingPagingPredicate() {
-        map.addEntryListener(new NoopMapListener(), PREDICATE_INCLUDING_PAGING_PREDICATE, true);
+        map.addEntryListener(new NoopMapListener<>(), PREDICATE_INCLUDING_PAGING_PREDICATE, true);
     }
 
     @Test(expected = IllegalArgumentException.class)
     public void testAddEntryListenerWithKeyThrowsWithPagingPredicate() {
-        map.addEntryListener(new NoopMapListener(), PAGING_PREDICATE, 2, true);
+        map.addEntryListener(new NoopMapListener<>(), PAGING_PREDICATE, 2, true);
     }
 
     @Test(expected = IllegalArgumentException.class)
     public void testAddEntryListenerWithKeyThrowsWithPredicateIncludingPagingPredicate() {
-        map.addEntryListener(new NoopMapListener(), PREDICATE_INCLUDING_PAGING_PREDICATE, 2, true);
+        map.addEntryListener(new NoopMapListener<>(), PREDICATE_INCLUDING_PAGING_PREDICATE, 2, true);
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -616,12 +615,12 @@ public class PagingPredicateTest extends HazelcastTestSupport {
 
     @Test(expected = IllegalArgumentException.class)
     public void testGetQueryCacheWithListenerThrowsWithPagingPredicate() {
-        map.getQueryCache("name", new NoopMapListener(), PAGING_PREDICATE, true);
+        map.getQueryCache("name", new NoopMapListener<>(), PAGING_PREDICATE, true);
     }
 
     @Test(expected = IllegalArgumentException.class)
     public void testGetQueryCacheWithListenerThrowsWithPredicateIncludingPagingPredicate() {
-        map.getQueryCache("name", new NoopMapListener(), PREDICATE_INCLUDING_PAGING_PREDICATE, true);
+        map.getQueryCache("name", new NoopMapListener<>(), PREDICATE_INCLUDING_PAGING_PREDICATE, true);
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -694,13 +693,7 @@ public class PagingPredicateTest extends HazelcastTestSupport {
 
     }
 
-    private static class NoopMapListener implements EntryAddedListener<Integer, Integer> {
-        @Override
-        public void entryAdded(EntryEvent<Integer, Integer> event) {
-            // noop
-        }
-    }
-
+    @SuppressWarnings("unused")
     private static class BaseEmployee implements Serializable {
 
         public static final int MAX_AGE = 75;
@@ -754,8 +747,8 @@ public class PagingPredicateTest extends HazelcastTestSupport {
 
         @Override
         public boolean equals(Object obj) {
-            if (obj instanceof Employee) {
-                return id == ((Employee) obj).getId();
+            if (obj instanceof Employee employee) {
+                return id == employee.getId();
             }
             return false;
         }
@@ -787,6 +780,7 @@ public class PagingPredicateTest extends HazelcastTestSupport {
     }
 
     private static class EmployeeIdComparator implements Comparator<Employee> {
+        @Override
         public int compare(Employee e1, Employee e2) {
             return e1.getId() - e2.getId();
         }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,10 +33,9 @@ import com.hazelcast.internal.services.RemoteService;
 import com.hazelcast.internal.services.SplitBrainProtectionAwareService;
 import com.hazelcast.internal.services.StatisticsAwareService;
 import com.hazelcast.internal.util.ConstructorFunction;
-import com.hazelcast.internal.util.Memoizer;
+import com.hazelcast.internal.util.MappingMemoizer;
 import com.hazelcast.internal.util.UuidUtil;
 import com.hazelcast.spi.impl.NodeEngine;
-import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.spi.properties.ClusterProperty;
 
 import java.util.Collections;
@@ -51,6 +50,7 @@ import java.util.concurrent.ConcurrentMap;
 import static com.hazelcast.internal.metrics.MetricDescriptorConstants.PNCOUNTER_PREFIX;
 import static com.hazelcast.internal.metrics.impl.ProviderHelper.provide;
 import static com.hazelcast.internal.util.ConcurrencyUtil.getOrPutSynchronized;
+import static com.hazelcast.internal.util.Memoizers.mappingMemoizer;
 
 /**
  * Service responsible for {@link PNCounter} proxies and replication operation.
@@ -66,7 +66,7 @@ public class PNCounterService implements ManagedService, RemoteService, CRDTRepl
 
     /** Constructor function for counter implementations */
     private final ConstructorFunction<String, PNCounterImpl> counterConstructorFn =
-            new ConstructorFunction<String, PNCounterImpl>() {
+            new ConstructorFunction<>() {
                 @Override
                 public PNCounterImpl createNew(String name) {
                     if (isShuttingDown) {
@@ -78,13 +78,13 @@ public class PNCounterService implements ManagedService, RemoteService, CRDTRepl
             };
 
     /** Cache for split brain protection config names */
-    private final Memoizer<String, Object> splitBrainProtectionConfigCache = new Memoizer<>(
-        new ConstructorFunction<String, Object>() {
+    private final MappingMemoizer<String, Object> splitBrainProtectionConfigCache = mappingMemoizer(
+        new ConstructorFunction<>() {
             @Override
             public Object createNew(String name) {
                 final PNCounterConfig counterConfig = nodeEngine.getConfig().findPNCounterConfig(name);
                 final String splitBrainProtectionName = counterConfig.getSplitBrainProtectionName();
-                return splitBrainProtectionName == null ? Memoizer.NULL_OBJECT : splitBrainProtectionName;
+                return splitBrainProtectionName == null ? MappingMemoizer.NULL_OBJECT : splitBrainProtectionName;
             }
         });
 
@@ -141,7 +141,7 @@ public class PNCounterService implements ManagedService, RemoteService, CRDTRepl
 
         boolean dsMetricsEnabled = nodeEngine.getProperties().getBoolean(ClusterProperty.METRICS_DATASTRUCTURES);
         if (dsMetricsEnabled) {
-            ((NodeEngineImpl) nodeEngine).getMetricsRegistry().registerDynamicMetricsProvider(this);
+            nodeEngine.getMetricsRegistry().registerDynamicMetricsProvider(this);
         }
     }
 
@@ -170,8 +170,8 @@ public class PNCounterService implements ManagedService, RemoteService, CRDTRepl
     @Override
     public CRDTReplicationContainer prepareReplicationOperation(
             Map<String, VectorClock> previouslyReplicatedVectorClocks, int targetIndex) {
-        final HashMap<String, VectorClock> currentVectorClocks = new HashMap<String, VectorClock>();
-        final HashMap<String, PNCounterImpl> counters = new HashMap<String, PNCounterImpl>();
+        final HashMap<String, VectorClock> currentVectorClocks = new HashMap<>();
+        final HashMap<String, PNCounterImpl> counters = new HashMap<>();
         final Config config = nodeEngine.getConfig();
 
         for (Entry<String, PNCounterImpl> counterEntry : this.counters.entrySet()) {

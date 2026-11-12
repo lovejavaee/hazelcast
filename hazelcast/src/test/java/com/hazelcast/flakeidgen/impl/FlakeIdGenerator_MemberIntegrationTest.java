@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,24 +27,20 @@ import com.hazelcast.test.annotation.QuickTest;
 import com.hazelcast.test.annotation.SerializationSamplesExcluded;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import java.util.Map;
 
 import static com.hazelcast.test.Accessors.getNodeEngineImpl;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class, SerializationSamplesExcluded.class})
 public class FlakeIdGenerator_MemberIntegrationTest extends HazelcastTestSupport {
-
-    @Rule
-    public ExpectedException exception = ExpectedException.none();
 
     private TestHazelcastInstanceFactory factory;
 
@@ -66,7 +62,6 @@ public class FlakeIdGenerator_MemberIntegrationTest extends HazelcastTestSupport
     }
 
     @Test
-
     public void statistics() {
         HazelcastInstance instance = factory.newHazelcastInstance();
 
@@ -75,7 +70,7 @@ public class FlakeIdGenerator_MemberIntegrationTest extends HazelcastTestSupport
 
         FlakeIdGeneratorService service = getNodeEngineImpl(instance).getService(FlakeIdGeneratorService.SERVICE_NAME);
         Map<String, LocalFlakeIdGeneratorStats> stats = service.getStats();
-        assertTrue(!stats.isEmpty());
+        assertFalse(stats.isEmpty());
         assertTrue(stats.containsKey("gen"));
         LocalFlakeIdGeneratorStats genStats = stats.get("gen");
         assertEquals(1L, genStats.getBatchCount());

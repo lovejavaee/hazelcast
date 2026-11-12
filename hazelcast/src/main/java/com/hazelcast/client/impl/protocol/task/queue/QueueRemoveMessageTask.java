@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,10 @@ package com.hazelcast.client.impl.protocol.task.queue;
 
 import com.hazelcast.client.impl.protocol.ClientMessage;
 import com.hazelcast.client.impl.protocol.codec.QueueRemoveCodec;
-import com.hazelcast.client.impl.protocol.task.AbstractPartitionMessageTask;
-import com.hazelcast.collection.impl.queue.QueueService;
 import com.hazelcast.collection.impl.queue.operations.RemoveOperation;
 import com.hazelcast.instance.impl.Node;
 import com.hazelcast.internal.nio.Connection;
+import com.hazelcast.security.SecurityInterceptorConstants;
 import com.hazelcast.security.permission.ActionConstants;
 import com.hazelcast.security.permission.QueuePermission;
 import com.hazelcast.spi.impl.operationservice.Operation;
@@ -31,10 +30,10 @@ import java.security.Permission;
 
 /**
  * Client Protocol Task for handling messages with type ID:
- * {@link com.hazelcast.client.impl.protocol.codec.QueueMessageType#QUEUE_REMOVE}
+ * {@link com.hazelcast.client.impl.protocol.codec.QueueRemoveCodec#REQUEST_MESSAGE_TYPE}
  */
 public class QueueRemoveMessageTask
-        extends AbstractPartitionMessageTask<QueueRemoveCodec.RequestParameters> {
+        extends AbstractQueueMessageTask<QueueRemoveCodec.RequestParameters> {
 
     public QueueRemoveMessageTask(ClientMessage clientMessage, Node node, Connection connection) {
         super(clientMessage, node, connection);
@@ -68,12 +67,7 @@ public class QueueRemoveMessageTask
 
     @Override
     public String getMethodName() {
-        return "remove";
-    }
-
-    @Override
-    public String getServiceName() {
-        return QueueService.SERVICE_NAME;
+        return SecurityInterceptorConstants.REMOVE;
     }
 
     @Override

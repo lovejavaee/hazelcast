@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,7 +59,6 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 import static com.google.common.collect.Streams.mapWithIndex;
-import static com.hazelcast.internal.util.CollectionUtil.hasNonEmptyIntersection;
 import static com.hazelcast.jet.Traversers.traverseStream;
 import static com.hazelcast.jet.Util.entry;
 import static com.hazelcast.jet.core.BroadcastKey.broadcastKey;
@@ -144,7 +143,7 @@ public class StreamToStreamJoinP extends AbstractProcessor {
         }
 
         // no key must be on both sides
-        if (hasNonEmptyIntersection(leftTimeExtractors.keySet(), rightTimeExtractors.keySet())) {
+        if (!Collections.disjoint(leftTimeExtractors.keySet(), rightTimeExtractors.keySet())) {
             throw new IllegalArgumentException("Some watermark key is found on both inputs. Left="
                     + leftTimeExtractors.keySet() + ", right=" + rightTimeExtractors.keySet());
         }
@@ -430,8 +429,7 @@ public class StreamToStreamJoinP extends AbstractProcessor {
 
     @Override
     protected void restoreFromSnapshot(@Nonnull Object key, @Nonnull Object value) {
-        if (value instanceof BufferSnapshotValue) {
-            BufferSnapshotValue bsv = (BufferSnapshotValue) value;
+        if (value instanceof BufferSnapshotValue bsv) {
             buffer[bsv.bufferOrdinal()].add(bsv.row());
             if (bsv.unused()) {
                 unusedEventsTracker.add(bsv.row());
@@ -439,17 +437,16 @@ public class StreamToStreamJoinP extends AbstractProcessor {
             return;
         }
 
-        if (key instanceof BroadcastKey) {
-            BroadcastKey<?> broadcastKey = (BroadcastKey<?>) key;
+        if (key instanceof BroadcastKey<?> broadcastKey) {
             WatermarkStateValue wmValue = (WatermarkStateValue) value;
             // We pick minimal available watermark (both emitted/received) among all processors
-            if (WM_STATE_KEY.equals(broadcastKey.key())) {
+            if (WM_STATE_KEY == broadcastKey.key()) {
                 Long stateWm = wmState.get(wmValue.key());
                 boolean shouldUpdateReceived = stateWm <= OBJECT_2_LONG_MAP_MIN_VALUE || stateWm > wmValue.timestamp();
                 if (shouldUpdateReceived) {
                     wmState.put(wmValue.key(), wmValue.timestamp());
                 }
-            } else if (LAST_RECEIVED_WM_KEY.equals(broadcastKey.key())) {
+            } else if (LAST_RECEIVED_WM_KEY == broadcastKey.key()) {
                 Long stateWm = lastReceivedWm.get(wmValue.key());
                 boolean shouldUpdateReceived = stateWm <= OBJECT_2_LONG_MAP_MIN_VALUE || stateWm > wmValue.timestamp();
                 if (shouldUpdateReceived) {

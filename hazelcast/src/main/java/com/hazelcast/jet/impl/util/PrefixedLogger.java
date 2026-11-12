@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,8 @@ package com.hazelcast.jet.impl.util;
 
 import com.hazelcast.logging.AbstractLogger;
 import com.hazelcast.logging.ILogger;
-import com.hazelcast.logging.LogEvent;
 
 import java.util.logging.Level;
-import java.util.logging.LogRecord;
 
 import static com.hazelcast.jet.Util.idToString;
 
@@ -65,13 +63,6 @@ public class PrefixedLogger extends AbstractLogger {
     @Override
     public void log(Level level, String message, Throwable thrown) {
         wrapped.log(level, prefix + message, thrown);
-    }
-
-    @Override
-    public void log(LogEvent logEvent) {
-        LogRecord logRecord = logEvent.getLogRecord();
-        logRecord.setMessage(prefix + logRecord.getMessage());
-        wrapped.log(logEvent);
     }
 
     @Override

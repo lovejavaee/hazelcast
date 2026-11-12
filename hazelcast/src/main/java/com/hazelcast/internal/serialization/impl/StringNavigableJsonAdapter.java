@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,11 @@
 
 package com.hazelcast.internal.serialization.impl;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.JsonParser;
+import tools.jackson.core.json.JsonFactory;
+import tools.jackson.core.JsonParser;
 import com.hazelcast.internal.json.JsonReducedValueParser;
 import com.hazelcast.internal.json.JsonValue;
 import com.hazelcast.query.impl.getters.JsonPathCursor;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.io.StringReader;
@@ -69,7 +68,6 @@ public class StringNavigableJsonAdapter extends NavigableJsonInputAdapter {
         return source.charAt(pos++) == '"';
     }
 
-    @SuppressFBWarnings("SR_NOT_CHECKED")
     @Override
     public JsonValue parseValue(JsonReducedValueParser parser, int offset) throws IOException {
         StringReader reader = new StringReader(source);

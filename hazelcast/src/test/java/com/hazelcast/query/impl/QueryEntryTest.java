@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,11 @@
 
 package com.hazelcast.query.impl;
 
+import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.internal.serialization.impl.DefaultSerializationServiceBuilder;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
-import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.nio.serialization.DataSerializable;
 import com.hazelcast.nio.serialization.Portable;
 import com.hazelcast.query.QueryConstants;
@@ -38,13 +38,12 @@ import org.junit.runner.RunWith;
 
 import java.io.IOException;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.core.IsNot.not;
-import static org.hamcrest.core.IsSame.sameInstance;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNotSame;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
@@ -131,8 +130,8 @@ public class QueryEntryTest extends HazelcastTestSupport {
         initEntry(queryEntry, serializationService, serializationService.toData(objectKey), objectValue, newExtractor());
 
         // compare references of objects since they should be cloned after QueryEntry#init call.
-        assertTrue("Old dataKey should not be here", dataKey != queryEntry.getKeyData());
-        assertTrue("Old dataValue should not be here", dataValue != queryEntry.getValueData());
+        assertNotSame("Old dataKey should not be here", dataKey, queryEntry.getKeyData());
+        assertNotSame("Old dataValue should not be here", dataValue, queryEntry.getValueData());
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -160,14 +159,14 @@ public class QueryEntryTest extends HazelcastTestSupport {
     public void test_equality_same() {
         QueryableEntry entry = createEntry();
 
-        assertTrue(entry.equals(entry));
+        assertEquals(entry, entry);
     }
 
     @Test
     public void test_equality_differentType() {
         QueryableEntry entry = createEntry();
 
-        assertFalse(entry.equals("string"));
+        assertNotEquals("string", entry);
     }
 
     @Test
@@ -175,7 +174,7 @@ public class QueryEntryTest extends HazelcastTestSupport {
     public void test_equality_null() {
         QueryableEntry entry = createEntry();
 
-        assertFalse(entry.equals(null));
+        assertNotNull(entry);
     }
 
     @Test
@@ -183,7 +182,7 @@ public class QueryEntryTest extends HazelcastTestSupport {
         QueryableEntry queryEntry = createEntry("dataKey", "dataValue");
         QueryableEntry queryEntryOther = createEntry("dataKeyOther", "dataValue");
 
-        assertFalse(queryEntry.equals(queryEntryOther));
+        assertNotEquals(queryEntry, queryEntryOther);
     }
 
     @Test
@@ -191,35 +190,35 @@ public class QueryEntryTest extends HazelcastTestSupport {
         QueryableEntry queryEntry = createEntry("dataKey", "dataValue");
         QueryableEntry queryEntryOther = createEntry("dataKey", "dataValueOther");
 
-        assertTrue(queryEntry.equals(queryEntryOther));
+        assertEquals(queryEntry, queryEntryOther);
     }
 
     @Test
     public void getKey_caching() {
         QueryableEntry entry = createEntry("key", "value");
 
-        assertThat(entry.getKey(), not(sameInstance(entry.getKey())));
+        assertThat(entry.getKey()).isNotSameAs(entry.getKey());
     }
 
     @Test
     public void getValue_caching() {
         QueryableEntry entry = createEntry("key", "value");
 
-        assertThat(entry.getValue(), not(sameInstance(entry.getValue())));
+        assertThat(entry.getValue()).isNotSameAs(entry.getValue());
     }
 
     @Test
     public void getKeyData_caching() {
         QueryableEntry entry = createEntry("key", "value");
 
-        assertThat(entry.getKeyData(), sameInstance(entry.getKeyData()));
+        assertThat(entry.getKeyData()).isSameAs(entry.getKeyData());
     }
 
     @Test
     public void getValueData_caching() {
         QueryableEntry entry = createEntry("key", "value");
 
-        assertThat(entry.getValueData(), sameInstance(entry.getValueData()));
+        assertThat(entry.getValueData()).isSameAs(entry.getValueData());
     }
 
     @SuppressWarnings("unused")

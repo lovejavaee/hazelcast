@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,6 +54,9 @@ public interface ClusterTopologyIntentTracker {
 
     int UNKNOWN = -1;
 
+    /** Default value used when {@code status.*Replicas} fields are missing in the Kubernetes API response. */
+    int DEFAULT_STATUS_REPLICA_COUNT = 0;
+
     /**
      * Process an update of the cluster topology. Each update carries information about
      * the previous & current specified replicas count, the current number of replicas and ready replicas in the cluster.
@@ -84,7 +87,7 @@ public interface ClusterTopologyIntentTracker {
      *     (5, 5, 5, 5)
      *     }</pre>
      * </p>
-     * Notice that actual updates may differ (eg duplicate notifications of intermediate states may be received).
+     * Notice that actual updates may differ (e.g. duplicate notifications of intermediate states may be received).
      *
      * @param previousSpecifiedReplicas   previous specified replicas count
      * @param updatedSpecifiedReplicas    updated specified replicas count
@@ -114,13 +117,11 @@ public interface ClusterTopologyIntentTracker {
 
     /**
      * Initialize explicitly the cluster topology intent.
-     * @param clusterTopologyIntent
      */
     void initializeClusterTopologyIntent(ClusterTopologyIntent clusterTopologyIntent);
 
     /**
      * Handle Hazelcast node shutdown with the given cluster topology intent.
-     * @param clusterTopologyIntent
      */
     void shutdownWithIntent(ClusterTopologyIntent clusterTopologyIntent);
 

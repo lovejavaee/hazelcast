@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ public class MapStoreAdapterTest extends HazelcastTestSupport {
     @Test
     public void testStoreAll() {
         MockMapStoreAdapter adapter = new MockMapStoreAdapter();
-        Map<Integer, Integer> map = new HashMap<Integer, Integer>();
+        Map<Integer, Integer> map = new HashMap<>();
         map.put(1, 1);
         map.put(2, 2);
 
@@ -55,7 +55,7 @@ public class MapStoreAdapterTest extends HazelcastTestSupport {
         MockMapStoreAdapter adapter = new MockMapStoreAdapter();
         adapter.store(1, 1);
         adapter.store(2, 2);
-        Collection<Integer> keySet = new HashSet<Integer>();
+        Collection<Integer> keySet = new HashSet<>();
         keySet.add(1);
         keySet.add(2);
 
@@ -69,7 +69,7 @@ public class MapStoreAdapterTest extends HazelcastTestSupport {
         MockMapStoreAdapter adapter = new MockMapStoreAdapter();
         adapter.store(1, 1);
         adapter.store(2, 2);
-        Collection<Integer> keySet = new HashSet<Integer>();
+        Collection<Integer> keySet = new HashSet<>();
         keySet.add(1);
         keySet.add(2);
 
@@ -78,22 +78,24 @@ public class MapStoreAdapterTest extends HazelcastTestSupport {
         assertEquals(2, adapter.deleted.size());
     }
 
-    private class MockMapStoreAdapter extends MapStoreAdapter<Integer, Integer> {
+    private static class MockMapStoreAdapter extends MapStoreAdapter<Integer, Integer> {
 
-        private List<Object> deleted;
-        private List<Object> stored;
-        private List<Object> loaded;
+        private final List<Object> deleted;
+        private final List<Object> stored;
+        private final List<Object> loaded;
 
         MockMapStoreAdapter() {
-            deleted = new LinkedList<Object>();
-            stored = new LinkedList<Object>();
-            loaded = new LinkedList<Object>();
+            deleted = new LinkedList<>();
+            stored = new LinkedList<>();
+            loaded = new LinkedList<>();
         }
 
+        @Override
         public void delete(Integer key) {
             deleted.add(key);
         }
 
+        @Override
         public void store(Integer key, Integer value) {
             stored.add(new Object[]{key, value});
         }
@@ -102,6 +104,7 @@ public class MapStoreAdapterTest extends HazelcastTestSupport {
             loaded.add(new Object[]{key, value});
         }
 
+        @Override
         public Iterable<Integer> loadAllKeys() {
             return super.loadAllKeys();
         }

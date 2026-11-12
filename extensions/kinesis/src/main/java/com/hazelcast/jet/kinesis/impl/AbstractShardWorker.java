@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,16 +16,16 @@
 
 package com.hazelcast.jet.kinesis.impl;
 
-import com.amazonaws.services.kinesis.AmazonKinesisAsync;
 import com.hazelcast.logging.ILogger;
+import software.amazon.awssdk.services.kinesis.KinesisAsyncClient;
 
 public abstract class AbstractShardWorker {
 
-    protected final AmazonKinesisAsync kinesis;
+    protected final KinesisAsyncClient kinesis;
     protected final String streamName;
     protected final ILogger logger;
 
-    protected AbstractShardWorker(AmazonKinesisAsync kinesis, String streamName, ILogger logger) {
+    protected AbstractShardWorker(KinesisAsyncClient kinesis, String streamName, ILogger logger) {
         this.kinesis = kinesis;
         this.streamName = streamName;
         this.logger = logger;

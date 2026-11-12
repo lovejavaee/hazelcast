@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,16 +19,15 @@ import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.client.config.impl.YamlClientDomConfigProcessor;
 import com.hazelcast.config.Config;
 import com.hazelcast.config.InvalidConfigurationException;
+import com.hazelcast.internal.config.SensitiveDataMasker;
 import com.hazelcast.internal.config.YamlMemberDomConfigProcessor;
 import com.hazelcast.internal.config.override.SystemPropertiesConfigProvider.SystemPropertiesProvider;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
 
-import java.util.Arrays;
-import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
-import static com.hazelcast.internal.config.LicenseKey.maskLicense;
 import static com.hazelcast.internal.config.override.PropertiesToNodeConverter.propsToNode;
 import static java.lang.String.format;
 import static java.util.stream.Collectors.joining;
@@ -43,6 +42,7 @@ public class ExternalConfigurationOverride {
     private static final ILogger LOGGER = Logger.getLogger(ExternalConfigurationOverride.class);
     private final Map<String, String> envVariables;
     private final SystemPropertiesProvider systemPropertiesProvider;
+
 
     public ExternalConfigurationOverride() {
         this(System.getenv(), System::getProperties);
@@ -83,7 +83,7 @@ public class ExternalConfigurationOverride {
     }
 
     private <T> T overwrite(T config, ConfigConsumer<T> configProcessor, ConfigProvider... providers) {
-        ConfigOverrideValidator.validate(new HashSet<>(Arrays.asList(providers)));
+        ConfigOverrideValidator.validate(Set.of(providers));
 
         for (ConfigProvider configProvider : providers) {
             Map<String, String> properties = configProvider.properties();
@@ -99,13 +99,7 @@ public class ExternalConfigurationOverride {
                   configProvider.name(),
                   properties.entrySet().stream()
                     .filter(e -> !unprocessed.containsKey(e.getKey()))
-                    .map(e -> {
-                        if (e.getKey().equals("hazelcast.licensekey")) {
-                            return e.getKey() + "=" + maskLicense(e.getValue());
-                        } else {
-                            return e.getKey() + "=" + e.getValue();
-                        }
-                    })
+                    .map(e -> e.getKey() + "=" + SensitiveDataMasker.mask(e.getKey(), e.getValue()))
                     .collect(joining(","))));
 
                 if (!unprocessed.isEmpty()) {

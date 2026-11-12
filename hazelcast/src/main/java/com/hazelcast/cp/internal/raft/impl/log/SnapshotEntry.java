@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,9 @@
 
 package com.hazelcast.cp.internal.raft.impl.log;
 
-import com.hazelcast.cp.internal.raft.impl.RaftDataSerializerHook;
+import com.hazelcast.cp.internal.raft.impl.RaftDataSerializerConstants;
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
-import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshot;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
@@ -26,13 +26,16 @@ import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.LinkedHashSet;
+import java.util.List;
 
+import static java.util.Collections.emptyList;
 import static java.util.Collections.unmodifiableCollection;
 
 /**
- * Represents a snapshot in the {@link RaftLog}.
+ * Represents a snapshot in the {@code RaftLog}.
  * <p>
- * Snapshot entry is sent to followers via {@link InstallSnapshot} RPC.
+ * The snapshot entry is sent to followers chunk by
+ * chunk using the {@link InstallSnapshotRequest} RPC.
  */
 public class SnapshotEntry extends LogEntry implements IdentifiedDataSerializable {
 
@@ -42,11 +45,12 @@ public class SnapshotEntry extends LogEntry implements IdentifiedDataSerializabl
     public SnapshotEntry() {
     }
 
-    public SnapshotEntry(int term, long index, Object operation, long groupMembersLogIndex,
+    public SnapshotEntry(int term, long index, Object operation,
+                         long groupMembersLogIndex,
                          Collection<RaftEndpoint> groupMembers) {
         super(term, index, operation);
         this.groupMembersLogIndex = groupMembersLogIndex;
-        this.groupMembers = unmodifiableCollection(new LinkedHashSet<RaftEndpoint>(groupMembers));
+        this.groupMembers = unmodifiableCollection(new LinkedHashSet<>(groupMembers));
     }
 
     public long groupMembersLogIndex() {
@@ -57,14 +61,31 @@ public class SnapshotEntry extends LogEntry implements IdentifiedDataSerializabl
         return groupMembers;
     }
 
+    /**
+     * Returns the list of snapshot chunks associated with this snapshot entry,
+     * or an empty list if the operation is null (e.g., in an initial snapshot).
+     *
+     * @return the list of snapshot chunks
+     * @throws IllegalStateException if operation is present but is not a {@link List}
+     */
+    @SuppressWarnings("unchecked")
+    public List<SnapshotChunk> snapshotChunks() {
+        Object op = operation();
+        if (op == null) {
+            return emptyList();
+        }
+        if (op instanceof List<?>) {
+            return (List<SnapshotChunk>) op;
+        }
+        throw new IllegalStateException("Unexpected snapshot operation type: "
+                + op.getClass().getName() + ", expected List<SnapshotChunk>");
+    }
+
     @Override
     public void writeData(ObjectDataOutput out) throws IOException {
         super.writeData(out);
         out.writeLong(groupMembersLogIndex);
-        out.writeInt(groupMembers.size());
-        for (RaftEndpoint endpoint : groupMembers) {
-            out.writeObject(endpoint);
-        }
+        SerializationUtil.writeCollection(groupMembers, out);
     }
 
     @Override
@@ -72,7 +93,7 @@ public class SnapshotEntry extends LogEntry implements IdentifiedDataSerializabl
         super.readData(in);
         groupMembersLogIndex = in.readLong();
         int count = in.readInt();
-        groupMembers = new LinkedHashSet<RaftEndpoint>(count);
+        groupMembers = new LinkedHashSet<>(count);
         for (int i = 0; i < count; i++) {
             RaftEndpoint endpoint = in.readObject();
             groupMembers.add(endpoint);
@@ -82,13 +103,14 @@ public class SnapshotEntry extends LogEntry implements IdentifiedDataSerializabl
 
     @Override
     public int getClassId() {
-        return RaftDataSerializerHook.SNAPSHOT_ENTRY;
+        return RaftDataSerializerConstants.SNAPSHOT_ENTRY;
     }
 
     public String toString(boolean detailed) {
         return "SnapshotEntry{" + "term=" + term() + ", index=" + index()
                 + (detailed ? ", operation=" + operation() : "")
-                + ", groupMembersLogIndex=" + groupMembersLogIndex + ", groupMembers=" + groupMembers + '}';
+                + ", groupMembersLogIndex=" + groupMembersLogIndex
+                + ", groupMembers=" + groupMembers + '}';
     }
 
     @Override

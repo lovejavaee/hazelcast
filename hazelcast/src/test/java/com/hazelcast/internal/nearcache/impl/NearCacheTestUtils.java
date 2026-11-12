@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,7 +27,6 @@ import com.hazelcast.internal.adapter.DataStructureAdapter;
 import com.hazelcast.internal.adapter.DataStructureAdapter.DataStructureMethods;
 import com.hazelcast.internal.adapter.DataStructureAdapterMethod;
 import com.hazelcast.internal.adapter.IMapDataStructureAdapter;
-import com.hazelcast.internal.adapter.MethodAvailableMatcher;
 import com.hazelcast.internal.adapter.ReplicatedMapDataStructureAdapter;
 import com.hazelcast.internal.monitor.impl.NearCacheStatsImpl;
 import com.hazelcast.internal.nearcache.NearCache;
@@ -43,8 +42,8 @@ import com.hazelcast.map.impl.MapService;
 import com.hazelcast.map.impl.nearcache.MapNearCacheManager;
 import com.hazelcast.nearcache.NearCacheStats;
 import com.hazelcast.spi.impl.NodeEngineImpl;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastTestSupport;
+import org.assertj.core.api.Assumptions;
 
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
@@ -55,6 +54,7 @@ import static com.hazelcast.config.InMemoryFormat.BINARY;
 import static com.hazelcast.config.InMemoryFormat.OBJECT;
 import static com.hazelcast.config.MaxSizePolicy.USED_NATIVE_MEMORY_PERCENTAGE;
 import static com.hazelcast.config.NearCacheConfig.LocalUpdatePolicy.CACHE_ON_UPDATE;
+import static com.hazelcast.internal.adapter.MethodAvailableMatcher.methodAvailable;
 import static com.hazelcast.internal.nearcache.NearCacheRecord.READ_PERMITTED;
 import static com.hazelcast.internal.nearcache.impl.AbstractNearCacheBasicTest.DEFAULT_NEAR_CACHE_NAME;
 import static com.hazelcast.spi.properties.ClusterProperty.CACHE_INVALIDATION_MESSAGE_BATCH_FREQUENCY_SECONDS;
@@ -68,7 +68,6 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeFalse;
-import static org.junit.Assume.assumeThat;
 import static org.junit.Assume.assumeTrue;
 
 /**
@@ -81,7 +80,9 @@ public final class NearCacheTestUtils extends HazelcastTestSupport {
     }
 
     public static Config getBaseConfig() {
-        return smallInstanceConfig()
+        Config config = smallInstanceConfig();
+        config.getJetConfig().setEnabled(false);
+        return config
                 .setProperty(CACHE_INVALIDATION_MESSAGE_BATCH_FREQUENCY_SECONDS.getName(), "1")
                 .setProperty(MAP_INVALIDATION_MESSAGE_BATCH_FREQUENCY_SECONDS.getName(), "1")
                 .setProperty(NearCache.PROP_EXPIRATION_TASK_INITIAL_DELAY_SECONDS, "0")
@@ -99,9 +100,7 @@ public final class NearCacheTestUtils extends HazelcastTestSupport {
     public static <T> T getFuture(CompletionStage<T> future, String message) {
         try {
             return future.toCompletableFuture().get();
-        } catch (InterruptedException e) {
-            throw new AssertionError(message + " " + e.getMessage());
-        } catch (ExecutionException e) {
+        } catch (InterruptedException | ExecutionException e) {
             throw new AssertionError(message + " " + e.getMessage());
         }
     }
@@ -237,7 +236,7 @@ public final class NearCacheTestUtils extends HazelcastTestSupport {
      * @param method  {@link DataStructureAdapterMethod} to search for
      */
     public static boolean isMethodAvailable(DataStructureAdapter adapter, DataStructureAdapterMethod method) {
-        return new MethodAvailableMatcher(method).matchesSafely(adapter.getClass());
+        return methodAvailable(method).matches(adapter.getClass());
     }
 
     /**
@@ -268,7 +267,7 @@ public final class NearCacheTestUtils extends HazelcastTestSupport {
      */
     public static void assumeThatMethodIsAvailable(Class<? extends DataStructureAdapter> adapterClass,
                                                    DataStructureAdapterMethod method) {
-        assumeThat(adapterClass, new MethodAvailableMatcher(method));
+        Assumptions.assumeThat(adapterClass).is(methodAvailable(method));
     }
 
     /**
@@ -308,17 +307,17 @@ public final class NearCacheTestUtils extends HazelcastTestSupport {
     /**
      * Asserts the state and class of a {@link NearCacheRecord} and its value.
      *
-     * @param record         the {@link NearCacheRecord}
+     * @param cacheRecord    the {@link NearCacheRecord}
      * @param key            the key for the {@link NearCacheRecord}
      * @param inMemoryFormat the {@link InMemoryFormat} of the Near Cache
      */
-    public static void assertNearCacheRecord(NearCacheRecord record, int key, InMemoryFormat inMemoryFormat) {
-        assertNotNull(format("NearCacheRecord for key %d could not be found", key), record);
-        assertEquals(format("RecordState of NearCacheRecord for key %d should be READ_PERMITTED (%s)", key, record),
-                READ_PERMITTED, record.getReservationId());
+    public static void assertNearCacheRecord(NearCacheRecord cacheRecord, int key, InMemoryFormat inMemoryFormat) {
+        assertNotNull(format("NearCacheRecord for key %d could not be found", key), cacheRecord);
+        assertEquals(format("RecordState of NearCacheRecord for key %d should be READ_PERMITTED (%s)", key, cacheRecord),
+                READ_PERMITTED, cacheRecord.getReservationId());
 
-        Class<? extends NearCacheRecord> recordClass = record.getClass();
-        Class<?> recordValueClass = record.getValue().getClass();
+        Class<? extends NearCacheRecord> recordClass = cacheRecord.getClass();
+        Class<?> recordValueClass = cacheRecord.getValue().getClass();
         switch (inMemoryFormat) {
             case OBJECT:
                 assertTrue(
@@ -358,8 +357,8 @@ public final class NearCacheTestUtils extends HazelcastTestSupport {
      * @param context the given {@link NearCacheTestContext} to retrieve the {@link DataStructureAdapter} from
      */
     public static void waitUntilLoaded(NearCacheTestContext<?, ?, ?, ?> context) {
-        if (context.dataAdapter instanceof IMapDataStructureAdapter) {
-            ((IMapDataStructureAdapter) context.dataAdapter).waitUntilLoaded();
+        if (context.dataAdapter instanceof IMapDataStructureAdapter adapter) {
+            adapter.waitUntilLoaded();
         }
     }
 
@@ -373,14 +372,11 @@ public final class NearCacheTestUtils extends HazelcastTestSupport {
     public static void assertNearCacheInvalidationsBetween(final NearCacheTestContext<?, ?, ?, ?> context,
                                                            final int minInvalidations, final int maxInvalidations) {
         if (context.nearCacheConfig.isInvalidateOnChange() && minInvalidations > 0) {
-            assertTrueEventually(new AssertTask() {
-                @Override
-                public void run() {
-                    long invalidationCount = context.stats.getInvalidations();
-                    assertTrue(format("Expected between %d and %d Near Cache invalidations, but found %d (%s)",
-                                    minInvalidations, maxInvalidations, invalidationCount, context.stats),
-                            minInvalidations <= invalidationCount && invalidationCount <= maxInvalidations);
-                }
+            assertTrueEventually(() -> {
+                long invalidationCount = context.stats.getInvalidations();
+                assertTrue(format("Expected between %d and %d Near Cache invalidations, but found %d (%s)",
+                                minInvalidations, maxInvalidations, invalidationCount, context.stats),
+                        minInvalidations <= invalidationCount && invalidationCount <= maxInvalidations);
             });
             context.stats.resetInvalidationEvents();
         }
@@ -394,13 +390,8 @@ public final class NearCacheTestUtils extends HazelcastTestSupport {
      */
     public static void assertNearCacheInvalidations(final NearCacheTestContext<?, ?, ?, ?> context, final long invalidations) {
         if (context.nearCacheConfig.isInvalidateOnChange() && invalidations > 0) {
-            assertTrueEventually(new AssertTask() {
-                @Override
-                public void run() {
-                    assertEqualsFormat("Expected %d Near Cache invalidations, but found %d (%s)",
-                            invalidations, context.stats.getInvalidations(), context.stats);
-                }
-            });
+            assertTrueEventually(() -> assertEqualsFormat("Expected %d Near Cache invalidations, but found %d (%s)",
+                    invalidations, context.stats.getInvalidations(), context.stats));
         }
     }
 
@@ -413,13 +404,8 @@ public final class NearCacheTestUtils extends HazelcastTestSupport {
     public static void assertNearCacheInvalidationRequests(final NearCacheTestContext<?, ?, ?, ?> context,
                                                            final long invalidationRequests) {
         if (context.nearCacheConfig.isInvalidateOnChange() && invalidationRequests > 0 && context.stats != null) {
-            assertTrueEventually(new AssertTask() {
-                @Override
-                public void run() {
-                    assertEqualsFormat("Expected %d received Near Cache invalidations, but found %d (%s)",
-                            invalidationRequests, context.stats.getInvalidationRequests(), context.stats);
-                }
-            });
+            assertTrueEventually(() -> assertEqualsFormat("Expected %d received Near Cache invalidations, but found %d (%s)",
+                    invalidationRequests, context.stats.getInvalidationRequests(), context.stats));
             context.stats.resetInvalidationEvents();
         }
     }
@@ -445,12 +431,7 @@ public final class NearCacheTestUtils extends HazelcastTestSupport {
      */
     public static void assertNearCacheEvictionsEventually(final NearCacheTestContext<?, ?, ?, ?> context,
                                                           final int evictionCount) {
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertNearCacheEvictions(context, evictionCount);
-            }
-        });
+        assertTrueEventually(() -> assertNearCacheEvictions(context, evictionCount));
     }
 
     /**

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,12 +19,13 @@ package com.hazelcast.jet.impl.execution;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.internal.metrics.ProbeLevel;
 import com.hazelcast.internal.metrics.impl.MetricsRegistryImpl;
+import com.hazelcast.jet.JetException;
 import com.hazelcast.jet.core.JetTestSupport;
 import com.hazelcast.jet.impl.util.ProgressState;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
 import com.hazelcast.logging.LoggingService;
-import com.hazelcast.spi.impl.NodeEngineImpl;
+import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.executionservice.ExecutionService;
 import com.hazelcast.spi.properties.HazelcastProperties;
 import com.hazelcast.test.HazelcastParallelClassRunner;
@@ -32,10 +33,8 @@ import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import javax.annotation.Nonnull;
@@ -45,15 +44,14 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Stream;
 
+import static com.hazelcast.internal.util.ExceptionUtil.sneakyThrow;
 import static com.hazelcast.jet.impl.execution.TaskletExecutionService.TASKLET_INIT_CLOSE_EXECUTOR_NAME;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.peel;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.sneakyThrow;
+import static com.hazelcast.jet.impl.util.JetExceptionUtil.peel;
 import static com.hazelcast.jet.impl.util.ProgressState.DONE;
 import static com.hazelcast.jet.impl.util.ProgressState.MADE_PROGRESS;
 import static com.hazelcast.jet.impl.util.ProgressState.NO_PROGRESS;
@@ -61,6 +59,7 @@ import static java.util.Arrays.asList;
 import static java.util.Collections.singletonList;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.stream.Collectors.toList;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
@@ -77,9 +76,6 @@ public class TaskletExecutionServiceTest extends JetTestSupport {
 
     private static final int THREAD_COUNT = 4;
 
-    @Rule
-    public final ExpectedException exceptionRule = ExpectedException.none();
-
     private final CompletableFuture<Void> cancellationFuture = new CompletableFuture<>();
 
     private TaskletExecutionService tes;
@@ -89,7 +85,7 @@ public class TaskletExecutionServiceTest extends JetTestSupport {
     @Before
     public void before() {
         executor = Executors.newCachedThreadPool();
-        NodeEngineImpl neMock = mock(NodeEngineImpl.class);
+        NodeEngine neMock = mock(NodeEngine.class);
 
         HazelcastInstance hzMock = mock(HazelcastInstance.class);
         when(neMock.getHazelcastInstance()).thenReturn(hzMock);
@@ -142,16 +138,17 @@ public class TaskletExecutionServiceTest extends JetTestSupport {
         t.assertDone();
     }
 
-    @Test(expected = CompletionException.class)
+    @Test
     public void when_nonBlockingAndInitFails_then_futureFails() {
         // Given
         final MockTasklet t = new MockTasklet().initFails();
 
-        // When
-        executeAndJoin(singletonList(t));
-
-        // Then
-        t.assertDone();
+        // When - Then
+        List<MockTasklet> mockTaskletList = singletonList(t);
+        assertThatThrownBy(() -> executeAndJoin(mockTaskletList))
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(JetException.class)
+                .hasMessageContaining("mock init failure");
     }
 
     @Test
@@ -176,31 +173,44 @@ public class TaskletExecutionServiceTest extends JetTestSupport {
         tasklets.forEach(MockTasklet::assertInitDone);
     }
 
-    @Test(expected = CompletionException.class)
+    @Test
     public void when_blockingAndInitFails_then_futureFails() {
         // Given
         final MockTasklet t = new MockTasklet().blocking().initFails();
 
         // When - Then
-        executeAndJoin(singletonList(t));
+        List<MockTasklet> mockTaskletList = singletonList(t);
+        assertThatThrownBy(() -> executeAndJoin(mockTaskletList))
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(JetException.class)
+                .hasMessageContaining("mock init failure");
+
     }
 
-    @Test(expected = CompletionException.class)
+    @Test
     public void when_nonBlockingAndCallFails_then_futureFails() {
         // Given
         final MockTasklet t = new MockTasklet().callFails();
 
         // When - Then
-        executeAndJoin(singletonList(t));
+        List<MockTasklet> mockTaskletList = singletonList(t);
+        assertThatThrownBy(() -> executeAndJoin(mockTaskletList))
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(JetException.class)
+                .hasMessageContaining("mock call failure");
     }
 
-    @Test(expected = CompletionException.class)
+    @Test
     public void when_blockingAndCallFails_then_futureFails() {
         // Given
         final MockTasklet t = new MockTasklet().blocking().callFails();
 
         // When - Then
-        executeAndJoin(singletonList(t));
+        List<MockTasklet> mockTaskletList = singletonList(t);
+        assertThatThrownBy(() -> executeAndJoin(mockTaskletList))
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(JetException.class)
+                .hasMessageContaining("mock call failure");
     }
 
     @Test
@@ -232,7 +242,7 @@ public class TaskletExecutionServiceTest extends JetTestSupport {
     }
 
     @Test
-    public void when_nonBlockingTaskletIsCancelled_then_completesEarly() throws Exception {
+    public void when_nonBlockingTaskletIsCancelled_then_completesEarly() {
         // Given
         final List<MockTasklet> tasklets =
                 Stream.generate(() -> new MockTasklet().callsBeforeDone(Integer.MAX_VALUE))
@@ -245,12 +255,11 @@ public class TaskletExecutionServiceTest extends JetTestSupport {
         // Then
         tasklets.forEach(MockTasklet::assertNotDone);
 
-        exceptionRule.expect(CancellationException.class);
-        f.get();
+        assertThrows(CancellationException.class, f::get);
     }
 
     @Test
-    public void when_blockingTaskletIsCancelled_then_completeEarly() throws ExecutionException, InterruptedException {
+    public void when_blockingTaskletIsCancelled_then_completeEarly()  {
         // Given
         final List<MockTasklet> tasklets =
                 Stream.generate(() -> new MockTasklet().blocking().callsBeforeDone(Integer.MAX_VALUE))
@@ -263,12 +272,11 @@ public class TaskletExecutionServiceTest extends JetTestSupport {
         // Then
         tasklets.forEach(MockTasklet::assertNotDone);
 
-        exceptionRule.expect(CancellationException.class);
-        f.get();
+        assertThrows(CancellationException.class, f::get);
     }
 
     @Test
-    public void when_blockingSleepingTaskletIsCancelled_then_completeEarly() throws Exception {
+    public void when_blockingSleepingTaskletIsCancelled_then_completeEarly() {
         // Given
         final List<MockTasklet> tasklets =
                 Stream.generate(() -> new MockTasklet().sleeping().callsBeforeDone(Integer.MAX_VALUE))
@@ -282,12 +290,12 @@ public class TaskletExecutionServiceTest extends JetTestSupport {
         tasklets.forEach(MockTasklet::assertNotDone);
         assertTrueEventually(() -> assertTrue(f.isDone()), 10);
 
-        exceptionRule.expect(CancellationException.class);
-        cancellationFuture.get();
+
+        assertThrows(CancellationException.class, cancellationFuture::get);
     }
 
     @Test
-    public void when_nonBlockingCancelled_then_doneCallBackFiredAfterActualDone() throws Exception {
+    public void when_nonBlockingCancelled_then_doneCallBackFiredAfterActualDone() {
         // Given
         CountDownLatch proceedLatch = new CountDownLatch(1);
         final List<MockTasklet> tasklets =
@@ -304,12 +312,9 @@ public class TaskletExecutionServiceTest extends JetTestSupport {
 
         proceedLatch.countDown();
 
-        assertTrueEventually(() -> {
-            assertTrue("future should be completed eventually", f.isDone());
-        });
+        assertTrueEventually(() -> assertTrue("future should be completed eventually", f.isDone()));
 
-        exceptionRule.expect(CancellationException.class);
-        cancellationFuture.get();
+        assertThrows(CancellationException.class, cancellationFuture::get);
     }
 
     @Test
@@ -336,8 +341,7 @@ public class TaskletExecutionServiceTest extends JetTestSupport {
         CompletableFuture<Void> f = tes.beginExecute(singletonList(t), cancellationFuture, classLoader);
 
         // When - Then
-        exceptionRule.expect(UnsupportedOperationException.class);
-        f.complete(null);
+        assertThrows(UnsupportedOperationException.class, () -> f.complete(null));
     }
 
     @Test
@@ -347,8 +351,7 @@ public class TaskletExecutionServiceTest extends JetTestSupport {
         CompletableFuture<Void> f = tes.beginExecute(singletonList(t), cancellationFuture, classLoader);
 
         // When - Then
-        exceptionRule.expect(UnsupportedOperationException.class);
-        f.completeExceptionally(new RuntimeException());
+        assertThrows(UnsupportedOperationException.class, () -> f.completeExceptionally(new RuntimeException()));
     }
 
     @Test
@@ -358,8 +361,7 @@ public class TaskletExecutionServiceTest extends JetTestSupport {
         CompletableFuture<Void> f = tes.beginExecute(singletonList(t), cancellationFuture, classLoader);
 
         // When - Then
-        exceptionRule.expect(UnsupportedOperationException.class);
-        f.cancel(true);
+        assertThrows(UnsupportedOperationException.class, () -> f.cancel(true));
     }
 
     @Test
@@ -372,12 +374,13 @@ public class TaskletExecutionServiceTest extends JetTestSupport {
         cancellationFuture.complete(null);
 
         // Then
-        exceptionRule.expect(IllegalStateException.class);
-        try {
-            f.join();
-        } catch (CompletionException e) {
-            throw peel(e);
-        }
+        assertThrows(IllegalStateException.class, () -> {
+            try {
+                f.join();
+            } catch (CompletionException e) {
+                throw peel(e);
+            }
+        });
     }
 
     private void executeAndJoin(List<MockTasklet> tasklets) {
@@ -439,10 +442,6 @@ public class TaskletExecutionServiceTest extends JetTestSupport {
             }
         }
 
-        boolean isInitDone() {
-            return initDone;
-        }
-
         MockTasklet blocking() {
             isBlocking = true;
             return this;
@@ -494,7 +493,7 @@ public class TaskletExecutionServiceTest extends JetTestSupport {
 
     private static class TaskletAssertingThreadLocal implements Tasklet {
 
-        private static ThreadLocal<Integer> threadLocal = ThreadLocal.withInitial(() -> 0);
+        private static final ThreadLocal<Integer> threadLocal = ThreadLocal.withInitial(() -> 0);
 
         private int callCount;
 

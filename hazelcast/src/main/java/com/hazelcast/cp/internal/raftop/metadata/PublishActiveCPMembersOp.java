@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,17 +23,18 @@ import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.cp.internal.CPMemberInfo;
 import com.hazelcast.cp.internal.RaftOp;
 import com.hazelcast.cp.internal.RaftSystemOperation;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.cp.internal.RaftService;
 import com.hazelcast.cp.internal.RaftServiceDataSerializerHook;
 import com.hazelcast.spi.impl.operationservice.Operation;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collection;
 
 /**
  * CP members use this operation to broadcast their current active CP member
- * list to the AP Hazelcast members.
+ * list to the AP Hazelcast members. This operation is only broadcast by
+ * the METADATA group leader.
  * <p>
  * Please note that this operation is not a {@link RaftOp},
  * so it is not handled via the Raft layer.
@@ -84,10 +85,7 @@ public class PublishActiveCPMembersOp extends Operation implements IdentifiedDat
         super.writeInternal(out);
         out.writeObject(metadataGroupId);
         out.writeLong(membersCommitIndex);
-        out.writeInt(members.size());
-        for (CPMemberInfo member : members) {
-            out.writeObject(member);
-        }
+        SerializationUtil.writeCollection(members, out);
     }
 
     @Override
@@ -95,12 +93,7 @@ public class PublishActiveCPMembersOp extends Operation implements IdentifiedDat
         super.readInternal(in);
         metadataGroupId = in.readObject();
         membersCommitIndex = in.readLong();
-        int len = in.readInt();
-        members = new ArrayList<>(len);
-        for (int i = 0; i < len; i++) {
-            CPMemberInfo member = in.readObject();
-            members.add(member);
-        }
+        members = SerializationUtil.readCollection(in);
     }
 
     @Override

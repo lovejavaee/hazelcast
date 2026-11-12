@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,12 +22,12 @@ import com.hazelcast.cp.internal.RaftInvocationManager;
 import com.hazelcast.cp.internal.RaftServiceDataSerializerHook;
 import com.hazelcast.cp.internal.exception.CannotCreateRaftGroupException;
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collection;
 
 /**
@@ -85,22 +85,14 @@ public class CreateRaftGroupOp extends MetadataRaftGroupOp implements Indetermin
     @Override
     public void writeData(ObjectDataOutput out) throws IOException {
         out.writeString(groupName);
-        out.writeInt(members.size());
-        for (RaftEndpoint member : members) {
-            out.writeObject(member);
-        }
+        SerializationUtil.writeCollection(members, out);
         out.writeLong(groupId);
     }
 
     @Override
     public void readData(ObjectDataInput in) throws IOException {
         groupName = in.readString();
-        int len = in.readInt();
-        members = new ArrayList<>(len);
-        for (int i = 0; i < len; i++) {
-            RaftEndpoint member = in.readObject();
-            members.add(member);
-        }
+        members = SerializationUtil.readCollection(in);
         groupId = in.readLong();
     }
 

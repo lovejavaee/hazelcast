@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 package com.hazelcast.cp.internal.datastructures.lock;
 
 import com.hazelcast.cp.lock.FencedLock;
-import com.hazelcast.cp.internal.session.AbstractProxySessionManager;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
@@ -71,7 +70,7 @@ public class LockOwnershipState implements IdentifiedDataSerializable {
     }
 
     /**
-     * Returns the session id that currently holds the lock. Returns {@link AbstractProxySessionManager#NO_SESSION_ID} if not held
+     * Returns the session id that currently holds the lock. Returns {@link ProxySessionManager#NO_SESSION_ID} if not held
      */
     public long getSessionId() {
         return sessionId;

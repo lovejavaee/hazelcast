@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package com.hazelcast.executor;
 import com.hazelcast.config.Config;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.spi.properties.ClusterProperty;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
@@ -46,7 +45,7 @@ public class LongRunningTaskTest extends HazelcastTestSupport {
 
     @Before
     public void setup() {
-        Config config = new Config().setProperty(ClusterProperty.OPERATION_CALL_TIMEOUT_MILLIS.getName(), "" + CALL_TIMEOUT);
+        Config config = new Config().setProperty(ClusterProperty.OPERATION_CALL_TIMEOUT_MILLIS.getName(), String.valueOf(CALL_TIMEOUT));
         hz = createHazelcastInstance(config);
     }
 
@@ -56,12 +55,9 @@ public class LongRunningTaskTest extends HazelcastTestSupport {
         SleepingCallable task = new SleepingCallable(response, 10 * CALL_TIMEOUT);
         final Future<String> future = hz.getExecutorService("e").submit(task);
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() throws Exception {
-                assertTrue(future.isDone());
-                assertEquals(response, future.get());
-            }
+        assertTrueEventually(() -> {
+            assertTrue(future.isDone());
+            assertEquals(response, future.get());
         });
     }
 

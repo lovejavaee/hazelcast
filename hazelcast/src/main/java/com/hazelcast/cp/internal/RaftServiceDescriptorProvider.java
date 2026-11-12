@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.cp.internal;
 
 import com.hazelcast.cp.internal.session.RaftSessionService;
+import com.hazelcast.instance.BuildInfoProvider;
 import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.servicemanager.ServiceDescriptor;
 import com.hazelcast.spi.impl.servicemanager.ServiceDescriptorProvider;
@@ -28,9 +29,15 @@ public class RaftServiceDescriptorProvider implements ServiceDescriptorProvider 
 
     @Override
     public ServiceDescriptor[] createServiceDescriptors() {
+        if (BuildInfoProvider.getBuildInfo().isEnterprise()) {
+            // On EE, EnterpriseRaftServiceDescriptorProvider registers the raft service
+            return new ServiceDescriptor[] {
+                    new RaftSessionServiceDescriptor(),
+            };
+        }
         return new ServiceDescriptor[] {
-            new RaftServiceDescriptor(),
-            new RaftSessionServiceDescriptor(),
+                new RaftServiceDescriptor(),
+                new RaftSessionServiceDescriptor(),
         };
     }
 

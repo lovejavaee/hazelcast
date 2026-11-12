@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -79,8 +79,8 @@ class CoalescingPublisherAccumulator extends BasicAccumulator<QueryCacheEventDat
         }
 
         if (logger.isFinestEnabled()) {
-            logger.finest(format("Added to index key=%s, sequence=%d, indexSize=%d",
-                    eventData.getKey(), eventData.getSequence(), index.size()));
+            logger.finest("Added to index key=%s, sequence=%d, indexSize=%d",
+                    eventData.getKey(), eventData.getSequence(), index.size());
         }
     }
 
@@ -107,16 +107,16 @@ class CoalescingPublisherAccumulator extends BasicAccumulator<QueryCacheEventDat
         }
 
         private void clearIndexes(Sequenced sequenced) {
-            if (sequenced instanceof BatchEventData) {
-                Collection<QueryCacheEventData> events = ((BatchEventData) sequenced).getEvents();
+            if (sequenced instanceof BatchEventData data) {
+                Collection<QueryCacheEventData> events = data.getEvents();
                 for (QueryCacheEventData event : events) {
                     removeFromIndex(event);
                 }
                 return;
             }
 
-            if (sequenced instanceof QueryCacheEventData) {
-                removeFromIndex((QueryCacheEventData) sequenced);
+            if (sequenced instanceof QueryCacheEventData data) {
+                removeFromIndex(data);
                 return;
             }
 
@@ -129,8 +129,8 @@ class CoalescingPublisherAccumulator extends BasicAccumulator<QueryCacheEventDat
             index.remove(dataKey);
 
             if (logger.isFinestEnabled()) {
-                logger.finest(format("Removed from index key=%s, sequence=%d, indexSize=%d",
-                        eventData.getKey(), eventData.getSequence(), index.size()));
+                logger.finest("Removed from index key=%s, sequence=%d, indexSize=%d",
+                        eventData.getKey(), eventData.getSequence(), index.size());
             }
         }
     }

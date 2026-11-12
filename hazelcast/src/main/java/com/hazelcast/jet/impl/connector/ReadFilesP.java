@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,11 +28,13 @@ import com.hazelcast.jet.pipeline.file.impl.FileProcessorMetaSupplier;
 import com.hazelcast.jet.pipeline.file.impl.FileTraverser;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
+import com.hazelcast.security.impl.function.SecuredFunctions;
 import com.hazelcast.security.permission.ConnectorPermission;
 
 import javax.annotation.Nonnull;
-import java.io.File;
+import javax.annotation.Nullable;
 import java.io.IOException;
+import java.io.Serial;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -74,7 +76,7 @@ public final class ReadFilesP<T> extends AbstractProcessor {
 
     private LocalFileTraverser<T> traverser;
 
-    private ReadFilesP(
+    public ReadFilesP(
             @Nonnull String directory,
             @Nonnull String glob,
             boolean sharedFileSystem,
@@ -126,6 +128,7 @@ public final class ReadFilesP<T> extends AbstractProcessor {
         }
     }
 
+
     /**
      * Private API. Use {@link SourceProcessors#readFilesP} instead.
      */
@@ -134,16 +137,18 @@ public final class ReadFilesP<T> extends AbstractProcessor {
             @Nonnull String glob,
             boolean sharedFileSystem,
             boolean ignoreFileNotFound,
-            @Nonnull FunctionEx<? super Path, ? extends Stream<T>> readFileFn
+            @Nonnull FunctionEx<? super Path, ? extends Stream<T>> readFileFn,
+            @Nullable String connectorName
     ) {
         checkSerializable(readFileFn, "readFileFn");
 
         return new MetaSupplier<>(DEFAULT_LOCAL_PARALLELISM, directory, glob, sharedFileSystem,
-                ignoreFileNotFound, readFileFn);
+                ignoreFileNotFound, readFileFn, connectorName);
     }
 
-    private static final class MetaSupplier<T> implements FileProcessorMetaSupplier<T> {
+    private static final class MetaSupplier<T> implements FileProcessorMetaSupplier<T>, ConnectorNameAware {
 
+        @Serial
         private static final long serialVersionUID = 1L;
 
         private static final ILogger LOGGER = Logger.getLogger(MetaSupplier.class);
@@ -154,6 +159,8 @@ public final class ReadFilesP<T> extends AbstractProcessor {
         private final boolean sharedFileSystem;
         private final boolean ignoreFileNotFound;
         private final FunctionEx<? super Path, ? extends Stream<T>> readFileFn;
+        @Nullable
+        private final String connectorName;
 
         private MetaSupplier(
                 int localParallelism,
@@ -161,7 +168,8 @@ public final class ReadFilesP<T> extends AbstractProcessor {
                 String glob,
                 boolean sharedFileSystem,
                 boolean ignoreFileNotFound,
-                FunctionEx<? super Path, ? extends Stream<T>> readFileFn
+                FunctionEx<? super Path, ? extends Stream<T>> readFileFn,
+                @Nullable String connectorName
         ) {
             this.localParallelism = localParallelism;
             this.directory = directory;
@@ -169,13 +177,20 @@ public final class ReadFilesP<T> extends AbstractProcessor {
             this.sharedFileSystem = sharedFileSystem;
             this.ignoreFileNotFound = ignoreFileNotFound;
             this.readFileFn = readFileFn;
+            this.connectorName = connectorName;
+        }
+
+        @Override
+        public void init(@Nonnull Context context) throws Exception {
+            FileProcessorMetaSupplier.super.init(context);
         }
 
         @Nonnull
         @Override
         public Function<? super Address, ? extends ProcessorSupplier> get(@Nonnull List<Address> addresses) {
-            return address -> ProcessorSupplier.of(() -> new ReadFilesP<>(directory, glob, sharedFileSystem,
-                    ignoreFileNotFound, readFileFn));
+            return address -> ProcessorSupplier.of(SecuredFunctions.readFilesProcessorFn(
+                    directory, glob, sharedFileSystem, ignoreFileNotFound, readFileFn
+            ));
         }
 
         @Override
@@ -191,6 +206,27 @@ public final class ReadFilesP<T> extends AbstractProcessor {
         @Override
         public Permission getRequiredPermission() {
             return ConnectorPermission.file(directory, ACTION_READ);
+        }
+
+        @Override
+        public boolean isReusable() {
+            return true;
+        }
+
+        @Override
+        public boolean initIsCooperative() {
+            return true;
+        }
+
+        @Override
+        public boolean closeIsCooperative() {
+            return true;
+        }
+
+        @Nullable
+        @Override
+        public String getConnectorName() {
+            return connectorName;
         }
     }
 
@@ -223,16 +259,15 @@ public final class ReadFilesP<T> extends AbstractProcessor {
             this.delegate = traverseIterator(uncheckCall(this::paths))
                     .filter(path -> !Files.isDirectory(path))
                     .peek(path -> hasResults = true)
-                    .filter(path -> pathFilterFn.test(path))
+                    .filter(pathFilterFn)
                     .flatMap(this::processFile);
         }
 
         private Iterator<Path> paths() throws IOException {
-            File file = directory.toFile();
-            if (!file.exists()) {
+            if (!Files.exists(directory)) {
                 throw new JetException("The directory '" + directory + "' does not exist.");
             }
-            if (!file.isDirectory()) {
+            if (!Files.isDirectory(directory)) {
                 throw new JetException("The given path (" + directory + ") must point to a directory, not a file.");
             }
 
@@ -241,7 +276,7 @@ public final class ReadFilesP<T> extends AbstractProcessor {
         }
 
         private Traverser<T> processFile(Path file) {
-            logger.finest("Processing file " + file);
+            logger.finest("Processing file %s", file);
 
             assert fileStream == null : "fileStream != null";
             fileStream = readFileFn.apply(file);

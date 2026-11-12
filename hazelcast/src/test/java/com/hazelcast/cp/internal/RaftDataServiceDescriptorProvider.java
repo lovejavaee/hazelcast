@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,21 @@
 package com.hazelcast.cp.internal;
 
 import com.hazelcast.cp.internal.raft.impl.dataservice.RaftDataService;
+import com.hazelcast.instance.BuildInfoProvider;
 import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.servicemanager.ServiceDescriptor;
 import com.hazelcast.spi.impl.servicemanager.ServiceDescriptorProvider;
 
 public class RaftDataServiceDescriptorProvider implements ServiceDescriptorProvider {
 
+    private static final ServiceDescriptor[] EMPTY = {};
+
     @Override
     public ServiceDescriptor[] createServiceDescriptors() {
-        return new ServiceDescriptor[] {new ServiceDescriptor() {
+        if (BuildInfoProvider.getBuildInfo().isEnterprise()) {
+            return EMPTY;
+        }
+        return new ServiceDescriptor[]{new ServiceDescriptor() {
             @Override
             public String getServiceName() {
                 return RaftDataService.SERVICE_NAME;
@@ -35,6 +41,6 @@ public class RaftDataServiceDescriptorProvider implements ServiceDescriptorProvi
             public Object getService(NodeEngine nodeEngine) {
                 return new RaftDataService();
             }
-        }, };
+        } };
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,8 @@ package com.hazelcast.cp.internal.raft.exception;
 import com.hazelcast.cp.exception.CPSubsystemException;
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
 
+import java.io.Serial;
+
 /**
  * A {@code CPSubsystemException} which is thrown when a member, which is
  * requested to be removed from a CP group, is not a member of that group
@@ -27,6 +29,7 @@ import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
  */
 public class MemberDoesNotExistException extends CPSubsystemException {
 
+    @Serial
     private static final long serialVersionUID = -6536728347770526039L;
 
     public MemberDoesNotExistException(RaftEndpoint member) {

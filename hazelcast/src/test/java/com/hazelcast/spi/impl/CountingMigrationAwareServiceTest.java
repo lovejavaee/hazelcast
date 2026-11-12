@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -93,7 +93,7 @@ public class CountingMigrationAwareServiceTest {
     }
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         // setup the counting migration aware service and execute 1 prepareReplicationOperation (which does not
         // affect the counter)
         countingMigrationAwareService = new CountingMigrationAwareService(wrappedMigrationAwareService);
@@ -108,7 +108,7 @@ public class CountingMigrationAwareServiceTest {
     }
 
     @Test
-    public void beforeMigration() throws Exception {
+    public void beforeMigration() {
         // when: countingMigrationAwareService.beforeMigration was invoked (in setUp method)
         // then: if event involves primary replica, stamp should change.
         if (isPrimaryReplicaMigrationEvent(event)) {
@@ -121,7 +121,7 @@ public class CountingMigrationAwareServiceTest {
     }
 
     @Test
-    public void commitMigration() throws Exception {
+    public void commitMigration() {
         // when: before - commit migration methods have been executed
         try {
             countingMigrationAwareService.commitMigration(event);
@@ -140,7 +140,7 @@ public class CountingMigrationAwareServiceTest {
     }
 
     @Test
-    public void rollbackMigration() throws Exception {
+    public void rollbackMigration() {
         // when: before - rollback migration methods have been executed
         try {
             countingMigrationAwareService.rollbackMigration(event);
@@ -156,6 +156,53 @@ public class CountingMigrationAwareServiceTest {
             assertEquals(initialMigrationStamp, currentMigrationStamp);
         }
         assertTrue(countingMigrationAwareService.validateMigrationStamp(currentMigrationStamp));
+    }
+
+    @Test
+    public void partitionMigrationStamp_isChangedOnlyForMigratingPartition() {
+        int partitionId = 1;
+        int otherPartitionId = 2;
+        PartitionMigrationEvent partitionEvent = mock(PartitionMigrationEvent.class);
+        when(partitionEvent.getPartitionId()).thenReturn(partitionId);
+        when(partitionEvent.getCurrentReplicaIndex()).thenReturn(PRIMARY_REPLICA_INDEX);
+        when(partitionEvent.getNewReplicaIndex()).thenReturn(1);
+
+        CountingMigrationAwareService service = new CountingMigrationAwareService(new NoOpMigrationAwareService());
+        int partitionStamp = service.getPartitionMigrationStamp(partitionId);
+        int otherPartitionStamp = service.getPartitionMigrationStamp(otherPartitionId);
+
+        service.beforeMigration(partitionEvent);
+
+        assertEquals(IN_FLIGHT_MIGRATION_STAMP, service.getPartitionMigrationStamp(partitionId));
+        assertFalse(service.validatePartitionMigrationStamp(partitionId, partitionStamp));
+        assertEquals(otherPartitionStamp, service.getPartitionMigrationStamp(otherPartitionId));
+        assertTrue(service.validatePartitionMigrationStamp(otherPartitionId, otherPartitionStamp));
+
+        service.commitMigration(partitionEvent);
+
+        assertNotEquals(partitionStamp, service.getPartitionMigrationStamp(partitionId));
+        assertFalse(service.validatePartitionMigrationStamp(partitionId, partitionStamp));
+        assertTrue(service.validatePartitionMigrationStamp(
+                partitionId, service.getPartitionMigrationStamp(partitionId)));
+        assertTrue(service.validatePartitionMigrationStamp(otherPartitionId, otherPartitionStamp));
+    }
+
+    @Test
+    public void partitionMigrationStamp_isNotChangedForBackupMigration() {
+        int partitionId = 1;
+        PartitionMigrationEvent partitionEvent = mock(PartitionMigrationEvent.class);
+        when(partitionEvent.getPartitionId()).thenReturn(partitionId);
+        when(partitionEvent.getCurrentReplicaIndex()).thenReturn(2);
+        when(partitionEvent.getNewReplicaIndex()).thenReturn(1);
+
+        CountingMigrationAwareService service = new CountingMigrationAwareService(new NoOpMigrationAwareService());
+        int partitionStamp = service.getPartitionMigrationStamp(partitionId);
+
+        service.beforeMigration(partitionEvent);
+        service.commitMigration(partitionEvent);
+
+        assertEquals(partitionStamp, service.getPartitionMigrationStamp(partitionId));
+        assertTrue(service.validatePartitionMigrationStamp(partitionId, partitionStamp));
     }
 
     @Test

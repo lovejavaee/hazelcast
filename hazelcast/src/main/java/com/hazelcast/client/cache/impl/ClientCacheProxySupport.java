@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -134,8 +134,8 @@ abstract class ClientCacheProxySupport<K, V> extends ClientProxy implements ICac
     private ILogger logger;
     private final AtomicReference<HazelcastClientCacheManager> cacheManagerRef = new AtomicReference<>();
     private final ConcurrentMap<Future, CompletionListener> loadAllCalls = new ConcurrentHashMap<>();
-    private final AtomicBoolean isClosed = new AtomicBoolean(false);
-    private final AtomicBoolean isDestroyed = new AtomicBoolean(false);
+    private final AtomicBoolean isClosed = new AtomicBoolean();
+    private final AtomicBoolean isDestroyed = new AtomicBoolean();
 
     private final AtomicInteger completionIdCounter = new AtomicInteger();
 
@@ -798,8 +798,8 @@ abstract class ClientCacheProxySupport<K, V> extends ClientProxy implements ICac
                                       CacheEventListenerAdaptor<K, V> adaptor) {
         listenerCompleter.putListenerIfAbsent(cacheEntryListenerConfiguration, regId);
         CacheEntryListener<K, V> entryListener = adaptor.getCacheEntryListener();
-        if (entryListener instanceof Closeable) {
-            closeableListeners.putIfAbsent(regId, (Closeable) entryListener);
+        if (entryListener instanceof Closeable closeable) {
+            closeableListeners.putIfAbsent(regId, closeable);
         }
     }
 
@@ -1105,7 +1105,7 @@ abstract class ClientCacheProxySupport<K, V> extends ClientProxy implements ICac
         }
 
         List<Throwable> throwables = FutureUtil.waitUntilAllResponded(futures);
-        if (throwables.size() > 0) {
+        if (!throwables.isEmpty()) {
             throw rethrow(throwables.get(0));
         }
     }

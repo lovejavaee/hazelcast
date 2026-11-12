@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -90,6 +90,7 @@ public final class MetricDescriptorConstants {
     // ===[/CLUSTER]====================================================
 
     // ===[CP SUBSYSTEM]================================================
+    // TODO should be removed, because moved to CPMetricDescriptorConstants. Left here for MC compatibility
     public static final String CP_PREFIX_RAFT = "raft";
     public static final String CP_PREFIX_RAFT_GROUP = "raft.group";
     public static final String CP_PREFIX_RAFT_METADATA = "raft.metadata";
@@ -212,6 +213,12 @@ public final class MetricDescriptorConstants {
     public static final String MAP_METRIC_REMOVE_COUNT = "removeCount";
     public static final String MAP_METRIC_EVICTION_COUNT = "evictionCount";
     public static final String MAP_METRIC_EXPIRATION_COUNT = "expirationCount";
+    public static final String MAP_METRIC_VALUES_COUNT = "valuesCount";
+    public static final String MAP_METRIC_ENTRYSET_COUNT = "entrySetCount";
+    public static final String MAP_METRIC_QUERY_LIMITER_HIT_COUNT = "queryLimiterHitCount";
+    public static final String MAP_METRIC_OVERSIZED_ENTRIES_SEEN = "oversizedEntriesSeen";
+    public static final String MAP_METRIC_LAST_OVERSIZED_ENTRY_SIZE = "lastOversizedEntrySize";
+    public static final String MAP_METRIC_LAST_OVERSIZED_ENTRY_TIME = "lastOversizedEntryTime";
     public static final String MAP_METRIC_CREATION_TIME = "creationTime";
     public static final String MAP_METRIC_OWNED_ENTRY_COUNT = "ownedEntryCount";
     public static final String MAP_METRIC_BACKUP_ENTRY_COUNT = "backupEntryCount";
@@ -224,6 +231,8 @@ public final class MetricDescriptorConstants {
     public static final String MAP_METRIC_BACKUP_COUNT = "backupCount";
     public static final String MAP_METRIC_QUERY_COUNT = "queryCount";
     public static final String MAP_METRIC_INDEXED_QUERY_COUNT = "indexedQueryCount";
+    public static final String MAP_METRIC_INDEXES_SKIPPED_QUERY_COUNT = "indexesSkippedQueryCount";
+    public static final String MAP_METRIC_NO_MATCHING_INDEX_QUERY_COUNT = "noMatchingIndexQueryCount";
     public static final String MAP_METRIC_TOTAL_PUT_LATENCY = "totalPutLatency";
     public static final String MAP_METRIC_TOTAL_SET_LATENCY = "totalSetLatency";
     public static final String MAP_METRIC_TOTAL_GET_LATENCY = "totalGetLatency";
@@ -244,6 +253,10 @@ public final class MetricDescriptorConstants {
     public static final String MAP_METRIC_INDEX_REMOVE_COUNT = "removeCount";
     public static final String MAP_METRIC_INDEX_TOTAL_REMOVE_LATENCY = "totalRemoveLatency";
     public static final String MAP_METRIC_INDEX_MEMORY_COST = "memoryCost";
+    public static final String MAP_METRIC_INDEX_PARTITIONS_INDEXED = "partitionsIndexed";
+    public static final String MAP_METRIC_INDEX_PARTITION_UPDATES_STARTED = "partitionUpdatesStarted";
+    public static final String MAP_METRIC_INDEX_PARTITION_UPDATES_FINISHED = "partitionUpdatesFinished";
+    public static final String MAP_METRIC_INDEX_NOT_READY_QUERY_COUNT = "notReadyQueryCount";
     public static final String MAP_METRIC_FULL_PARTITION_REPLICATION_COUNT = "fullPartitionReplicationCount";
     public static final String MAP_METRIC_DIFF_PARTITION_REPLICATION_COUNT = "differentialPartitionReplicationCount";
     public static final String MAP_METRIC_FULL_PARTITION_REPLICATION_RECORDS_COUNT
@@ -254,6 +267,7 @@ public final class MetricDescriptorConstants {
             = "map.store.offloaded.operations";
     public static final String MAP_METRIC_MAP_STORE_WAITING_TO_BE_PROCESSED_COUNT
             = "waitingToBeProcessedCount";
+    public static final String MAP_TAG_HYBRID_LOG_ID = "hybridLogId";
     // ===[/MAP]========================================================
 
     // ===[MEMORY]======================================================
@@ -270,6 +284,7 @@ public final class MetricDescriptorConstants {
     public static final String MEMORY_METRIC_FREE_NATIVE = "freeNative";
     public static final String MEMORY_METRIC_MAX_METADATA = "maxMetadata";
     public static final String MEMORY_METRIC_USED_METADATA = "usedMetadata";
+    public static final String MEMORY_METRIC_POOLED_BUDDY_MERGES = "pooled.buddyMerges";
     // ===[/MEMORY]=====================================================
 
     // ===[MEMORY MANAGER]==============================================
@@ -403,11 +418,12 @@ public final class MetricDescriptorConstants {
     public static final String OPERATION_METRIC_INVOCATION_MONITOR_HEARTBEAT_BROADCAST_PERIOD_MILLIS =
             "heartbeatBroadcastPeriodMillis";
     public static final String OPERATION_METRIC_INVOCATION_MONITOR_INVOCATION_SCAN_PERIOD_MILLIS = "invocationScanPeriodMillis";
-    public static final String OPERATION_METRIC_INVOCATION_REGISTRY_INVOCATIONS_USED_PERCENTAGE = "invocations.usedPercentage";
-    public static final String OPERATION_METRIC_INVOCATION_REGISTRY_INVOCATIONS_LAST_CALL_ID = "invocations.lastCallId";
-    public static final String OPERATION_METRIC_INVOCATION_REGISTRY_INVOCATIONS_PENDING = "invocations.pending";
+    public static final String OPERATION_METRIC_INVOCATION_REGISTRY_INVOCATIONS_USED_PERCENTAGE = "usedPercentage";
+    public static final String OPERATION_METRIC_INVOCATION_REGISTRY_INVOCATIONS_LAST_CALL_ID = "lastCallId";
+    public static final String OPERATION_METRIC_INVOCATION_REGISTRY_INVOCATIONS_PENDING = "pending";
     public static final String OPERATION_METRIC_OPERATION_RUNNER_EXECUTED_OPERATIONS_COUNT = "executedOperationsCount";
     public static final String OPERATION_METRIC_OPERATION_SERVICE_ASYNC_OPERATIONS = "asyncOperations";
+    // OPERATION_METRIC_OPERATION_SERVICE_TIMEOUT_COUNT will be removed in a future version
     public static final String OPERATION_METRIC_OPERATION_SERVICE_TIMEOUT_COUNT = "operationTimeoutCount";
     public static final String OPERATION_METRIC_OPERATION_SERVICE_CALL_TIMEOUT_COUNT = "callTimeoutCount";
     public static final String OPERATION_METRIC_OPERATION_SERVICE_RETRY_COUNT = "retryCount";
@@ -450,6 +466,7 @@ public final class MetricDescriptorConstants {
     public static final String PERSISTENCE_METRIC_TOMB_GARBAGE = "tombGarbage";
     public static final String PERSISTENCE_METRIC_GC_LIVE_VALUES = "liveValues";
     public static final String PERSISTENCE_METRIC_GC_LIVE_TOMBSTONES = "liveTombstones";
+    public static final String PERSISTENCE_DISCRIMINATOR_STORE_NAME = "storeName";
     // ===[/PERSISTENCE]================================================
 
     // ===[PN COUNTER]==================================================
@@ -499,6 +516,8 @@ public final class MetricDescriptorConstants {
     public static final String REPLICATED_MAP_METRIC_GET_COUNT = "getCount";
     public static final String REPLICATED_MAP_METRIC_PUT_COUNT = "putCount";
     public static final String REPLICATED_MAP_METRIC_REMOVE_COUNT = "removeCount";
+    public static final String REPLICATED_MAP_METRIC_VALUES_COUNT = "valuesCount";
+    public static final String REPLICATED_MAP_METRIC_ENTRYSET_COUNT = "entrySetCount";
     public static final String REPLICATED_MAP_METRIC_TOTAL_GET_LATENCIES = "totalGetLatencies";
     public static final String REPLICATED_MAP_METRIC_TOTAL_PUT_LATENCIES = "totalPutLatencies";
     public static final String REPLICATED_MAP_METRIC_TOTAL_REMOVE_LATENCIES = "totalRemoveLatencies";
@@ -581,17 +600,34 @@ public final class MetricDescriptorConstants {
 
     // ===[TSTORE]======================================================
     public static final String TSTORE_DEVICE_DISCRIMINATOR_NAME = "name";
-    public static final String TSTORE_DEVICE_USED_SPACE = "tstore.device.usedSpace";
-    public static final String TSTORE_DEVICE_FREE_SPACE = "tstore.device.freeSpace";
-    public static final String TSTORE_DEVICE_MAX_SPACE = "tstore.device.maxSpace";
-    public static final String TSTORE_DEVICE_USAGE = "tstore.device.usage";
-    public static final String TSTORE_HLOG_LENGTH = "tstore.hlog.length";
+    // system-wide device metrics
+    public static final String TSTORE_DEVICE_SYS_USED = "tstore.device.sys.used";
+    public static final String TSTORE_DEVICE_SYS_FREE = "tstore.device.sys.free";
+    public static final String TSTORE_DEVICE_SYS_CAPACITY = "tstore.device.sys.capacity";
+
+    // tstore-wide device metrics
+    public static final String TSTORE_DEVICE_TS_USED = "tstore.device.ts.used";
+    public static final String TSTORE_DEVICE_TS_FREE = "tstore.device.ts.free";
+    public static final String TSTORE_DEVICE_TS_CAPACITY = "tstore.device.ts.capacity";
+
+    // per-data-source (e.g. IMap) device metrics
+    public static final String TSTORE_DEVICE_DS_USED = "tstore.device.ds.used";
+
+    // per node device metrics
+    public static final String TSTORE_DEVICE_NODE_USED = "tstore.device.node.used";
+
+    public static final String TSTORE_HLOG_DS_LENGTH = "tstore.hlog.ds.length";
+    public static final String TSTORE_HLOG_TS_LENGTH = "tstore.hlog.ts.length";
+
+    public static final String TSTORE_HLOG_AGGREGATED_COUNT = "tstore.hlog.aggregated.count";
     public static final String TSTORE_HLOG_PAGE_WRITE_DURATION_AVG = "tstore.hlog.pageWriteDuration.avg";
     public static final String TSTORE_HLOG_PAGE_WRITE_DURATION_MIN = "tstore.hlog.pageWriteDuration.min";
     public static final String TSTORE_HLOG_PAGE_WRITE_DURATION_MAX = "tstore.hlog.pageWriteDuration.max";
+    public static final String TSTORE_HLOG_PAGE_WRITE_DURATION_TOTAL = "tstore.hlog.pageWriteDuration.total";
     public static final String TSTORE_HLOG_READ_RECORD_DURATION_AVG = "tstore.hlog.readRecordDuration.avg";
     public static final String TSTORE_HLOG_READ_RECORD_DURATION_MIN = "tstore.hlog.readRecordDuration.min";
     public static final String TSTORE_HLOG_READ_RECORD_DURATION_MAX = "tstore.hlog.readRecordDuration.max";
+    public static final String TSTORE_HLOG_READ_RECORD_DURATION_TOTAL = "tstore.hlog.readRecordDuration.total";
     public static final String TSTORE_HLOG_READ_RECORD_HITS = "tstore.hlog.readRecord.hits";
     public static final String TSTORE_HLOG_READ_RECORD_MISSES = "tstore.hlog.readRecord.misses";
     public static final String TSTORE_HLOG_READ_RECORD_HIT_PERCENT = "tstore.hlog.readRecord.hit.percent";
@@ -620,6 +656,8 @@ public final class MetricDescriptorConstants {
     public static final String TSTORE_HLOG_PAGING_FREQUENCY_MAX = "tstore.hlog.paging.frequency.max";
 
     public static final String TSTORE_HLOG_COMPACTION_PREFIX = "tstore.hlog.compaction.";
+
+    public static final String TSTORE_INDEX_HLOG_COMPACTION_PREFIX = "tstore.hlog.compaction.index.";
     public static final String TSTORE_HLOG_COMPACTION_DUMMY_RECORDS_COUNT = TSTORE_HLOG_COMPACTION_PREFIX
             + "dummyRecords.count";
     public static final String TSTORE_HLOG_COMPACTION_DUMMY_RECORDS_SIZE = TSTORE_HLOG_COMPACTION_PREFIX
@@ -644,7 +682,6 @@ public final class MetricDescriptorConstants {
     public static final String TSTORE_HLOG_COMPACTION_QUEUE_COUNT = TSTORE_HLOG_COMPACTION_PREFIX + "queue.count";
     public static final String TSTORE_HLOG_COMPACTION_FAILED_COUNT = TSTORE_HLOG_COMPACTION_PREFIX + "failed.count";
     public static final String TSTORE_HLOG_COMPACTION_IN_PROGRESS_COUNT = TSTORE_HLOG_COMPACTION_PREFIX + "inProgress.count";
-
     public static final String TSTORE_HLOG_COMPACTION_QUEUE_TIME_TOTAL = TSTORE_HLOG_COMPACTION_PREFIX + "queueTime.total";
     public static final String TSTORE_HLOG_COMPACTION_QUEUE_TIME_MIN = TSTORE_HLOG_COMPACTION_PREFIX + "queueTime.min";
     public static final String TSTORE_HLOG_COMPACTION_QUEUE_TIME_MAX = TSTORE_HLOG_COMPACTION_PREFIX + "queueTime.max";
@@ -698,6 +735,10 @@ public final class MetricDescriptorConstants {
     public static final String WAN_METRIC_ACK_DELAY_CURRENT_MILLIS = "ackDelayCurrentMillis";
     public static final String WAN_METRIC_ACK_DELAY_LAST_START = "ackDelayLastStart";
     public static final String WAN_METRIC_ACK_DELAY_LAST_END = "ackDelayLastEnd";
+    public static final String WAN_METRIC_CONNECTION_HEALTH = "connectionHealth";
+    public static final String WAN_METRIC_FAILED_TRANSMIT_COUNT = "failedTransmitCount";
+    public static final String WAN_DISCRIMINATOR_CONNECTION_ADDRESS = "address";
+    public static final String WAN_TAG_DISCOVERY_STRATEGY = "discoveryStrategy";
     public static final String WAN_QUEUE_FILL_PERCENT = "queueFillPercent";
     // ===[/WAN]========================================================
 
@@ -707,6 +748,76 @@ public final class MetricDescriptorConstants {
     public static final String KAFKA_CONNECT_SOURCE_RECORD_POLL_TOTAL = "sourceRecordPollTotal";
     public static final String KAFKA_CONNECT_SOURCE_RECORD_POLL_AVG_TIME = "sourceRecordPollTotalAvgTime";
     // ===[/KAFKA-CONNECT]=======================================================
+
+    // ===[USER-CODE-NAMESPACES]=======================================================
+    public static final String USER_CODE_NAMESPACE_PREFIX = "ucn";
+    public static final String USER_CODE_NAMESPACE_RESOURCE_PREFIX = "ucn.resource";
+    public static final String USER_CODE_NAMESPACE_RESOURCE_ID_TAG = "resourceId";
+    public static final String USER_CODE_NAMESPACE_DISCRIMINATOR_NAME = "name";
+    public static final String USER_CODE_NAMESPACE_UPDATE_TIME = "updateTime";
+    public static final String USER_CODE_NAMESPACE_RESOURCE_COUNT = "resourceCount";
+    public static final String USER_CODE_NAMESPACE_RESOURCE_SIZE_BYTES = "resourceSizeBytes";
+    public static final String USER_CODE_NAMESPACE_RESOURCE_TYPE = "resourceType";
+    // ===[/USER-CODE-NAMESPACES]=======================================================
+
+    // ===[VECTOR COLLECTION]=========================================================
+    public static final String VECTOR_COLLECTION_PREFIX = "vectorCollection";
+    public static final String VECTOR_COLLECTION_DISCRIMINATOR_NAME = "name";
+
+    public static final String VECTOR_COLLECTION_LAST_ACCESS_TIME = "lastAccessTime";
+    public static final String VECTOR_COLLECTION_LAST_UPDATE_TIME = "lastUpdateTime";
+
+    public static final String VECTOR_COLLECTION_GET_COUNT = "getCount";
+    public static final String VECTOR_COLLECTION_PUT_COUNT = "putCount";
+    public static final String VECTOR_COLLECTION_PUT_ALL_COUNT = "putAllCount";
+    public static final String VECTOR_COLLECTION_PUT_ALL_ENTRY_COUNT = "putAllEntryCount";
+    public static final String VECTOR_COLLECTION_SET_COUNT = "setCount";
+    public static final String VECTOR_COLLECTION_REMOVE_COUNT = "removeCount";
+    public static final String VECTOR_COLLECTION_DELETE_COUNT = "deleteCount";
+
+    public static final String VECTOR_COLLECTION_CREATION_TIME = "creationTime";
+    public static final String VECTOR_COLLECTION_OWNED_ENTRY_COUNT = "ownedEntryCount";
+    public static final String VECTOR_COLLECTION_BACKUP_ENTRY_COUNT = "backupEntryCount";
+    public static final String VECTOR_COLLECTION_OWNED_ENTRY_HEAP_MEMORY_COST = "ownedEntryHeapMemoryCost";
+    public static final String VECTOR_COLLECTION_BACKUP_ENTRY_HEAP_MEMORY_COST = "backupEntryHeapMemoryCost";
+    public static final String VECTOR_COLLECTION_HEAP_COST = "heapCost";
+    public static final String VECTOR_COLLECTION_BACKUP_COUNT = "backupCount";
+
+    public static final String VECTOR_COLLECTION_TOTAL_PUT_LATENCY = "totalPutLatency";
+    public static final String VECTOR_COLLECTION_TOTAL_PUT_ALL_LATENCY = "totalPutAllLatency";
+    public static final String VECTOR_COLLECTION_TOTAL_SET_LATENCY = "totalSetLatency";
+    public static final String VECTOR_COLLECTION_TOTAL_GET_LATENCY = "totalGetLatency";
+    public static final String VECTOR_COLLECTION_TOTAL_REMOVE_LATENCY = "totalRemoveLatency";
+    public static final String VECTOR_COLLECTION_TOTAL_DELETE_LATENCY = "totalDeleteLatency";
+    public static final String VECTOR_COLLECTION_TOTAL_MAX_PUT_LATENCY = "totalMaxPutLatency";
+    public static final String VECTOR_COLLECTION_TOTAL_MAX_PUT_ALL_LATENCY = "totalMaxPutAllLatency";
+    public static final String VECTOR_COLLECTION_TOTAL_MAX_SET_LATENCY = "totalMaxSetLatency";
+    public static final String VECTOR_COLLECTION_TOTAL_MAX_GET_LATENCY = "totalMaxGetLatency";
+    public static final String VECTOR_COLLECTION_TOTAL_MAX_REMOVE_LATENCY = "totalMaxRemoveLatency";
+    public static final String VECTOR_COLLECTION_TOTAL_MAX_DELETE_LATENCY = "totalMaxDeleteLatency";
+
+    public static final String VECTOR_COLLECTION_SEARCH_COUNT = "searchCount";
+    public static final String VECTOR_COLLECTION_SEARCH_RESULTS_COUNT = "searchResultsCount";
+    public static final String VECTOR_COLLECTION_TOTAL_SEARCH_LATENCY = "totalSearchLatency";
+    public static final String VECTOR_COLLECTION_MAX_SEARCH_LATENCY = "maxSearchLatency";
+
+    // detailed search metrics
+    public static final String VECTOR_COLLECTION_SEARCH_INDEX_QUERY_COUNT = "searchIndexQueryCount";
+    public static final String VECTOR_COLLECTION_SEARCH_INDEX_VISITED_NODES = "searchIndexVisitedNodes";
+
+    public static final String VECTOR_COLLECTION_OPTIMIZE_COUNT = "optimizeCount";
+    public static final String VECTOR_COLLECTION_TOTAL_OPTIMIZE_LATENCY = "totalOptimizeLatency";
+    public static final String VECTOR_COLLECTION_MAX_OPTIMIZE_LATENCY = "maxOptimizeLatency";
+
+    public static final String VECTOR_COLLECTION_CLEAR_COUNT = "clearCount";
+    public static final String VECTOR_COLLECTION_TOTAL_CLEAR_LATENCY = "totalClearLatency";
+    public static final String VECTOR_COLLECTION_MAX_CLEAR_LATENCY = "maxClearLatency";
+
+    public static final String VECTOR_COLLECTION_SIZE_COUNT = "sizeCount";
+    public static final String VECTOR_COLLECTION_TOTAL_SIZE_LATENCY = "totalSizeLatency";
+    public static final String VECTOR_COLLECTION_MAX_SIZE_LATENCY = "maxSizeLatency";
+
+    // ===[/VECTOR COLLECTION]=========================================================
 
     public static final String GENERAL_DISCRIMINATOR_NAME = "name";
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@ import com.hazelcast.cp.internal.RaftService;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.spi.exception.RetryableIOException;
 import com.hazelcast.spi.exception.TargetNotMemberException;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.annotation.Nonnull;
 import java.util.Arrays;
@@ -33,8 +32,6 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static com.hazelcast.cp.internal.MetadataRaftGroupManager.INITIAL_METADATA_GROUP_ID;
@@ -50,10 +47,9 @@ public class RaftInvocationContext {
 
     private final ILogger logger;
     private final RaftService raftService;
-    private final ConcurrentMap<CPGroupId, CPMember> knownLeaders = new ConcurrentHashMap<>();
     private final boolean failOnIndeterminateOperationState;
 
-    private AtomicReference<CPMembersContainer> membersContainer = new AtomicReference<>(INITIAL_VALUE);
+    private final AtomicReference<CPMembersContainer> membersContainer = new AtomicReference<>(INITIAL_VALUE);
 
     public RaftInvocationContext(ILogger logger, RaftService raftService) {
         this.logger = logger;
@@ -63,7 +59,6 @@ public class RaftInvocationContext {
 
     public void reset() {
         membersContainer.set(INITIAL_VALUE);
-        knownLeaders.clear();
     }
 
     public boolean setMembers(long groupIdSeed, long membersCommitIndex, Collection<? extends CPMember> members) {
@@ -77,7 +72,7 @@ public class RaftInvocationContext {
             CPMembersContainer currentContainer = membersContainer.get();
             if (newContainer.version.compareTo(currentContainer.version) > 0) {
                 if (membersContainer.compareAndSet(currentContainer, newContainer)) {
-                    logger.fine("Replaced " + currentContainer + " with " + newContainer);
+                    logger.info("Replaced " + currentContainer + " with " + newContainer);
                     return true;
                 }
             } else {
@@ -122,30 +117,30 @@ public class RaftInvocationContext {
         return raftService.getCPGroupPartitionId(groupId);
     }
 
-    public CPMember getCPMember(UUID memberUid) {
-        return membersContainer.get().membersMap.get(memberUid);
+    /**
+     * Fetches a CP member based on its CP UUID.
+     * @param cpMemberUUID the CP {@link UUID} to match against
+     * @return             the {@link CPMember} instance if it exists, or {@code null} otherwise
+     */
+    public CPMember getCPMember(UUID cpMemberUUID) {
+        return membersContainer.get().membersMap.get(cpMemberUUID);
     }
 
     CPMember getKnownLeader(CPGroupId groupId) {
-        return knownLeaders.get(groupId);
+        return raftService.getGroupViewTracker().getLastKnownLeader(groupId);
     }
 
-    boolean setKnownLeader(CPGroupId groupId, CPMember leader) {
+    void setKnownLeaderIfPresent(CPGroupId groupId, CPMember leader) {
         if (leader != null) {
-            logger.fine("Setting known leader for raft: " + groupId + " to " + leader);
-            knownLeaders.put(groupId, leader);
-            return true;
+            logger.fine("Setting known leader for raft: %s to %s", groupId, leader);
+            raftService.getGroupViewTracker().setLastKnownLeader(groupId, leader);
         }
-
-        return false;
     }
 
     void updateKnownLeaderOnFailure(CPGroupId groupId, Throwable cause) {
-        if (cause instanceof CPSubsystemException) {
-            CPSubsystemException e = (CPSubsystemException) cause;
-            if (!setKnownLeader(groupId, getCPMember(e.getLeaderUuid()))) {
-                resetKnownLeader(groupId);
-            }
+        if (cause instanceof CPSubsystemException e) {
+            // do not reset the known leader, only overwrite if we know who the new leader is
+            setKnownLeaderIfPresent(groupId, getCPMember(e.getLeaderUuid()));
         } else if (cause instanceof TargetNotMemberException
                 || cause instanceof MemberLeftException
                 || cause instanceof RetryableIOException) {
@@ -153,13 +148,13 @@ public class RaftInvocationContext {
         }
     }
 
-    boolean shouldFailOnIndeterminateOperationState() {
-        return failOnIndeterminateOperationState;
+    private void resetKnownLeader(CPGroupId groupId) {
+        logger.fine("Resetting known leader for raft: %s", groupId);
+        raftService.getGroupViewTracker().setLastKnownLeader(groupId, null);
     }
 
-    private void resetKnownLeader(CPGroupId groupId) {
-        logger.fine("Resetting known leader for raft: " + groupId);
-        knownLeaders.remove(groupId);
+    boolean shouldFailOnIndeterminateOperationState() {
+        return failOnIndeterminateOperationState;
     }
 
     MemberCursor newMemberCursor() {
@@ -212,7 +207,6 @@ public class RaftInvocationContext {
         }
     }
 
-    @SuppressFBWarnings("EQ_COMPARETO_USE_OBJECT_EQUALS")
     private static class CPMembersVersion implements Comparable<CPMembersVersion> {
 
         private final long groupIdSeed;

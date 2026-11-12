@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,17 +16,15 @@
 
 package com.hazelcast.aws;
 
-import com.hazelcast.core.HazelcastException;
 import com.hazelcast.spi.utils.RestClient;
 
-import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.TimeZone;
@@ -46,10 +44,9 @@ final class AwsRequestUtils {
     }
 
     static RestClient createRestClient(String url, AwsConfig awsConfig) {
-        return RestClient.create(url)
-            .withConnectTimeoutSeconds(awsConfig.getConnectionTimeoutSeconds())
-            .withReadTimeoutSeconds(awsConfig.getReadTimeoutSeconds())
-            .withRetries(awsConfig.getConnectionRetries());
+        return RestClient.create(url, awsConfig.getConnectionTimeoutSeconds())
+                         .withRequestTimeoutSeconds(awsConfig.getReadTimeoutSeconds())
+                         .withRetries(awsConfig.getConnectionRetries());
     }
 
     static String canonicalQueryString(Map<String, String> attributes) {
@@ -67,15 +64,7 @@ final class AwsRequestUtils {
     }
 
     private static String canonicalQueryString(List<String> list) {
-        Iterator<String> it = list.iterator();
-        StringBuilder result = new StringBuilder();
-        if (it.hasNext()) {
-            result.append(it.next());
-        }
-        while (it.hasNext()) {
-            result.append('&').append(it.next());
-        }
-        return result.toString();
+        return String.join("&", list);
     }
 
     private static void addComponents(List<String> components, Map<String, String> attributes, String key) {
@@ -84,13 +73,9 @@ final class AwsRequestUtils {
 
     private static String urlEncode(String string) {
         String encoded;
-        try {
-            encoded = URLEncoder.encode(string, "UTF-8")
-                    .replace("+", "%20")
-                    .replace("*", "%2A");
-        } catch (UnsupportedEncodingException e) {
-            throw new HazelcastException(e);
-        }
+        encoded = URLEncoder.encode(string, StandardCharsets.UTF_8)
+                .replace("+", "%20")
+                .replace("*", "%2A");
         return encoded;
     }
 

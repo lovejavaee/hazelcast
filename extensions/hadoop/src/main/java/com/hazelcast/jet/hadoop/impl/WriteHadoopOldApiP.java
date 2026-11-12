@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@ import com.hazelcast.jet.core.Processor;
 import com.hazelcast.jet.core.ProcessorMetaSupplier;
 import com.hazelcast.jet.core.ProcessorSupplier;
 import com.hazelcast.jet.hadoop.HadoopSinks;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.JobContextImpl;
 import org.apache.hadoop.mapred.JobID;
@@ -38,6 +37,7 @@ import org.apache.hadoop.mapred.TaskAttemptID;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
+import java.io.Serial;
 import java.util.List;
 
 import static java.util.stream.Collectors.toList;
@@ -91,9 +91,9 @@ public final class WriteHadoopOldApiP<T, K, V> extends AbstractProcessor {
 
     public static class MetaSupplier<T, K, V> implements ProcessorMetaSupplier {
 
-        static final long serialVersionUID = 1L;
+        @Serial
+        private static final long serialVersionUID = 1L;
 
-        @SuppressFBWarnings("SE_BAD_FIELD")
         private final JobConf jobConf;
         private final FunctionEx<? super T, K> extractKeyFn;
         private final FunctionEx<? super T, V> extractValueFn;
@@ -137,9 +137,9 @@ public final class WriteHadoopOldApiP<T, K, V> extends AbstractProcessor {
 
     private static class Supplier<T, K, V> implements ProcessorSupplier {
 
-        static final long serialVersionUID = 1L;
+        @Serial
+        private static final long serialVersionUID = 1L;
 
-        @SuppressFBWarnings("SE_BAD_FIELD")
         private final JobConf jobConf;
         private final FunctionEx<? super T, K> extractKeyFn;
         private final FunctionEx<? super T, V> extractValueFn;

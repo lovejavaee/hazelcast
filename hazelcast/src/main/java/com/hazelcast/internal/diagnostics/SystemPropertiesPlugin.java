@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,8 @@
 
 package com.hazelcast.internal.diagnostics;
 
+import com.hazelcast.internal.config.SensitiveDataMasker;
 import com.hazelcast.logging.ILogger;
-import com.hazelcast.spi.impl.NodeEngineImpl;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.RuntimeMXBean;
@@ -31,14 +31,10 @@ import static java.util.Collections.sort;
  */
 public class SystemPropertiesPlugin extends DiagnosticsPlugin {
 
-    private static final String JVM_ARGS = "java.vm.args";
+    static final String JVM_ARGS = "java.vm.args";
 
     private final List keys = new ArrayList();
     private String inputArgs;
-
-    public SystemPropertiesPlugin(NodeEngineImpl nodeEngine) {
-        this(nodeEngine.getLogger(SystemPropertiesPlugin.class));
-    }
 
     public SystemPropertiesPlugin(ILogger logger) {
         super(logger);
@@ -46,13 +42,25 @@ public class SystemPropertiesPlugin extends DiagnosticsPlugin {
 
     @Override
     public long getPeriodMillis() {
-        return STATIC;
+        return RUN_ONCE_PERIOD_MS;
     }
 
     @Override
     public void onStart() {
+        super.onStart();
         logger.info("Plugin:active");
         inputArgs = getInputArgs();
+    }
+
+    @Override
+    public void onShutdown() {
+        super.onShutdown();
+        logger.info("Plugin:inactive");
+    }
+
+    @Override
+    void readProperties() {
+        // nothing to read
     }
 
     private static String getInputArgs() {
@@ -61,7 +69,7 @@ public class SystemPropertiesPlugin extends DiagnosticsPlugin {
 
         StringBuilder sb = new StringBuilder();
         for (String argument : arguments) {
-            sb.append(argument);
+            sb.append(SensitiveDataMasker.maskSystemPropertyArg(argument));
             sb.append(' ');
         }
         return sb.toString();
@@ -70,6 +78,9 @@ public class SystemPropertiesPlugin extends DiagnosticsPlugin {
     @Override
     @SuppressWarnings("unchecked")
     public void run(DiagnosticsLogWriter writer) {
+        if (!isActive()) {
+            return;
+        }
         writer.startSection("SystemProperties");
 
         keys.clear();
@@ -108,7 +119,7 @@ public class SystemPropertiesPlugin extends DiagnosticsPlugin {
         if (keyString.equals(JVM_ARGS)) {
             return inputArgs;
         } else {
-            return System.getProperty(keyString);
+            return SensitiveDataMasker.mask(keyString, System.getProperty(keyString));
         }
     }
 }

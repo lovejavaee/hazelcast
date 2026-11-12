@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,8 +27,10 @@ import com.hazelcast.sql.SqlColumnType;
 import com.hazelcast.sql.SqlResult;
 import com.hazelcast.sql.SqlRow;
 import com.hazelcast.sql.SqlStatement;
+import com.hazelcast.test.HazelcastSerialClassRunner;
 import junit.framework.TestCase;
 import org.junit.BeforeClass;
+import org.junit.runner.RunWith;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -50,6 +52,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 @SuppressWarnings({"unchecked", "rawtypes"})
+@RunWith(HazelcastSerialClassRunner.class)
 public abstract class ExpressionTestSupport extends SqlTestSupport {
 
     public static final Character CHAR_VAL = 'f';
@@ -226,7 +229,7 @@ public abstract class ExpressionTestSupport extends SqlTestSupport {
         }
     }
 
-    protected static String signatureErrorFunction(String functionName, SqlColumnType... columnTypes) {
+    protected static String signatureErrorFunction(String functionName, Object... columnTypes) {
         TestCase.assertNotNull(columnTypes);
 
         StringJoiner joiner = new StringJoiner(", ");

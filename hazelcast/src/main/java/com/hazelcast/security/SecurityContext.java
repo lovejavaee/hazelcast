@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,12 @@ import com.hazelcast.config.PermissionConfig;
 import com.hazelcast.internal.nio.Connection;
 import com.hazelcast.sql.impl.security.SqlSecurityContext;
 
+import javax.annotation.Nonnull;
 import javax.security.auth.Subject;
+import javax.security.auth.login.Configuration;
 import javax.security.auth.login.LoginContext;
 import javax.security.auth.login.LoginException;
+import java.net.InetAddress;
 import java.security.AccessControlException;
 import java.security.Permission;
 import java.util.Set;
@@ -60,6 +63,26 @@ public interface SecurityContext {
             throws LoginException;
 
     /**
+     * Creates JAAS login {@link Configuration} from given Security Realm configuration.
+     *
+     * @param realmName security realm name
+     * @return {@link Configuration} for given realm (or default authentication configuration if the realm doesn't exist).
+     */
+    Configuration createLoginConfigurationForRealm(String realmName);
+
+    /**
+     * Creates {@link LoginContext} from given JAAS Configuration.
+     *
+     * @param configuration JAAS configuration object
+     * @param clusterName cluster name
+     * @param remoteAddress address of the HTTP client
+     * @return {@link LoginContext}
+     * @throws LoginException in case of any exceptional case
+     */
+    LoginContext createLoginContext(@Nonnull Configuration configuration, String clusterName, Credentials credentials,
+            InetAddress remoteAddress) throws LoginException;
+
+    /**
      * Returns current {@link ICredentialsFactory}.
      *
      * @return {@link ICredentialsFactory}
@@ -75,15 +98,9 @@ public interface SecurityContext {
      */
     void checkPermission(Subject subject, Permission permission) throws AccessControlException;
 
-
     /**
      * intercepts a request before process if any {@link SecurityInterceptor} configured
      *
-     * @param credentials
-     * @param serviceName
-     * @param objectName
-     * @param methodName
-     * @param parameters
      * @throws AccessControlException if access is denied
      */
     void interceptBefore(Credentials credentials, String serviceName, String objectName,
@@ -92,11 +109,6 @@ public interface SecurityContext {
     /**
      * intercepts a request after process if any {@link SecurityInterceptor} configured
      * Any exception thrown during interception will be ignored
-     *
-     * @param credentials
-     * @param serviceName
-     * @param objectName
-     * @param methodName
      */
     void interceptAfter(Credentials credentials, String serviceName, String objectName, String methodName);
 
@@ -104,8 +116,6 @@ public interface SecurityContext {
      * Creates secure callable that runs in a sandbox.
      *
      * @param <V>      return type of callable
-     * @param subject
-     * @param callable
      * @return result of callable
      */
     <V> SecureCallable<V> createSecureCallable(Subject subject, Callable<V> callable);
@@ -114,8 +124,6 @@ public interface SecurityContext {
      * Creates secure callable that runs in a sandbox.
      *
      * @param <V>      return type of callable
-     * @param subject
-     * @param runnable
      * @return Will always return null after {@link Runnable} finishes running.
      */
     <V> SecureCallable<?> createSecureCallable(Subject subject, Runnable runnable);

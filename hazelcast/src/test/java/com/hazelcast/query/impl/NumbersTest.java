@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,12 +29,10 @@ import java.util.concurrent.atomic.AtomicLong;
 import static com.hazelcast.query.impl.Numbers.canonicalizeForHashLookup;
 import static com.hazelcast.query.impl.Numbers.compare;
 import static com.hazelcast.query.impl.Numbers.equal;
-import static org.hamcrest.Matchers.greaterThan;
-import static org.hamcrest.Matchers.lessThan;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
 @RunWith(HazelcastParallelClassRunner.class)
@@ -181,32 +179,32 @@ public class NumbersTest {
         assertFalse(equal(rhs, lhs));
     }
 
-    private static void assertCompare(Comparable lhs, Comparable rhs, int expected) {
+    private static void assertCompare(Comparable<?> lhs, Comparable<?> rhs, int expected) {
         if (expected == 0) {
             assertEquals(0, compare(lhs, rhs));
             assertEquals(0, compare(rhs, lhs));
         } else if (expected < 0) {
-            assertThat(compare(lhs, rhs), lessThan(0));
-            assertThat(compare(rhs, lhs), greaterThan(0));
+            assertThat(compare(lhs, rhs)).isNegative();
+            assertThat(compare(rhs, lhs)).isPositive();
         } else {
-            assertThat(compare(lhs, rhs), greaterThan(0));
-            assertThat(compare(rhs, lhs), lessThan(0));
+            assertThat(compare(lhs, rhs)).isPositive();
+            assertThat(compare(rhs, lhs)).isNegative();
         }
     }
 
-    private static void assertEqualCanonicalization(Comparable... values) {
-        Comparable expected = canonicalizeForHashLookup(values[0]);
+    private static void assertEqualCanonicalization(Comparable<?>... values) {
+        Comparable<?> expected = canonicalizeForHashLookup(values[0]);
         for (int i = 1; i < values.length; ++i) {
-            Comparable actual = canonicalizeForHashLookup(values[i]);
+            Comparable<?> actual = canonicalizeForHashLookup(values[i]);
             assertEquals(expected, actual);
             assertEquals(expected.hashCode(), actual.hashCode());
         }
     }
 
-    private static void assertNotEqualCanonicalization(Comparable... values) {
-        Comparable unexpected = canonicalizeForHashLookup(values[0]);
+    private static void assertNotEqualCanonicalization(Comparable<?>... values) {
+        Comparable<?> unexpected = canonicalizeForHashLookup(values[0]);
         for (int i = 1; i < values.length; ++i) {
-            Comparable actual = canonicalizeForHashLookup(values[i]);
+            Comparable<?> actual = canonicalizeForHashLookup(values[i]);
             assertNotEquals(unexpected, actual);
             // not checking for hash code values since they may be the same
         }

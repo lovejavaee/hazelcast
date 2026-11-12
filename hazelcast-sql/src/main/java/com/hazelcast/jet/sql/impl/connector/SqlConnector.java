@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.hazelcast.jet.core.DAG;
 import com.hazelcast.jet.core.Edge;
 import com.hazelcast.jet.core.EventTimePolicy;
 import com.hazelcast.jet.core.Vertex;
+import com.hazelcast.jet.kafka.impl.AbstractHazelcastAvroSerde;
 import com.hazelcast.jet.sql.impl.ExpressionUtil;
 import com.hazelcast.jet.sql.impl.JetJoinInfo;
 import com.hazelcast.spi.impl.NodeEngine;
@@ -29,14 +30,27 @@ import com.hazelcast.sql.impl.expression.ExpressionEvalContext;
 import com.hazelcast.sql.impl.row.JetSqlRow;
 import com.hazelcast.sql.impl.schema.MappingField;
 import com.hazelcast.sql.impl.schema.Table;
+import org.apache.calcite.rex.RexDynamicParam;
 import org.apache.calcite.rex.RexInputRef;
+import org.apache.calcite.rex.RexLiteral;
+import org.apache.calcite.rex.RexNode;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.io.Serializable;
 import java.lang.reflect.Method;
+import java.security.Permission;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.function.Consumer;
+
+import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
+import static java.util.Objects.requireNonNull;
 
 /**
  * An API to bridge Jet connectors and SQL. Allows the use of a Jet
@@ -119,10 +133,34 @@ public interface SqlConnector {
     String OPTION_KEY_COMPACT_TYPE_NAME = "keyCompactTypeName";
 
     /**
-     * The value Compact type name, if {@value #OPTION_KEY_FORMAT} is {@value
+     * The value Compact type name, if {@value #OPTION_VALUE_FORMAT} is {@value
      * COMPACT_FORMAT}.
      */
     String OPTION_VALUE_COMPACT_TYPE_NAME = "valueCompactTypeName";
+
+    /**
+     * Key record name in generated Avro schema if {@value #OPTION_KEY_FORMAT}
+     * is {@value AVRO_FORMAT}. If not specified, defaults to {@code "jet.sql"}.
+     */
+    String OPTION_KEY_AVRO_RECORD_NAME = "keyAvroRecordName";
+
+    /**
+     * Value record name in generated Avro schema if {@value #OPTION_VALUE_FORMAT}
+     * is {@value AVRO_FORMAT}. If not specified, defaults to {@code "jet.sql"}.
+     */
+    String OPTION_VALUE_AVRO_RECORD_NAME = "valueAvroRecordName";
+
+    /**
+     * Inline Avro schema for key if {@value #OPTION_KEY_FORMAT} is
+     * {@value AVRO_FORMAT}.
+     */
+    String OPTION_KEY_AVRO_SCHEMA = AbstractHazelcastAvroSerde.OPTION_KEY_AVRO_SCHEMA;
+
+    /**
+     * Inline Avro schema for value if {@value #OPTION_VALUE_FORMAT} is
+     * {@value AVRO_FORMAT}.
+     */
+    String OPTION_VALUE_AVRO_SCHEMA = AbstractHazelcastAvroSerde.OPTION_VALUE_AVRO_SCHEMA;
 
     /**
      * The class name of the Custom Type's underlying Java Class
@@ -139,6 +177,13 @@ public interface SqlConnector {
     String OPTION_TYPE_PORTABLE_CLASS_ID = "portableClassId";
 
     String OPTION_TYPE_PORTABLE_CLASS_VERSION = "portableClassVersion";
+
+    String OPTION_TYPE_AVRO_SCHEMA = "avroSchema";
+
+    /**
+     * The preferred local parallelism for connectors that support configuring it.
+     */
+    String OPTION_PREFERRED_LOCAL_PARALLELISM = "preferredLocalParallelism";
 
     /**
      * Value for {@value #OPTION_KEY_FORMAT} and {@value #OPTION_VALUE_FORMAT}
@@ -188,9 +233,13 @@ public interface SqlConnector {
     String typeName();
 
     /**
-     * Returns {@code true}, if {@link #fullScanReader} is an unbounded source.
+     * Returns default value for the Object Type mapping property, so if user won't provide any type,
+     * this will be assumed.
+     *
+     * @since 5.3
      */
-    boolean isStream();
+    @Nonnull
+    String defaultObjectType();
 
     /**
      * Resolves the final field list given an initial field list and options
@@ -206,21 +255,33 @@ public interface SqlConnector {
      * the user can see it by listing the catalog. Jet will later pass it to
      * {@link #createTable}.
      *
-     * @param nodeEngine         an instance of {@link NodeEngine}
-     * @param options            user-provided options
-     * @param userFields         user-provided list of fields, possibly empty
-     * @param externalName       external name of the table
-     * @param dataConnectionName name of the data connection to use, may be null if the connector supports specifying
-     *                           connection details in options
+     * @param nodeEngine       an instance of {@link NodeEngine}
+     * @param externalResource an object for which fields should be resolved
+     * @param userFields       user-provided list of fields, possibly empty
      * @return final field list, must not be empty
      */
     @Nonnull
     List<MappingField> resolveAndValidateFields(
             @Nonnull NodeEngine nodeEngine,
-            @Nonnull Map<String, String> options,
-            @Nonnull List<MappingField> userFields,
-            @Nonnull String[] externalName,
-            @Nullable String dataConnectionName);
+            @Nonnull SqlExternalResource externalResource,
+            @Nonnull List<MappingField> userFields
+    );
+
+    /**
+     * Returns the required permissions to execute
+     * {@link #resolveAndValidateFields(NodeEngine, SqlExternalResource, List)} method.
+     * <p>
+     * Implementors of {@link SqlConnector} don't need to override this method when {@code resolveAndValidateFields}
+     * doesn't support field resolution or when validation doesn't access the external resource.
+     * <p>
+     * The permissions are usually the same as required permissions to read from the external resource.
+     *
+     * @return list of permissions required to run {@link #resolveAndValidateFields}
+     */
+    @Nonnull
+    default List<Permission> permissionsForResolve(SqlExternalResource resource, NodeEngine nodeEngine) {
+        return emptyList();
+    }
 
     /**
      * Creates a {@link Table} object with the given fields. Should return
@@ -229,21 +290,17 @@ public interface SqlConnector {
      * <p>
      * Jet calls this method for each statement execution and for each mapping.
      *
-     * @param nodeEngine         an instance of {@link NodeEngine}
-     * @param dataConnectionName name of the data connection to use, may be null if the connector supports specifying
-     *                           connection details in options
-     * @param options            connector specific options
-     * @param resolvedFields     list of fields as returned from {@link
-     *                           #resolveAndValidateFields}
+     * @param nodeEngine       an instance of {@link NodeEngine}
+     * @param externalResource an object for which this table is created
+     * @param resolvedFields   list of fields as returned from {@link
+     *                         #resolveAndValidateFields}
      */
     @Nonnull
     Table createTable(
             @Nonnull NodeEngine nodeEngine,
             @Nonnull String schemaName,
             @Nonnull String mappingName,
-            @Nonnull String[] externalName,
-            @Nullable String dataConnectionName,
-            @Nonnull Map<String, String> options,
+            @Nonnull SqlExternalResource externalResource,
             @Nonnull List<MappingField> resolvedFields);
 
     /**
@@ -264,9 +321,11 @@ public interface SqlConnector {
      * {@code eventTimePolicyProvider} is not null. Streaming sources should
      * support it, batch sources don't have to.
      *
-     * @param predicate               SQL expression to filter the rows
-     * @param projection              the list of field names to return
-     * @param eventTimePolicyProvider {@link EventTimePolicy}
+     * @param predicate                SQL expression to filter the rows
+     * @param projection               the list of field names to return
+     * @param requiredPartitionsToScan the set of partitions to scan,
+     *                                 if partitioning strategy is used
+     * @param eventTimePolicyProvider  {@link EventTimePolicy}
      * @return The DAG Vertex handling the reading
      */
     @Nonnull
@@ -274,6 +333,7 @@ public interface SqlConnector {
             @Nonnull DagBuildContext context,
             @Nullable HazelcastRexNode predicate,
             @Nonnull List<HazelcastRexNode> projection,
+            @Nullable List<Map<String, Expression<?>>> partitionPruningCandidates,
             @Nullable FunctionEx<ExpressionEvalContext, EventTimePolicy<JetSqlRow>> eventTimePolicyProvider
     ) {
         throw new UnsupportedOperationException("Full scan not supported for " + typeName());
@@ -359,27 +419,107 @@ public interface SqlConnector {
     }
 
     /**
-     * Returns the supplier for the update processor that will update given
-     * {@code table}. The input to the processor will be the fields
-     * returned by {@link #getPrimaryKey(Table)}.
+     * Returns the supplier for the update processor that will update the given
+     * {@code table}.
+     * <p>
+     * The processor is expected to work in a different mode, depending on the
+     * `hasInput` argument:<ol>
+     *
+     * <li><b>hasInput == false:</b> There will be no input to the
+     * processor. The processor is supposed to update all rows matching the
+     * given `predicate`. If the `predicate` is null, it's supposed to
+     * update all rows. The `expressions` have no input references.
+     *
+     * <li><b>hasInput == true:</b> The processor is supposed to update all
+     * rows with primary keys it receives on the input. In this mode the
+     * `predicate` is always null. The primary key fields are specified by
+     * the {@link #getPrimaryKey(Table)} method. If {@link
+     * #dmlSupportsPredicates()} returned false, or if {@link
+     * #supportsExpression} always returns false, `hasInput` is always true.
+     * The `expressions` might contain input references. The input's first
+     * columns are the primary key values, the rest are values that might be
+     * referenced by expressions.
+     *
+     * </ol>
+     *
+     * @param fieldNames  The names of fields to update
+     * @param expressions The expressions to assign to each field. Has the same
+     *                    length as {@code fieldNames}.
      */
     @Nonnull
     default Vertex updateProcessor(
             @Nonnull DagBuildContext context,
             @Nonnull List<String> fieldNames,
-            @Nonnull List<HazelcastRexNode> expressions
+            @Nonnull List<HazelcastRexNode> expressions,
+            @Nullable HazelcastRexNode predicate,
+            boolean hasInput
     ) {
         throw new UnsupportedOperationException("UPDATE not supported for " + typeName());
     }
 
     /**
      * Returns the supplier for the delete processor that will delete from the
-     * given {@code table}. The input to the processor will be the fields
-     * returned by {@link #getPrimaryKey(Table)}.
+     * given {@code table}.
+     * <p>
+     * The processor is expected to work in a different mode, depending on the
+     * `hasInput` argument:<ol>
+     *
+     * <li><b>hasInput == false:</b> There will be no input to the
+     * processor. The processor is supposed to update all rows matching the
+     * given `predicate`. If the `predicate` is null, it's supposed to
+     * update all rows.
+     *
+     * <li><b>hasInput == true:</b> The processor is supposed to delete all
+     * rows with primary keys it receives on the input. In this mode the
+     * `predicate` is always null. The primary key fields are specified by
+     * the {@link #getPrimaryKey(Table)} method. If {@link
+     * #dmlSupportsPredicates()} returned false, or if {@link
+     * #supportsExpression} always returns false, `hasInput` is always true.
+     *
+     * </ol>
      */
     @Nonnull
-    default Vertex deleteProcessor(@Nonnull DagBuildContext context) {
+    default Vertex deleteProcessor(
+            @Nonnull DagBuildContext context,
+            @Nullable HazelcastRexNode predicate,
+            boolean hasInput
+    ) {
         throw new UnsupportedOperationException("DELETE not supported for " + typeName());
+    }
+
+    /**
+     * Returns whether this processor's {@link #deleteProcessor} and {@link
+     * #updateProcessor} methods can use a predicate.
+     */
+    default boolean dmlSupportsPredicates() {
+        return true;
+    }
+
+    /**
+     * Returns whether the given `expression` is supported by the processors
+     * this connector returns. If it returns true, then this expression will be
+     * passed as a projection or predicate to the other vertex-generating
+     * methods.
+     * <p>
+     * The connector must be able to handle {@link RexInputRef} expressions,
+     * such expressions will never be passed to this method. It is also
+     * recommended to support {@link RexDynamicParam} and {@link RexLiteral} for
+     * simpler execution plans.
+     * <p>
+     * If an expression is unsupported, for scans a projection will be added
+     * after the scan vertex. For DML, it will disable the use no-input mode.
+     * Instead, a scan and filtering will be generated.
+     * <p>
+     * The default implementation returns true for {@link RexDynamicParam}.
+     *
+     * @param expression expression to be analysed. Entire expression must be
+     *                   checked, not only the root node.
+     * @return true, iff the given expression can be evaluated remotely
+     */
+    default boolean supportsExpression(@Nonnull HazelcastRexNode expression) {
+        // support only simple RexDynamicParam ref. If RexDynamicParam is inside larger expression,
+        // entire expression will have to be analysed.
+        return expression.unwrap(RexNode.class) instanceof RexDynamicParam;
     }
 
     /**
@@ -397,7 +537,43 @@ public interface SqlConnector {
         throw new UnsupportedOperationException("PRIMARY KEY not supported by connector: " + typeName());
     }
 
+    /**
+     * Return the set of options that are not sensitive
+     * to be displayed by querying {@code information_schema}.
+     */
+    default Set<String> nonSensitiveConnectorOptions() {
+        Set<String> options = new HashSet<>();
+        options.add(OPTION_FORMAT);
+        options.add(OPTION_KEY_FORMAT);
+        options.add(OPTION_VALUE_FORMAT);
+        options.add(OPTION_KEY_CLASS);
+        options.add(OPTION_VALUE_CLASS);
+        options.add(OPTION_KEY_FACTORY_ID);
+        options.add(OPTION_KEY_CLASS_ID);
+        options.add(OPTION_KEY_CLASS_VERSION);
+        options.add(OPTION_VALUE_FACTORY_ID);
+        options.add(OPTION_VALUE_CLASS_ID);
+        options.add(OPTION_VALUE_CLASS_VERSION);
+        options.add(OPTION_KEY_COMPACT_TYPE_NAME);
+        options.add(OPTION_VALUE_COMPACT_TYPE_NAME);
+        options.add(OPTION_KEY_AVRO_RECORD_NAME);
+        options.add(OPTION_VALUE_AVRO_RECORD_NAME);
+        options.add(OPTION_KEY_AVRO_SCHEMA);
+        options.add(OPTION_VALUE_AVRO_SCHEMA);
+        options.add(OPTION_TYPE_JAVA_CLASS);
+        options.add(OPTION_TYPE_COMPACT_TYPE_NAME);
+        options.add(OPTION_TYPE_PORTABLE_FACTORY_ID);
+        options.add(OPTION_TYPE_PORTABLE_CLASS_ID);
+        options.add(OPTION_TYPE_PORTABLE_CLASS_VERSION);
+        options.add(OPTION_TYPE_AVRO_SCHEMA);
+        return options;
+    }
+
     interface DagBuildContext {
+
+        @Nonnull
+        NodeEngine getNodeEngine();
+
         /**
          * Returns the {@link DAG} that's being created.
          */
@@ -462,6 +638,91 @@ public interface SqlConnector {
 
         public Consumer<Edge> configureEdgeFn() {
             return configureEdgeFn;
+        }
+    }
+
+    /**
+     * Data describing external resource (table, topic, stream, IMap etc)
+     *
+     * @since 5.3
+     */
+    class SqlExternalResource implements Serializable {
+        private final String[] externalName;
+        private final String dataConnection;
+        private final String connectorType;
+        private final String objectType;
+        private final Map<String, String> options;
+
+        public SqlExternalResource(@Nonnull String[] externalName, String dataConnection, @Nonnull String connectorType,
+                                   String objectType, Map<String, String> options) {
+            this.externalName = requireNonNull(externalName, "externalName cannot be null");
+            this.dataConnection = dataConnection;
+            this.connectorType = requireNonNull(connectorType, "connectorType cannot be null");
+            this.objectType = objectType;
+            this.options = options;
+        }
+
+        /**
+         * Name of external object.
+         */
+        @Nonnull
+        public String[] externalName() {
+            return externalName;
+        }
+
+        /**
+         * Name of the data connection to use, may be null if the connector supports specifying connection details in options
+         */
+        @Nullable
+        public String dataConnection() {
+            return dataConnection;
+        }
+
+        /**
+         * Connector Type, must match one of {@link SqlConnector#typeName()}.
+         */
+        @Nonnull
+        public String connectorType() {
+            return connectorType;
+        }
+
+        /**
+         * Object type, must match the name of supported types for given connector.
+         */
+        @Nullable
+        public String objectType() {
+            return objectType;
+        }
+
+        /**
+         * Options used to create the mapping.
+         */
+        @Nonnull
+        public Map<String, String> options() {
+            return options == null ? emptyMap() : options;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (o == null || getClass() != o.getClass()) {
+                return false;
+            }
+            SqlExternalResource that = (SqlExternalResource) o;
+            return Arrays.equals(externalName, that.externalName)
+                    && Objects.equals(dataConnection, that.dataConnection)
+                    && Objects.equals(connectorType, that.connectorType)
+                    && Objects.equals(objectType, that.objectType)
+                    && Objects.equals(options, that.options);
+        }
+
+        @Override
+        public int hashCode() {
+            int result = Objects.hash(dataConnection, connectorType, objectType, options);
+            result = 31 * result + Arrays.hashCode(externalName);
+            return result;
         }
     }
 }

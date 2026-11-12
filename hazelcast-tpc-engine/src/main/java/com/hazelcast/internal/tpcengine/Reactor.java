@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,11 +25,14 @@ import com.hazelcast.internal.tpcengine.net.AsyncServerSocketBuilder;
 import com.hazelcast.internal.tpcengine.net.AsyncSocket;
 import com.hazelcast.internal.tpcengine.net.AsyncSocketBuilder;
 import com.hazelcast.internal.tpcengine.util.CircularQueue;
+import com.hazelcast.internal.tpcengine.util.ReflectionUtil;
 import com.hazelcast.internal.util.ThreadAffinity;
 import com.hazelcast.internal.util.ThreadAffinityHelper;
 import org.jctools.queues.MpmcArrayQueue;
 
+import java.lang.invoke.VarHandle;
 import java.util.BitSet;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -38,13 +41,11 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
 import static com.hazelcast.internal.tpcengine.Reactor.State.NEW;
 import static com.hazelcast.internal.tpcengine.Reactor.State.RUNNING;
 import static com.hazelcast.internal.tpcengine.Reactor.State.SHUTDOWN;
 import static com.hazelcast.internal.tpcengine.Reactor.State.TERMINATED;
-import static java.util.concurrent.atomic.AtomicReferenceFieldUpdater.newUpdater;
 
 /**
  * A Reactor is an implementation of the reactor design pattern. So it listen to some
@@ -61,14 +62,13 @@ import static java.util.concurrent.atomic.AtomicReferenceFieldUpdater.newUpdater
  * <p/>
  * A single Reactor typically will process one or more {@link AsyncServerSocket} instances
  * and many {@link AsyncSocket} instances. A single reactor can even run the
- * {@link AsyncServerSocket} and the {@link AsyncSocket} that initiates the call the the
+ * {@link AsyncServerSocket} and the {@link AsyncSocket} that initiates the call the
  * {@link AsyncSocket} created by the {@link AsyncServerSocket}.
  */
 @SuppressWarnings({"checkstyle:DeclarationOrder", "checkstyle:VisibilityModifier", "rawtypes"})
 public abstract class Reactor implements Executor {
 
-    protected static final AtomicReferenceFieldUpdater<Reactor, State> STATE
-            = newUpdater(Reactor.class, State.class, "state");
+    private static final VarHandle STATE = ReflectionUtil.findVarHandle("state", State.class);
 
     protected final ConcurrentMap<?, ?> context = new ConcurrentHashMap<>();
     protected final TpcLogger logger = TpcLoggerLocator.getLogger(getClass());
@@ -321,6 +321,64 @@ public abstract class Reactor implements Executor {
      * This method is thread-safe.
      */
     public abstract void wakeup();
+
+    /**
+     * Executes a Callable on the Reactor and returns a CompletableFuture with
+     * its content.
+     * <p/>
+     * Warning: This method is very inefficient because it creates a lot of
+     * litter. It should not be run too frequent because performance will tank.
+     *
+     * @param callable the Callable to submit
+     * @param <E> the type of the callable
+     * @return the CompletableFuture that is linked to the callable.
+     */
+    public final <E> CompletableFuture<E> submit(Callable<E> callable) {
+        CompletableFuture<E> future = new CompletableFuture<>();
+        Runnable task = () -> {
+            try {
+                future.complete(callable.call());
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+            }
+        };
+
+        if (!offer(task)) {
+            future.completeExceptionally(new RejectedExecutionException("Task " + callable.toString()
+                    + " rejected from " + this));
+        }
+
+        return future;
+    }
+
+    /**
+     * Executes a Callable on the Reactor and returns a CompletableFuture with
+     * its content.
+     * <p/>
+     * Warning: This method is very inefficient because it creates a lot of litter.
+     * It should not be run too frequent because performance will tank.
+     *
+     * @param cmd the command to submit.
+     * @return a CompletableFuture that is linked to the cmd.
+     */
+    public final CompletableFuture<Void> submit(Runnable cmd) {
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        Runnable task = () -> {
+            try {
+                cmd.run();
+                future.complete(null);
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+            }
+        };
+
+        if (!offer(task)) {
+            future.completeExceptionally(new RejectedExecutionException("Task " + cmd.toString()
+                    + " rejected from " + this));
+        }
+
+        return future;
+    }
 
     @Override
     public void execute(Runnable command) {

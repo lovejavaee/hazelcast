@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,6 @@ package com.hazelcast.internal.tpcengine.net;
 
 import java.nio.ByteBuffer;
 
-import static com.hazelcast.internal.tpcengine.util.BufferUtil.upcast;
-
 
 /**
  * A {@link AsyncSocketReader} that disposes any bytes on the receive buffer.
@@ -27,6 +25,6 @@ import static com.hazelcast.internal.tpcengine.util.BufferUtil.upcast;
 public class DevNullAsyncSocketReader extends AsyncSocketReader {
     @Override
     public void onRead(ByteBuffer src) {
-        upcast(src).position(src.limit());
+        src.position(src.limit());
     }
 }

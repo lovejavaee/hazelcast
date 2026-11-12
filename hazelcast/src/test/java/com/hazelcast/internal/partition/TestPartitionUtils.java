@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,7 +51,7 @@ import static com.hazelcast.test.starter.ReflectionUtils.getDelegateFromMock;
 import static com.hazelcast.test.starter.ReflectionUtils.getFieldValueReflectively;
 import static java.lang.reflect.Proxy.isProxyClass;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertFalse;
 
 @SuppressWarnings("WeakerAccess")
 public final class TestPartitionUtils {
@@ -84,7 +84,7 @@ public final class TestPartitionUtils {
     }
 
     public static Map<Integer, PartitionReplicaVersionsView> getAllReplicaVersions(List<HazelcastInstance> instances) {
-        Map<Integer, PartitionReplicaVersionsView> replicaVersions = new HashMap<Integer, PartitionReplicaVersionsView>();
+        Map<Integer, PartitionReplicaVersionsView> replicaVersions = new HashMap<>();
         for (HazelcastInstance instance : instances) {
             collectOwnedReplicaVersions(getNode(instance), replicaVersions);
         }
@@ -92,7 +92,7 @@ public final class TestPartitionUtils {
     }
 
     public static Map<Integer, PartitionReplicaVersionsView> getOwnedReplicaVersions(Node node) {
-        Map<Integer, PartitionReplicaVersionsView> ownedReplicaVersions = new HashMap<Integer, PartitionReplicaVersionsView>();
+        Map<Integer, PartitionReplicaVersionsView> ownedReplicaVersions = new HashMap<>();
         collectOwnedReplicaVersions(node, ownedReplicaVersions);
         return ownedReplicaVersions;
     }
@@ -156,7 +156,7 @@ public final class TestPartitionUtils {
     }
 
     public static Map<Integer, List<Address>> getAllReplicaAddresses(Node node) {
-        Map<Integer, List<Address>> allReplicaAddresses = new HashMap<Integer, List<Address>>();
+        Map<Integer, List<Address>> allReplicaAddresses = new HashMap<>();
         InternalPartitionService partitionService = node.getPartitionService();
         for (int partitionId = 0; partitionId < partitionService.getPartitionCount(); partitionId++) {
             allReplicaAddresses.put(partitionId, getReplicaAddresses(node, partitionId));
@@ -170,7 +170,7 @@ public final class TestPartitionUtils {
     }
 
     public static List<Address> getReplicaAddresses(Node node, int partitionId) {
-        List<Address> replicaAddresses = new ArrayList<Address>();
+        List<Address> replicaAddresses = new ArrayList<>();
         InternalPartitionService partitionService = node.getPartitionService();
         InternalPartition partition = partitionService.getPartition(partitionId);
         for (int i = 0; i < MAX_REPLICA_COUNT; i++) {
@@ -206,7 +206,7 @@ public final class TestPartitionUtils {
 
             Collection<ServiceNamespace> namespaces = replicaManager.getNamespaces(partitionId);
             Map<ServiceNamespace, long[]> versionMap = new HashMap<>(namespaces.size());
-            Set<ServiceNamespace> dirty = new HashSet<ServiceNamespace>();
+            Set<ServiceNamespace> dirty = new HashSet<>();
             for (ServiceNamespace ns : namespaces) {
                 long[] originalVersions = replicaManager.getPartitionReplicaVersions(partitionId, ns);
                 long[] versions = Arrays.copyOf(originalVersions, originalVersions.length);
@@ -234,17 +234,17 @@ public final class TestPartitionUtils {
     public static void assertAllPartitionsBelongTo(HazelcastInstance instance) {
         InternalPartitionService internalPartitionService = getPartitionService(instance);
         int partitionCount = internalPartitionService.getPartitionCount();
-        assertTrue(internalPartitionService.getMemberPartitionsIfAssigned(getAddress(instance)).size() == partitionCount);
+        assertEquals(internalPartitionService.getMemberPartitionsIfAssigned(getAddress(instance)).size(), partitionCount);
     }
 
     public static void assertSomePartitionsBelongTo(HazelcastInstance instance, Address address) {
         InternalPartitionService internalPartitionService = getPartitionService(instance);
-        assertTrue(internalPartitionService.getMemberPartitionsIfAssigned(address).size() > 0);
+        assertFalse(internalPartitionService.getMemberPartitionsIfAssigned(address).isEmpty());
     }
 
     public static void assertSomePartitionsBelongTo(HazelcastInstance instance) {
         InternalPartitionService internalPartitionService = getPartitionService(instance);
-        assertTrue(internalPartitionService.getMemberPartitionsIfAssigned(getAddress(instance)).size() > 0);
+        assertFalse(internalPartitionService.getMemberPartitionsIfAssigned(getAddress(instance)).isEmpty());
     }
 
     public static void assertNoPartitionsBelongTo(HazelcastInstance instance) {

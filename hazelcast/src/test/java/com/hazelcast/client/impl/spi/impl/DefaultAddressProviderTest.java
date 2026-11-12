@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,14 @@
 
 package com.hazelcast.client.impl.spi.impl;
 
+import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.client.config.ClientNetworkConfig;
+import com.hazelcast.client.impl.clientside.ClientConnectionManagerFactory;
+import com.hazelcast.client.impl.clientside.DefaultClientConnectionManagerFactory;
 import com.hazelcast.client.impl.clientside.HazelcastClientInstanceImpl;
 import com.hazelcast.client.impl.connection.Addresses;
-import com.hazelcast.client.impl.management.ClientConnectionProcessListenerRunner;
+import com.hazelcast.client.impl.management.ClientConnectionProcessListenerRegistry;
+import com.hazelcast.client.test.TestHazelcastFactory;
 import com.hazelcast.cluster.Address;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
@@ -34,11 +38,13 @@ import java.util.UUID;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Mockito.mock;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class DefaultAddressProviderTest {
+
+    private final TestHazelcastFactory testHazelcastFactory = new TestHazelcastFactory();
+    private final ClientConnectionManagerFactory clientConnectionManagerFactory = new DefaultClientConnectionManagerFactory();
 
     @Test
     public void whenNoAddresses() throws UnknownHostException {
@@ -115,7 +121,13 @@ public class DefaultAddressProviderTest {
         assertEquals(Arrays.asList(expected), addresses.secondary());
     }
 
-    private ClientConnectionProcessListenerRunner createConnectionProcessListenerRunner() {
-        return new ClientConnectionProcessListenerRunner(mock(HazelcastClientInstanceImpl.class));
+    private ClientConnectionProcessListenerRegistry createConnectionProcessListenerRunner() {
+        ClientConfig clientConfig = new ClientConfig();
+        var addressProvider = testHazelcastFactory.createAddressProvider(clientConfig);
+        HazelcastClientInstanceImpl client = new HazelcastClientInstanceImpl(UUID.randomUUID().toString(),
+                                                                             clientConfig, null,
+                                                                             clientConnectionManagerFactory,
+                                                                             addressProvider);
+        return new ClientConnectionProcessListenerRegistry(client);
     }
 }

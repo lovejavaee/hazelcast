@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,6 +58,7 @@ import com.hazelcast.logging.ILogger;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
+import com.hazelcast.nio.serialization.impl.Versioned;
 import com.hazelcast.spi.impl.NodeEngineImpl;
 
 import javax.annotation.Nonnull;
@@ -74,16 +75,18 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.function.IntFunction;
 import java.util.function.Supplier;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
+import static com.hazelcast.internal.cluster.Versions.V5_7;
 import static com.hazelcast.internal.util.ConcurrencyUtil.CALLER_RUNS;
 import static com.hazelcast.internal.util.concurrent.ConcurrentConveyor.concurrentConveyor;
 import static com.hazelcast.jet.config.EdgeConfig.DEFAULT_QUEUE_SIZE;
+import static com.hazelcast.jet.config.JobConfigArguments.KEY_REQUIRED_PARTITIONS;
 import static com.hazelcast.jet.core.Edge.DISTRIBUTE_TO_ALL;
 import static com.hazelcast.jet.impl.execution.OutboundCollector.compositeCollector;
 import static com.hazelcast.jet.impl.execution.TaskletExecutionService.TASKLET_INIT_CLOSE_EXECUTOR_NAME;
@@ -94,7 +97,7 @@ import static com.hazelcast.jet.impl.util.ImdgUtil.writeSubject;
 import static com.hazelcast.jet.impl.util.PrefixedLogger.prefix;
 import static com.hazelcast.jet.impl.util.PrefixedLogger.prefixedLogger;
 import static com.hazelcast.jet.impl.util.Util.doWithClassLoader;
-import static com.hazelcast.jet.impl.util.Util.memoize;
+import static com.hazelcast.internal.util.MemoizingSupplier.memoize;
 import static com.hazelcast.spi.impl.executionservice.ExecutionService.JOB_OFFLOADABLE_EXECUTOR;
 import static java.util.Arrays.asList;
 import static java.util.Arrays.stream;
@@ -104,7 +107,7 @@ import static java.util.stream.Collectors.toMap;
 /**
  * An object sent from a master to members.
  */
-public class ExecutionPlan implements IdentifiedDataSerializable {
+public class ExecutionPlan implements IdentifiedDataSerializable, Versioned {
 
     // use same size as DEFAULT_QUEUE_SIZE from Edges. In the future we might
     // want to make this configurable
@@ -119,6 +122,7 @@ public class ExecutionPlan implements IdentifiedDataSerializable {
     private int memberIndex;
     private int memberCount;
     private long lastSnapshotId;
+    private boolean requireSnapshotBeforeProcessing;
     private boolean isLightJob;
     private Subject subject;
 
@@ -156,11 +160,21 @@ public class ExecutionPlan implements IdentifiedDataSerializable {
     ExecutionPlan() {
     }
 
-    ExecutionPlan(Map<Address, int[]> partitionAssignment, JobConfig jobConfig, long lastSnapshotId,
-                  int memberIndex, int memberCount, boolean isLightJob, Subject subject, int expectedVerticesCount) {
+    ExecutionPlan(
+        Map<Address, int[]> partitionAssignment,
+        JobConfig jobConfig,
+        long lastSnapshotId,
+        boolean requireSnapshotBeforeProcessing,
+        int memberIndex,
+        int memberCount,
+        boolean isLightJob,
+        Subject subject,
+        int expectedVerticesCount
+    ) {
         this.partitionAssignment = partitionAssignment;
         this.jobConfig = jobConfig;
         this.lastSnapshotId = lastSnapshotId;
+        this.requireSnapshotBeforeProcessing = requireSnapshotBeforeProcessing;
         this.memberIndex = memberIndex;
         this.memberCount = memberCount;
         this.isLightJob = isLightJob;
@@ -178,7 +192,7 @@ public class ExecutionPlan implements IdentifiedDataSerializable {
             long jobId,
             long executionId,
             @Nonnull SnapshotContext snapshotContext,
-            ConcurrentHashMap<String, File> tempDirectories,
+            ConcurrentMap<String, File> tempDirectories,
             InternalSerializationService jobSerializationService
     ) {
         this.nodeEngine = nodeEngine;
@@ -191,7 +205,10 @@ public class ExecutionPlan implements IdentifiedDataSerializable {
         return procSuppliersInitFuture.thenAccept(r -> {
             initDag(jobSerializationService);
 
-            this.ptionArrgmt = new PartitionArrangement(partitionAssignment, nodeEngine.getThisAddress());
+            this.ptionArrgmt = new PartitionArrangement(
+                    partitionAssignment,
+                    nodeEngine.getThisAddress(),
+                    jobConfig.getArgument(KEY_REQUIRED_PARTITIONS) != null);
             Set<Integer> higherPriorityVertices = VertexDef.getHigherPriorityVertices(vertices);
             for (Address destAddr : remoteMembers.get()) {
                 Connection conn = getMemberConnection(nodeEngine, destAddr);
@@ -299,25 +316,25 @@ public class ExecutionPlan implements IdentifiedDataSerializable {
      *   that will send the data from V1 to V2. The communication between V1 {@link ProcessorTasklet} and {@link SenderTasklet}
      *   is done through the concurrent conveyors.
      * To make it even more clear that's what are our possibilities (<a href="http://viz-js.com/">http://viz-js.com</a>):
-     *
+     * <p>
      * digraph Local {
      *     subgraph cluster_0 {
      *         "V1 ProcessorTasklet" -> "V2 ProcessorTasklet" [label="local conveyor"]
      *         label = "member #1";
      *     }
      * }
-     *
+     * <p>
      * digraph Remote {
      *     subgraph cluster_0 {
      *         "V1 ProcessorTasklet" -> "V1 SenderTasklet" [label="concurrent conveyor"]
      *         label = "member #1";
      *     }
-     *
+     * <p>
      *     subgraph cluster_1 {
      *         "V2 ReceiverTasklet" -> "V2 ProcessorTasklet" [label="local conveyor"]
      *         label = "member #2";
      *     }
-     *
+     * <p>
      *     "V1 SenderTasklet" -> "V2 ReceiverTasklet" [label="network"]
      * }
      */
@@ -419,6 +436,10 @@ public class ExecutionPlan implements IdentifiedDataSerializable {
         out.writeInt(memberIndex);
         out.writeInt(memberCount);
         writeSubject(out, subject);
+        // RU_COMPAT_5_7
+        if (out.getVersion().isGreaterOrEqual(V5_7)) {
+            out.writeBoolean(requireSnapshotBeforeProcessing);
+        }
     }
 
     @Override
@@ -431,6 +452,9 @@ public class ExecutionPlan implements IdentifiedDataSerializable {
         memberIndex = in.readInt();
         memberCount = in.readInt();
         subject = ImdgUtil.readSubject(in);
+        if (in.getVersion().isGreaterOrEqual(V5_7)) {
+            requireSnapshotBeforeProcessing = in.readBoolean();
+        }
     }
 
     // End implementation of IdentifiedDataSerializable
@@ -438,7 +462,7 @@ public class ExecutionPlan implements IdentifiedDataSerializable {
     @SuppressWarnings("rawtypes")
     private CompletableFuture<?> initProcSuppliers(
             long jobId,
-            ConcurrentHashMap<String, File> tempDirectories,
+            ConcurrentMap<String, File> tempDirectories,
             InternalSerializationService jobSerializationService
     ) {
         CompletableFuture[] futures = new CompletableFuture[vertices.length];
@@ -491,8 +515,8 @@ public class ExecutionPlan implements IdentifiedDataSerializable {
                 .map(EdgeDef::partitioner)
                 .filter(Objects::nonNull)
                 .forEach(partitioner -> {
-                            if (partitioner instanceof SerializationServiceAware) {
-                                ((SerializationServiceAware) partitioner).setSerializationService(jobSerializationService);
+                            if (partitioner instanceof SerializationServiceAware serializationServiceAware) {
+                                serializationServiceAware.setSerializationService(jobSerializationService);
                             }
                             partitioner.init(object -> partitionService.getPartitionId(jobSerializationService.toData(object)));
                         }
@@ -500,10 +524,11 @@ public class ExecutionPlan implements IdentifiedDataSerializable {
     }
 
     private static Collection<? extends Processor> createProcessors(VertexDef vertexDef, int parallelism) {
-        final Collection<? extends Processor> processors = vertexDef.processorSupplier().get(parallelism);
+        ProcessorSupplier processorSupplier = vertexDef.processorSupplier();
+        final Collection<? extends Processor> processors = processorSupplier.get(parallelism);
         if (processors.size() != parallelism) {
             throw new JetException("ProcessorSupplier failed to return the requested number of processors." +
-                    " Requested: " + parallelism + ", returned: " + processors.size());
+                                   " Requested: " + parallelism + ", returned: " + processors.size());
         }
         return processors;
     }
@@ -522,7 +547,7 @@ public class ExecutionPlan implements IdentifiedDataSerializable {
      * Each edge is represented by an array of conveyors between the producers and consumers.
      * There are as many conveyors as there are consumers.
      * Each conveyor has one queue per producer.
-     *
+     * <p>
      * For a distributed edge, there is one additional producer per member represented
      * by the ReceiverTasklet.
      */
@@ -603,10 +628,10 @@ public class ExecutionPlan implements IdentifiedDataSerializable {
         ConcurrentConveyor<Object>[] localConveyors = localConveyorMap.get(edge.edgeId());
         if (edge.routingPolicy() == RoutingPolicy.ISOLATED) {
             OutboundCollector[] localCollectors = IntStream.range(0, downstreamParallelism)
-                            .filter(i -> i % upstreamParallelism == processorIndex % downstreamParallelism)
-                            .mapToObj(i -> new ConveyorCollector(localConveyors[i],
-                                    processorIndex / downstreamParallelism, null))
-                            .toArray(OutboundCollector[]::new);
+                    .filter(i -> i % upstreamParallelism == processorIndex % downstreamParallelism)
+                    .mapToObj(i -> new ConveyorCollector(localConveyors[i],
+                            processorIndex / downstreamParallelism, null))
+                    .toArray(OutboundCollector[]::new);
             return compositeCollector(localCollectors, edge, totalPartitionCount, true, false);
         } else {
             OutboundCollector[] localCollectors = new OutboundCollector[downstreamParallelism];
@@ -720,13 +745,13 @@ public class ExecutionPlan implements IdentifiedDataSerializable {
      * list of partitions.
      */
     private int[][] getLocalPartitionDistribution(EdgeDef edge, int downstreamParallelism) {
-        if (!edge.routingPolicy().equals(RoutingPolicy.PARTITIONED)) {
+        if (edge.routingPolicy() != RoutingPolicy.PARTITIONED) {
             // the edge is not partitioned, use `null` for each processor
             return new int[downstreamParallelism][];
         }
 
         if (edge.isLocal() || nodeEngine.getThisAddress().equals(edge.getDistributedTo())) {
-            // the edge is local-partitioned or it is distributed to one member and this member is the target
+            // the edge is local-partitioned, or it is distributed to one member and this member is the target
             return ptionArrgmt.assignPartitionsToProcessors(downstreamParallelism, false);
         }
 
@@ -831,14 +856,14 @@ public class ExecutionPlan implements IdentifiedDataSerializable {
 
     public int getStoreSnapshotTaskletCount() {
         return (int) tasklets.stream()
-                             .filter(t -> t instanceof StoreSnapshotTasklet)
-                             .count();
+                .filter(StoreSnapshotTasklet.class::isInstance)
+                .count();
     }
 
     public int getProcessorTaskletCount() {
         return (int) tasklets.stream()
-                             .filter(t -> t instanceof ProcessorTasklet)
-                             .count();
+                .filter(ProcessorTasklet.class::isInstance)
+                .count();
     }
 
     public int getHigherPriorityVertexCount() {
@@ -847,5 +872,9 @@ public class ExecutionPlan implements IdentifiedDataSerializable {
 
     public List<VertexDef> getVertices() {
         return unmodifiableList(asList(vertices));
+    }
+
+    public boolean isRequireSnapshotBeforeProcessing() {
+        return requireSnapshotBeforeProcessing;
     }
 }

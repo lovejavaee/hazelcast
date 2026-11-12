@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,17 +20,16 @@ import com.hazelcast.cluster.Address;
 import com.hazelcast.cp.CPGroupId;
 import com.hazelcast.cp.internal.RaftNodeLifecycleAwareService;
 import com.hazelcast.cp.internal.RaftService;
-import com.hazelcast.cp.internal.datastructures.spi.AbstractCPMigrationAwareService;
 import com.hazelcast.cp.internal.datastructures.spi.RaftManagedService;
 import com.hazelcast.cp.internal.datastructures.spi.RaftRemoteService;
 import com.hazelcast.cp.internal.datastructures.spi.blocking.operation.ExpireWaitKeysOp;
-import com.hazelcast.cp.internal.operation.unsafe.UnsafeRaftReplicateOp;
 import com.hazelcast.cp.internal.raft.SnapshotAwareService;
 import com.hazelcast.cp.internal.raft.impl.RaftNode;
 import com.hazelcast.cp.internal.session.SessionAccessor;
 import com.hazelcast.cp.internal.session.SessionAwareService;
 import com.hazelcast.cp.internal.session.SessionExpiredException;
-import com.hazelcast.internal.partition.MigrationAwareService;
+import com.hazelcast.internal.metrics.MetricDescriptor;
+import com.hazelcast.internal.metrics.MetricsCollectionContext;
 import com.hazelcast.internal.util.BiTuple;
 import com.hazelcast.internal.util.Clock;
 import com.hazelcast.internal.util.collection.Long2ObjectHashMap;
@@ -46,6 +45,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -54,9 +54,12 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.stream.Collectors;
+import java.util.function.Function;
 
-import static com.hazelcast.cp.internal.session.AbstractProxySessionManager.NO_SESSION_ID;
+import static com.hazelcast.cp.internal.session.ProxySessionManager.NO_SESSION_ID;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_METRIC_SUMMARY_DESTROYED_COUNT;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_METRIC_SUMMARY_LIVE_COUNT;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_TAG_GROUP;
 import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 import static java.lang.Thread.currentThread;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
@@ -71,21 +74,21 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
  */
 @SuppressWarnings("checkstyle:methodcount")
 public abstract class AbstractBlockingService<W extends WaitKey, R extends BlockingResource<W>, RR extends ResourceRegistry<W, R>>
-        extends AbstractCPMigrationAwareService
         implements RaftManagedService, RaftNodeLifecycleAwareService, RaftRemoteService, SessionAwareService,
-        SnapshotAwareService<RR>, LiveOperationsTracker, MigrationAwareService {
+        SnapshotAwareService<RR>, LiveOperationsTracker {
 
     public static final long WAIT_TIMEOUT_TASK_UPPER_BOUND_MILLIS = 1500;
     private static final long WAIT_TIMEOUT_TASK_PERIOD_MILLIS = 500;
 
     protected final ILogger logger;
+    protected final NodeEngine nodeEngine;
     protected volatile RaftService raftService;
 
     private final ConcurrentMap<CPGroupId, RR> registries = new ConcurrentHashMap<>();
     private volatile SessionAccessor sessionAccessor;
 
     protected AbstractBlockingService(NodeEngine nodeEngine) {
-        super(nodeEngine);
+        this.nodeEngine = nodeEngine;
         this.logger = nodeEngine.getLogger(getClass());
     }
 
@@ -166,21 +169,29 @@ public abstract class AbstractBlockingService<W extends WaitKey, R extends Block
     @Override
     public final RR takeSnapshot(CPGroupId groupId, long commitIndex) {
         RR registry = getRegistryOrNull(groupId);
-        return registry != null ? (RR) registry.cloneForSnapshot() : null;
+        if (registry == null) {
+            return null;
+        }
+        return (RR) registry.cloneForSnapshot();
     }
 
     @Override
-    public final void restoreSnapshot(CPGroupId groupId, long commitIndex, RR registry) {
-        RR prev = registries.put(registry.getGroupId(), registry);
-        // do not shift the already existing wait timeouts...
+    public final void restoreSnapshot(CPGroupId groupId, long commitIndex, RR snapshot) {
+        // Make a defensive copy of the snapshot so Raft log state is never mutated
+        RR newRegistry = (RR) snapshot.cloneForSnapshot();
+        // Install the new registry
+        RR prev = registries.put(newRegistry.getGroupId(), newRegistry);
+        // do not shift existing wait timeouts...
         Map<BiTuple<String, UUID>, BiTuple<Long, Long>> existingWaitTimeouts =
                 prev != null ? prev.getWaitTimeouts() : Collections.emptyMap();
-        Map<BiTuple<String, UUID>, Long> newWaitKeys = registry.overwriteWaitTimeouts(existingWaitTimeouts);
+        // Apply timeout state *to the live registry*, not to the snapshot
+        Map<BiTuple<String, UUID>, Long> newWaitKeys = newRegistry.overwriteWaitTimeouts(existingWaitTimeouts);
         for (Entry<BiTuple<String, UUID>, Long> e : newWaitKeys.entrySet()) {
             scheduleTimeout(groupId, e.getKey().element1, e.getKey().element2, e.getValue());
         }
-        registry.onSnapshotRestore();
-        onRegistryRestored(registry);
+
+        newRegistry.onSnapshotRestore();
+        onRegistryRestored(newRegistry);
     }
 
     @Override
@@ -193,7 +204,7 @@ public abstract class AbstractBlockingService<W extends WaitKey, R extends Block
         ResourceRegistry<W, R> registry = registries.get(groupId);
         if (registry == null) {
             if (logger.isFineEnabled()) {
-                logger.fine("Resource registry of " + groupId + " not found to handle closed Session[" + sessionId + "]");
+                logger.fine("Resource registry of %s not found to handle closed Session[%s]", groupId, sessionId);
             }
             return;
         }
@@ -202,7 +213,7 @@ public abstract class AbstractBlockingService<W extends WaitKey, R extends Block
         Long2ObjectHashMap<Object> completedWaitKeys = new Long2ObjectHashMap<>();
         registry.closeSession(sessionId, expiredWaitKeys, completedWaitKeys);
 
-        if (logger.isFineEnabled() && (expiredWaitKeys.size() > 0 || completedWaitKeys.size() > 0)) {
+        if (logger.isFineEnabled() && !(expiredWaitKeys.isEmpty() && completedWaitKeys.isEmpty())) {
             logger.fine("Closed Session[" + sessionId + "] in " + groupId + " expired wait key commit indices: "
                     + expiredWaitKeys + " completed wait keys: " + completedWaitKeys);
         }
@@ -236,6 +247,19 @@ public abstract class AbstractBlockingService<W extends WaitKey, R extends Block
         for (RR registry : registries.values()) {
             registry.populate(liveOperations, now);
         }
+    }
+
+    public Collection<String> listResourceNames(CPGroupId groupId, boolean tombstone) {
+        RR rr = registries.get(groupId);
+        if (rr == null) {
+            return List.of();
+        }
+
+        if (tombstone) {
+            return rr.getDestroyed();
+        }
+
+        return rr.getResources().keySet();
     }
 
     public final void expireWaitKeys(CPGroupId groupId, Collection<BiTuple<String, UUID>> keys) {
@@ -278,6 +302,9 @@ public abstract class AbstractBlockingService<W extends WaitKey, R extends Block
                 .sum();
     }
 
+    // squid:S3824 ConcurrentHashMap.computeIfAbsent(K, Function<? super K, ? extends V>) locks the map, which *may* have an
+    // effect on throughput such that it's not a direct replacement
+    @SuppressWarnings("squid:S3824")
     protected final RR getOrInitRegistry(CPGroupId groupId) {
         checkNotNull(groupId);
         RR registry = registries.get(groupId);
@@ -337,16 +364,10 @@ public abstract class AbstractBlockingService<W extends WaitKey, R extends Block
         InternalCompletableFuture future = null;
         try {
             ExpireWaitKeysOp op = new ExpireWaitKeysOp(serviceName(), keys);
-            if (raftService.isCpSubsystemEnabled()) {
                 RaftNode raftNode = raftService.getRaftNode(groupId);
                 if (raftNode != null) {
                     future = raftNode.replicate(op);
                 }
-            } else {
-                future = raftService.getInvocationManager()
-                        .invokeOnPartition(new UnsafeRaftReplicateOp(groupId, op));
-            }
-
             if (future != null) {
                 future.get(WAIT_TIMEOUT_TASK_PERIOD_MILLIS, MILLISECONDS);
             }
@@ -393,7 +414,7 @@ public abstract class AbstractBlockingService<W extends WaitKey, R extends Block
             long now = Clock.currentTimeMillis();
             for (ResourceRegistry<W, R> registry : registries.values()) {
                 Collection<BiTuple<String, UUID>> t = registry.getWaitKeysToExpire(now);
-                if (t.size() > 0) {
+                if (!t.isEmpty()) {
                     timeouts.put(registry.getGroupId(), t);
                 }
             }
@@ -402,22 +423,59 @@ public abstract class AbstractBlockingService<W extends WaitKey, R extends Block
         }
     }
 
-    @Override
-    protected int getBackupCount() {
-        return 1;
+    protected void addSummaryMetrics(MetricDescriptor root, MetricsCollectionContext context, String prefix,
+                                     Map<CPGroupId, Integer> liveCount) {
+        addSummaryMetrics(root, context, prefix, getGroupIdSet(), liveCount, this::getRegistryOrNull);
     }
 
-    @Override
-    protected Map<CPGroupId, Object> getSnapshotMap(int partitionId) {
-        assert !raftService.isCpSubsystemEnabled();
-        return getGroupIdSet().stream()
-                .filter(groupId -> raftService.getCPGroupPartitionId(groupId) == partitionId)
-                .map(groupId -> BiTuple.of(groupId, takeSnapshot(groupId, 0L)))
-                .collect(Collectors.toMap(tuple -> tuple.element1, tuple -> tuple.element2));
+    static void addSummaryMetrics(MetricDescriptor root, MetricsCollectionContext context, String prefix,
+                                  Set<CPGroupId> groupIds, Map<CPGroupId, Integer> liveCount,
+                                  Function<CPGroupId, ResourceRegistry<?, ?>> registryLookup) {
+        MetricDescriptor destroyed = root.withPrefix(prefix);
+
+        // because the RR could have been null
+        Set<CPGroupId> destroyedRegistered = new HashSet<>();
+
+        for (CPGroupId groupId : groupIds) {
+            ResourceRegistry<?, ?> registry = registryLookup.apply(groupId);
+            if (null == registry) {
+                continue;
+            }
+            addDestroyedMetric(destroyed, context, groupId, registry.getDestroyed().size());
+            destroyedRegistered.add(groupId);
+        }
+
+        for (var e : liveCount.entrySet()) {
+            addLiveMetric(destroyed, context, e.getKey(), e.getValue());
+        }
+
+        // the following is to ensure that there are always two items per-CP group: live and destroyed. It's a little messy but
+        // required
+        for (CPGroupId groupId : liveCount.keySet()) {
+            if (!destroyedRegistered.contains(groupId)) {
+                addDestroyedMetric(destroyed, context, groupId, 0L);
+            }
+        }
+        for (CPGroupId groupId : destroyedRegistered) {
+            if (!liveCount.containsKey(groupId)) {
+                addLiveMetric(destroyed, context, groupId, 0L);
+            }
+        }
     }
 
-    @Override
-    protected void clearPartitionReplica(int partitionId) {
-        getGroupIdSet().removeIf(groupId -> raftService.getCPGroupPartitionId(groupId) == partitionId);
+    private static void addDestroyedMetric(MetricDescriptor descriptor, MetricsCollectionContext context,
+                                           CPGroupId groupId, long value) {
+        MetricDescriptor desc = descriptor.copy()
+                .withDiscriminator(CP_TAG_GROUP, groupId.getName())
+                .withMetric(CP_METRIC_SUMMARY_DESTROYED_COUNT);
+        context.collect(desc, value);
+    }
+
+    private static void addLiveMetric(MetricDescriptor descriptor, MetricsCollectionContext context,
+                                      CPGroupId groupId, long value) {
+        MetricDescriptor desc = descriptor.copy()
+                .withDiscriminator(CP_TAG_GROUP, groupId.getName())
+                .withMetric(CP_METRIC_SUMMARY_LIVE_COUNT);
+        context.collect(desc, value);
     }
 }

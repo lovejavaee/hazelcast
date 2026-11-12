@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.internal.util.LatencyDistribution;
 import com.hazelcast.internal.util.counters.Counter;
 import com.hazelcast.internal.util.counters.MwCounter;
+import com.hazelcast.jet.impl.operation.AsyncOperation;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.spi.impl.PartitionSpecificRunnable;
@@ -47,6 +48,7 @@ import com.hazelcast.spi.impl.operationservice.Operation;
 import com.hazelcast.spi.impl.operationservice.OperationFactory;
 import com.hazelcast.spi.impl.operationservice.OperationService;
 import com.hazelcast.spi.impl.operationservice.PartitionTaskFactory;
+import com.hazelcast.spi.impl.operationservice.SelfResponseOperation;
 import com.hazelcast.spi.impl.operationservice.UrgentSystemOperation;
 import com.hazelcast.spi.properties.HazelcastProperties;
 
@@ -75,13 +77,14 @@ import static com.hazelcast.internal.util.counters.MwCounter.newMwCounter;
 import static com.hazelcast.spi.impl.operationservice.InvocationBuilder.DEFAULT_CALL_TIMEOUT;
 import static com.hazelcast.spi.impl.operationservice.InvocationBuilder.DEFAULT_DESERIALIZE_RESULT;
 import static com.hazelcast.spi.impl.operationservice.InvocationBuilder.DEFAULT_REPLICA_INDEX;
+import static com.hazelcast.spi.impl.operationservice.OperationResponseHandlerFactory.createEmptyResponseHandler;
 import static com.hazelcast.spi.impl.operationservice.Operations.isJoinOperation;
 import static com.hazelcast.spi.impl.operationservice.Operations.isWanReplicationOperation;
 import static com.hazelcast.spi.properties.ClusterProperty.FAIL_ON_INDETERMINATE_OPERATION_STATE;
 import static com.hazelcast.spi.properties.ClusterProperty.INVOCATION_MAX_RETRY_COUNT;
 import static com.hazelcast.spi.properties.ClusterProperty.INVOCATION_RETRY_PAUSE;
 import static com.hazelcast.spi.properties.ClusterProperty.OPERATION_CALL_TIMEOUT_MILLIS;
-import static java.util.Collections.newSetFromMap;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
 /**
@@ -89,11 +92,11 @@ import static java.util.concurrent.TimeUnit.SECONDS;
  * <p>
  * <h1>System Operation</h1>
  * When a {@link UrgentSystemOperation} is invoked on this OperationService, it will be executed with a
- * high urgency by making use of a urgent queue. So when the system is under load, and the operation queues are
+ * high urgency by making use of an urgent queue. So when the system is under load, and the operation queues are
  * filled, then system operations are executed before normal operation. The advantage is that when a system is under
  * pressure, it still is able to do things like recognizing new members in the cluster and moving partitions around.
  * <p>
- * When a UrgentSystemOperation is send to a remote machine, it is wrapped in a {@link Packet} and the packet is marked as a
+ * When a UrgentSystemOperation is sent to a remote machine, it is wrapped in a {@link Packet} and the packet is marked as an
  * urgent packet. When this packet is received on the remove OperationService, the urgent flag is checked and if
  * needed, the operation is set on the urgent queue. So local and remote execution of System operations will obey
  * the urgency.
@@ -111,12 +114,17 @@ public final class OperationServiceImpl implements StaticMetricsProvider, LiveOp
     // contains the current executing asyncOperations. This information is needed for the operation-heartbeats.
     // operations are added/removed using the {@link Offload} functionality.
     @Probe(name = OPERATION_METRIC_OPERATION_SERVICE_ASYNC_OPERATIONS)
-    final Set<Operation> asyncOperations = newSetFromMap(new ConcurrentHashMap<>());
+    final Set<Operation> asyncOperations = ConcurrentHashMap.newKeySet();
     final ConcurrentMap<Class, LatencyDistribution> opLatencyDistributions;
 
     final InvocationRegistry invocationRegistry;
     final OperationExecutor operationExecutor;
 
+    /**
+     * @deprecated to be removed in 6.0 as this metric is not incremented.
+     * Use {@code operation.invocations.normalTimeouts} to monitor operation timeouts instead.
+     */
+    @Deprecated (forRemoval = true, since = "5.7")
     @Probe(name = OPERATION_METRIC_OPERATION_SERVICE_TIMEOUT_COUNT, level = MANDATORY)
     final MwCounter operationTimeoutCount = newMwCounter();
 
@@ -187,11 +195,15 @@ public final class OperationServiceImpl implements StaticMetricsProvider, LiveOp
 
         this.operationExecutor = new OperationExecutorImpl(
                 properties, node.loggingService, thisAddress, new OperationRunnerFactoryImpl(this),
-                node.getNodeExtension(), hzName, configClassLoader, nodeEngine.getTpcServerBootstrap());
+                nodeEngine, node.getNodeExtension(), hzName, configClassLoader, nodeEngine.getTpcServerBootstrap());
 
         this.slowOperationDetector = new SlowOperationDetector(node.loggingService,
                 operationExecutor.getGenericOperationRunners(), operationExecutor.getPartitionOperationRunners(),
                 properties, hzName);
+    }
+
+    public Set<Operation> getAsyncOperations() {
+        return asyncOperations;
     }
 
     public ConcurrentMap<Class, LatencyDistribution> getOpLatencyDistributions() {
@@ -258,6 +270,7 @@ public final class OperationServiceImpl implements StaticMetricsProvider, LiveOp
         return operationExecutor.getPriorityQueueSize();
     }
 
+    @Override
     public OperationExecutor getOperationExecutor() {
         return operationExecutor;
     }
@@ -328,6 +341,10 @@ public final class OperationServiceImpl implements StaticMetricsProvider, LiveOp
     @Override
     @SuppressWarnings("unchecked")
     public <E> InvocationFuture<E> invokeOnPartition(String serviceName, Operation op, int partitionId) {
+        // Only operations which expect a response should be invoked via this method
+        assert op.returnsResponse() || op instanceof SelfResponseOperation : String.format(
+                "Operation '%s' does not handle responses - this will break Future completion!", op.getClass().getSimpleName());
+
         op.setServiceName(serviceName)
                 .setPartitionId(partitionId)
                 .setReplicaIndex(DEFAULT_REPLICA_INDEX);
@@ -346,6 +363,10 @@ public final class OperationServiceImpl implements StaticMetricsProvider, LiveOp
     @Override
     public <E> InvocationFuture<E> invokeOnPartitionAsync(String serviceName, Operation op,
                                                           int partitionId, int replicaIndex) {
+        // Only operations which expect a response should be invoked via this method
+        assert op.returnsResponse() || op instanceof SelfResponseOperation : String.format(
+                "Operation '%s' does not handle responses - this will break Future completion!", op.getClass().getSimpleName());
+
         op.setServiceName(serviceName)
                 .setPartitionId(partitionId)
                 .setReplicaIndex(replicaIndex);
@@ -358,6 +379,10 @@ public final class OperationServiceImpl implements StaticMetricsProvider, LiveOp
     @Override
     @SuppressWarnings("unchecked")
     public <E> InvocationFuture<E> invokeOnPartition(Operation op) {
+        // Only operations which expect a response should be invoked via this method
+        assert op.returnsResponse() || op instanceof SelfResponseOperation : String.format(
+                "Operation '%s' does not handle responses - this will break Future completion!", op.getClass().getSimpleName());
+
         return new PartitionInvocation(
                 invocationContext, op, invocationMaxRetryCount, invocationRetryPauseMillis,
                 DEFAULT_CALL_TIMEOUT, DEFAULT_DESERIALIZE_RESULT, failOnIndeterminateOperationState).invoke();
@@ -366,8 +391,11 @@ public final class OperationServiceImpl implements StaticMetricsProvider, LiveOp
     @Override
     @SuppressWarnings("unchecked")
     public <E> InvocationFuture<E> invokeOnTarget(String serviceName, Operation op, Address target) {
-        op.setServiceName(serviceName);
+        // Only operations which expect a response should be invoked via this method
+        assert op.returnsResponse() || op instanceof SelfResponseOperation : String.format(
+                "Operation '%s' does not handle responses - this will break Future completion!", op.getClass().getSimpleName());
 
+        op.setServiceName(serviceName);
         return new TargetInvocation(invocationContext, op, target, invocationMaxRetryCount, invocationRetryPauseMillis,
                 DEFAULT_CALL_TIMEOUT, DEFAULT_DESERIALIZE_RESULT).invoke();
     }
@@ -375,28 +403,40 @@ public final class OperationServiceImpl implements StaticMetricsProvider, LiveOp
     @Override
     @SuppressWarnings("unchecked")
     public <E> InvocationFuture<E> invokeOnTargetAsync(String serviceName, Operation op, Address target) {
-        op.setServiceName(serviceName);
+        // Only operations which expect a response should be invoked via this method
+        assert op.returnsResponse() || op instanceof SelfResponseOperation : String.format(
+                "Operation '%s' does not handle responses - this will break Future completion!", op.getClass().getSimpleName());
 
+        op.setServiceName(serviceName);
         return new TargetInvocation(invocationContext, op, target, invocationMaxRetryCount, invocationRetryPauseMillis,
                 DEFAULT_CALL_TIMEOUT, DEFAULT_DESERIALIZE_RESULT).invokeAsync();
     }
 
     @Override
-    public <E> InvocationFuture<E> invokeOnMaster(String serviceName, Operation op) {
-        op.setServiceName(serviceName);
+    public void executeOrSend(String serviceName, Operation op, Address target) {
+        // Only operations which do NOT expect a response should be invoked via this method
+        assert !op.returnsResponse() && !(op instanceof AsyncOperation);
 
+        op.setServiceName(serviceName);
+        if (node.getThisAddress().equals(target)) {
+            op.setNodeEngine(nodeEngine)
+              .setOperationResponseHandler(createEmptyResponseHandler())
+              .setCallerUuid(nodeEngine.getLocalMember().getUuid());
+            execute(op);
+        } else {
+            outboundOperationHandler.send(op, target);
+        }
+    }
+
+    @Override
+    public <E> InvocationFuture<E> invokeOnMaster(String serviceName, Operation op) {
+        // Only operations which expect a response should be invoked via this method
+        assert op.returnsResponse() || op instanceof SelfResponseOperation : String.format(
+                "Operation '%s' does not handle responses - this will break Future completion!", op.getClass().getSimpleName());
+
+        op.setServiceName(serviceName);
         return new MasterInvocation(invocationContext, op, invocationMaxRetryCount,
                 invocationRetryPauseMillis, DEFAULT_CALL_TIMEOUT, DEFAULT_DESERIALIZE_RESULT).invoke();
-    }
-
-    @Override
-    public void onStartAsyncOperation(Operation op) {
-        asyncOperations.add(op);
-    }
-
-    @Override
-    public void onCompletionAsyncOperation(Operation op) {
-        asyncOperations.remove(op);
     }
 
     // =============================== processing operation  ===============================
@@ -432,6 +472,13 @@ public final class OperationServiceImpl implements StaticMetricsProvider, LiveOp
         Map<Address, List<Integer>> memberPartitions = nodeEngine.getPartitionService().getMemberPartitionsMap();
         InvokeOnPartitions invokeOnPartitions = new InvokeOnPartitions(this, serviceName, operationFactory, memberPartitions);
         return invokeOnPartitions.invoke();
+    }
+
+    @Override
+    public Map<Integer, Object> invokeOnRelevantLocalPartitions(String serviceName, OperationFactory operationFactory,
+                                                                  int maxReplicaIndex, long timeoutMillis) throws Exception {
+        InvokeOnLocalPartitions invokeOnLocal = new InvokeOnLocalPartitions(this, serviceName, operationFactory, maxReplicaIndex);
+        return timeoutMillis > 0 ? invokeOnLocal.invokeAsync().get(timeoutMillis, MILLISECONDS) : invokeOnLocal.invoke();
     }
 
     @Override
@@ -537,6 +584,7 @@ public final class OperationServiceImpl implements StaticMetricsProvider, LiveOp
                 this,
                 operationExecutor,
                 retryCount,
+                callTimeoutCount,
                 serializationService,
                 nodeEngine.getThisAddress(),
                 outboundOperationHandler,

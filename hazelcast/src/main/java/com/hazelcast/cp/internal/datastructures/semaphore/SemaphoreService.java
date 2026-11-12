@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,8 @@ import com.hazelcast.internal.metrics.ProbeUnit;
 import com.hazelcast.spi.impl.NodeEngine;
 
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 import static com.hazelcast.cp.internal.RaftService.getObjectNameForProxy;
@@ -38,8 +40,9 @@ import static com.hazelcast.cp.internal.RaftService.withoutDefaultGroupName;
 import static com.hazelcast.cp.internal.datastructures.semaphore.AcquireResult.AcquireStatus.FAILED;
 import static com.hazelcast.cp.internal.datastructures.semaphore.AcquireResult.AcquireStatus.SUCCESSFUL;
 import static com.hazelcast.cp.internal.datastructures.semaphore.AcquireResult.AcquireStatus.WAIT_KEY_ADDED;
-import static com.hazelcast.internal.metrics.MetricDescriptorConstants.CP_TAG_NAME;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_TAG_NAME;
 import static com.hazelcast.internal.util.ExceptionUtil.rethrow;
+import static com.hazelcast.spi.properties.ClusterProperty.METRICS_DATASTRUCTURES;
 
 /**
  * Contains Raft-based semaphore instances
@@ -50,7 +53,7 @@ public class SemaphoreService extends AbstractBlockingService<AcquireInvocationK
     /**
      * Name of the service
      */
-    public static final String SERVICE_NAME = "hz:raft:semaphoreService";
+    public static final String SERVICE_NAME = SemaphoreServiceUtil.SERVICE_NAME;
 
     public SemaphoreService(NodeEngine nodeEngine) {
         super(nodeEngine);
@@ -59,7 +62,10 @@ public class SemaphoreService extends AbstractBlockingService<AcquireInvocationK
     @Override
     protected void initImpl() {
         super.initImpl();
-        nodeEngine.getMetricsRegistry().registerDynamicMetricsProvider(this);
+
+        if (nodeEngine.getProperties().getBoolean(METRICS_DATASTRUCTURES)) {
+            nodeEngine.getMetricsRegistry().registerDynamicMetricsProvider(this);
+        }
     }
 
     public boolean initSemaphore(CPGroupId groupId, String name, int permits) {
@@ -206,6 +212,7 @@ public class SemaphoreService extends AbstractBlockingService<AcquireInvocationK
     public void provideDynamicMetrics(MetricDescriptor descriptor, MetricsCollectionContext context) {
         MetricDescriptor root = descriptor.withPrefix("cp.semaphore");
 
+        Map<CPGroupId, Integer> liveCount = new HashMap<>();
         for (CPGroupId groupId : getGroupIdSet()) {
             SemaphoreRegistry registry = getRegistryOrNull(groupId);
             for (Semaphore sema : registry.getAllSemaphores()) {
@@ -217,6 +224,8 @@ public class SemaphoreService extends AbstractBlockingService<AcquireInvocationK
                 context.collect(desc.copy().withMetric("initialized"), sema.isInitialized() ? 1 : 0);
                 context.collect(desc.copy().withUnit(ProbeUnit.COUNT).withMetric("available"), sema.getAvailable());
             }
+            liveCount.put(groupId, registry.getAllSemaphores().size());
         }
+        addSummaryMetrics(descriptor, context, "cp.semaphore.summary", liveCount);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,7 +32,6 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
-import java.io.IOException;
 import java.util.Collection;
 
 import static com.hazelcast.internal.serialization.impl.compact.extractor.ComplexTestDataStructure.finger;
@@ -58,6 +57,7 @@ public class QueryTest extends HazelcastTestSupport {
         mapConfig.setName("map");
         mapConfig.setInMemoryFormat(InMemoryFormat.OBJECT);
         config.addMapConfig(mapConfig);
+        ComplexTestDataStructure.addToAllowList(config);
 
         HazelcastInstance instance = createHazelcastInstance(config);
         IMap map = instance.getMap("map");
@@ -67,10 +67,11 @@ public class QueryTest extends HazelcastTestSupport {
     }
 
     @Test(expected = IllegalArgumentException.class)
-    public void testIndexNotSupportedForObjectAttributes() throws IOException {
+    public void testIndexNotSupportedForObjectAttributes() {
         Config config = new Config();
         MapConfig mapConfig = new MapConfig();
         mapConfig.setName("map");
+        ComplexTestDataStructure.addToAllowList(config);
 
         IndexConfig indexConfig = new IndexConfig();
         indexConfig.addAttribute("firstLimb");
@@ -84,24 +85,25 @@ public class QueryTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testHashIndexForComparableAttributes() throws IOException {
+    public void testHashIndexForComparableAttributes() {
         testIndexForComparableAttributes(IndexType.HASH);
     }
 
     @Test
-    public void testBitMapIndexForComparableAttributes() throws IOException {
+    public void testBitMapIndexForComparableAttributes() {
         testIndexForComparableAttributes(IndexType.BITMAP);
     }
 
     @Test
-    public void testSortedIndexForComparableAttributes() throws IOException {
+    public void testSortedIndexForComparableAttributes() {
         testIndexForComparableAttributes(IndexType.SORTED);
     }
 
-    public void testIndexForComparableAttributes(IndexType indexType) throws IOException {
+    public void testIndexForComparableAttributes(IndexType indexType) {
         Config config = new Config();
         MapConfig mapConfig = new MapConfig();
         mapConfig.setName("map");
+        ComplexTestDataStructure.addToAllowList(config);
 
         IndexConfig indexConfig = new IndexConfig();
         indexConfig.addAttribute("firstLimb.name");

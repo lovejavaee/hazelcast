@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.io.IOException;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -150,10 +149,9 @@ public final class Measurement implements IdentifiedDataSerializable {
         if (this == obj) {
             return true;
         }
-        if (!(obj instanceof Measurement)) {
+        if (!(obj instanceof Measurement that)) {
             return false;
         }
-        final Measurement that = (Measurement) obj;
         return this.timestamp == that.timestamp
                 && this.value == that.value
                 && Objects.equals(this.tags, that.tags);
@@ -168,11 +166,11 @@ public final class Measurement implements IdentifiedDataSerializable {
                 .append(Util.toLocalTime(timestamp))
                 .append(" [");
 
-        String tags = this.tags.entrySet().stream()
-                .sorted(Comparator.comparing(Map.Entry::getKey))
+        String str = this.tags.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
                 .map(e -> e.getKey() + "=" + e.getValue())
                 .collect(Collectors.joining(", "));
-        sb.append(tags).append(']');
+        sb.append(str).append(']');
 
         return sb.toString();
     }

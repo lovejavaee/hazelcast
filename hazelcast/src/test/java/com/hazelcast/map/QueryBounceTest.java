@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ import org.junit.runner.RunWith;
 import java.util.Collection;
 import java.util.Random;
 
-import static com.hazelcast.test.HazelcastTestSupport.smallInstanceConfig;
+import static com.hazelcast.test.HazelcastTestSupport.smallInstanceConfigWithoutJetAndMetrics;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static org.junit.Assert.assertEquals;
 
@@ -52,7 +52,7 @@ public class QueryBounceTest {
 
     @Rule
     public BounceMemberRule bounceMemberRule =
-            BounceMemberRule.with(getConfig())
+            BounceMemberRule.with(this::getConfig)
                     .clusterSize(4)
                     .driverCount(4)
                     .driverType(getDriverType())
@@ -73,7 +73,7 @@ public class QueryBounceTest {
     }
 
     protected Config getConfig() {
-        return smallInstanceConfig();
+        return smallInstanceConfigWithoutJetAndMetrics();
     }
 
     // XXX: It's better to use parametrized test here, but parameters don't play

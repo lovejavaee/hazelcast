@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,11 @@
 
 package com.hazelcast.cp.internal.datastructures;
 
-import com.hazelcast.cp.internal.datastructures.countdownlatch.CountDownLatchService;
-import com.hazelcast.cp.internal.session.ProxySessionManagerService;
 import com.hazelcast.cp.internal.datastructures.atomiclong.AtomicLongService;
-import com.hazelcast.cp.internal.datastructures.atomicref.AtomicRefService;
+import com.hazelcast.cp.internal.datastructures.countdownlatch.CountDownLatchService;
 import com.hazelcast.cp.internal.datastructures.lock.LockService;
 import com.hazelcast.cp.internal.datastructures.semaphore.SemaphoreService;
+import com.hazelcast.cp.internal.session.ProxySessionManagerService;
 import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.servicemanager.ServiceDescriptor;
 import com.hazelcast.spi.impl.servicemanager.ServiceDescriptorProvider;
@@ -37,9 +36,8 @@ public class RaftDataServiceDescriptorProvider implements ServiceDescriptorProvi
             new AtomicLongServiceDescriptor(),
             new LockServiceDescriptor(),
             new RaftSessionManagerServiceDescriptor(),
-            new AtomicRefServiceDescriptor(),
             new SemaphoreServiceDescriptor(),
-            new CountDownLatchServiceDescriptor(),
+            new CountDownLatchServiceDescriptor()
         };
     }
 
@@ -79,18 +77,6 @@ public class RaftDataServiceDescriptorProvider implements ServiceDescriptorProvi
         }
     }
 
-    private static class AtomicRefServiceDescriptor implements ServiceDescriptor {
-        @Override
-        public String getServiceName() {
-            return AtomicRefService.SERVICE_NAME;
-        }
-
-        @Override
-        public Object getService(NodeEngine nodeEngine) {
-            return new AtomicRefService(nodeEngine);
-        }
-    }
-
     private static class SemaphoreServiceDescriptor implements ServiceDescriptor {
         @Override
         public String getServiceName() {
@@ -114,4 +100,5 @@ public class RaftDataServiceDescriptorProvider implements ServiceDescriptorProvi
             return new CountDownLatchService(nodeEngine);
         }
     }
+
 }

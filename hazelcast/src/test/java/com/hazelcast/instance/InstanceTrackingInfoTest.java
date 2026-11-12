@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,11 +32,9 @@ import org.junit.runner.RunWith;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.function.Consumer;
 
-import static com.hazelcast.internal.util.StringUtil.bytesToString;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -62,16 +60,21 @@ public class InstanceTrackingInfoTest extends HazelcastTestSupport {
 
     @Test
     public void testCustomFormat() throws IOException {
-        String format = "mode: $HZ_INSTANCE_TRACKING{mode}\n"
-                + "product: $HZ_INSTANCE_TRACKING{product}\n"
-                + "licensed: $HZ_INSTANCE_TRACKING{licensed}\n"
-                + "missing:$HZ_INSTANCE_TRACKING{missing}\n"
-                + "broken: $HZ_INSTANCE_TRACKING{broken ";
-        String expected = "mode: embedded\n"
-                + "product: Hazelcast\n"
-                + "licensed: 0\n"
-                + "missing:$HZ_INSTANCE_TRACKING{missing}\n"
-                + "broken: $HZ_INSTANCE_TRACKING{broken ";
+        String format = """
+                mode: $HZ_INSTANCE_TRACKING{mode}
+                product: $HZ_INSTANCE_TRACKING{product}
+                licensed: $HZ_INSTANCE_TRACKING{licensed}
+                missing:$HZ_INSTANCE_TRACKING{missing}
+                broken: $HZ_INSTANCE_TRACKING{broken
+                """;
+
+        String expected = """
+                mode: embedded
+                product: Hazelcast
+                licensed: 0
+                missing:$HZ_INSTANCE_TRACKING{missing}
+                broken: $HZ_INSTANCE_TRACKING{broken
+                """;
         assertTrackingFileContents(format, content -> assertEquals(expected, content));
     }
 
@@ -98,7 +101,7 @@ public class InstanceTrackingInfoTest extends HazelcastTestSupport {
         File[] files = tmpDir.listFiles((dir, name) -> name.startsWith("hz-embedded-"));
         assertNotNull(files);
         assertEquals(1, files.length);
-        assertEquals("dummy", bytesToString(Files.readAllBytes(files[0].toPath())));
+        assertEquals("dummy", Files.readString(files[0].toPath()));
     }
 
     @Test
@@ -125,7 +128,7 @@ public class InstanceTrackingInfoTest extends HazelcastTestSupport {
 
         createHazelcastInstance(config);
 
-        String actualContents = new String(Files.readAllBytes(tempFile.toPath()), StandardCharsets.UTF_8);
+        String actualContents = Files.readString(tempFile.toPath());
         contentAssertion.accept(actualContents);
     }
 }

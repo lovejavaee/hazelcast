@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -160,14 +160,13 @@ public final class AddressUtil {
 
     public static InetAddress fixScopeIdAndGetInetAddress(final InetAddress inetAddress) throws SocketException {
 
-        if (!(inetAddress instanceof Inet6Address)) {
+        if (!(inetAddress instanceof Inet6Address inet6Address)) {
             return inetAddress;
         }
         if (!inetAddress.isLinkLocalAddress() && !inetAddress.isSiteLocalAddress()) {
             return inetAddress;
         }
 
-        final Inet6Address inet6Address = (Inet6Address) inetAddress;
         if (inet6Address.getScopeId() > 0 || inet6Address.getScopedInterface() != null) {
             return inetAddress;
 
@@ -274,7 +273,7 @@ public final class AddressUtil {
             throw new IllegalArgumentException("Cannot wildcard matching for IPv6: "
                     + addressMatcher);
         }
-        final Collection<String> addresses = new HashSet<String>();
+        final Collection<String> addresses = new HashSet<>();
         final String first3 = addressMatcher.address[0] + '.'
                 + addressMatcher.address[1]
                 + '.'

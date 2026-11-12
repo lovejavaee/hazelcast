@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,49 +16,44 @@
 
 package com.hazelcast.internal.util.executor;
 
-import com.hazelcast.test.HazelcastParallelClassRunner;
-import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
 
 import static com.hazelcast.logging.Logger.getLogger;
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
-@RunWith(HazelcastParallelClassRunner.class)
-@Category({QuickTest.class, ParallelJVMTest.class})
-public class StripedExecutorTest extends HazelcastTestSupport {
-
-    @Rule
-    public ExpectedException expectedException = ExpectedException.none();
-
+@QuickTest
+@ParallelJVMTest
+public class StripedExecutorTest {
     @Test
-    public void throws_illegalArgumentException_whenThreadCount_isNotPositive() throws Exception {
-        expectedException.expect(IllegalArgumentException.class);
-
-        new StripedExecutor(getLogger(getClass()), "", 0, 0);
+    public void throws_illegalArgumentException_whenThreadCount_isNotPositive() {
+        assertThrows(IllegalArgumentException.class, () -> getStripedExecutor(0, 1));
     }
 
     @Test
-    public void throws_illegalArgumentException_whenMaximumQueueCapacity_isNotPositive() throws Exception {
-        expectedException.expect(IllegalArgumentException.class);
-
-        new StripedExecutor(getLogger(getClass()), "", 0, 0);
+    public void throws_illegalArgumentException_whenMaximumQueueCapacity_isNotPositive() {
+        assertThrows(IllegalArgumentException.class, () -> getStripedExecutor(1, 0));
     }
 
     @Test
-    public void total_worker_queue_size_equals_max_queue_capacity() throws Exception {
+    public void total_worker_queue_size_equals_max_queue_capacity() {
         int threadCount = 5;
         int maximumQueueCapacity = 1000000;
 
-        StripedExecutor executor = new StripedExecutor(getLogger(getClass()), "",
-                threadCount, maximumQueueCapacity);
+        StripedExecutor executor = getStripedExecutor(threadCount, maximumQueueCapacity);
 
         assertEquals(maximumQueueCapacity, calculateWorkersTotalQueueCapacity(executor));
+    }
+
+    /** There was a bug that the metrics would increase every time they were queried, assert they return a constant value */
+    @Test
+    public void test_metrics_are_consistent() {
+        StripedExecutor executor = getStripedExecutor(1, 1);
+
+        assertEquals(executor.getWorkQueueSize(), executor.getWorkQueueSize());
+        assertEquals(executor.processedCount(), executor.processedCount());
     }
 
     private static int calculateWorkersTotalQueueCapacity(StripedExecutor executor) {
@@ -68,5 +63,9 @@ public class StripedExecutorTest extends HazelcastTestSupport {
             totalQueueCapacity += worker.getQueueCapacity();
         }
         return totalQueueCapacity;
+    }
+
+    private StripedExecutor getStripedExecutor(int threadCount, int queueCapacity) {
+        return new StripedExecutor(getLogger(getClass()), "", threadCount, queueCapacity);
     }
 }

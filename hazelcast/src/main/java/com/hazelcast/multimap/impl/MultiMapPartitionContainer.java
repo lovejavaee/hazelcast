@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ public class MultiMapPartitionContainer {
     final int partitionId;
 
     private final ConstructorFunction<String, MultiMapContainer> containerConstructor
-            = new ConstructorFunction<String, MultiMapContainer>() {
+            = new ConstructorFunction<>() {
         public MultiMapContainer createNew(String name) {
             return new MultiMapContainer(name, service, partitionId);
         }
@@ -69,7 +69,7 @@ public class MultiMapPartitionContainer {
      * @param name     The name of the container to retrieve
      * @param isAccess Indicates whether or not this call should be treated
      *                 as an access
-     * @return the container or {@code null} if doesn't exist
+     * @return the container or {@code null} if it doesn't exist
      */
     public MultiMapContainer getMultiMapContainer(String name, boolean isAccess) {
         MultiMapContainer container = containerMap.get(name);

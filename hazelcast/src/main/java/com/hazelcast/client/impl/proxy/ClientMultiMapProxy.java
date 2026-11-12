@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -151,11 +151,8 @@ public class ClientMultiMapProxy<K, V> extends ClientProxy implements MultiMap<K
 
             Data keyData = entry.getKey();
             int partitionId = partitionService.getPartitionId(keyData);
-            Collection<Map.Entry<Data, Collection<Data>>> partition = entryMap.get(partitionId);
-            if (partition == null) {
-                partition = new ArrayList<>();
-                entryMap.put(partitionId, partition);
-            }
+            Collection<Map.Entry<Data, Collection<Data>>> partition = entryMap.computeIfAbsent(partitionId,
+                    x -> new ArrayList<>());
 
             partition.add(new AbstractMap.SimpleEntry<>(keyData, entry.getValue()));
         }
@@ -231,6 +228,7 @@ public class ClientMultiMapProxy<K, V> extends ClientProxy implements MultiMap<K
         return new UnmodifiableLazyList(MultiMapRemoveCodec.decodeResponse(response), getSerializationService());
     }
 
+    @Override
     public void delete(@Nonnull Object key) {
         checkNotNull(key, NULL_KEY_IS_NOT_ALLOWED);
         Data keyData = toData(key);
@@ -586,15 +584,10 @@ public class ClientMultiMapProxy<K, V> extends ClientProxy implements MultiMap<K
             IMapEvent iMapEvent;
             EntryEventType entryEventType = EntryEventType.getByType(eventType);
             switch (entryEventType) {
-                case ADDED:
-                case REMOVED:
-                case UPDATED:
-                case EVICTED:
-                case MERGED:
+                case ADDED, REMOVED, UPDATED, EVICTED, MERGED:
                     iMapEvent = createEntryEvent(key, value, oldValue, mergingValue, eventType, member);
                     break;
-                case EVICT_ALL:
-                case CLEAR_ALL:
+                case EVICT_ALL, CLEAR_ALL:
                     iMapEvent = createMapEvent(eventType, numberOfAffectedEntries, member);
                     break;
                 default:
@@ -610,7 +603,7 @@ public class ClientMultiMapProxy<K, V> extends ClientProxy implements MultiMap<K
 
         private EntryEvent<K, V> createEntryEvent(Data keyData, Data valueData, Data oldValueData,
                                                   Data mergingValueData, int eventType, Member member) {
-            return new DataAwareEntryEvent<K, V>(member, eventType, name, keyData, valueData, oldValueData, mergingValueData,
+            return new DataAwareEntryEvent<>(member, eventType, name, keyData, valueData, oldValueData, mergingValueData,
                     getSerializationService());
         }
     }

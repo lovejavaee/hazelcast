@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package com.hazelcast.map.impl.querycache.subscriber;
 
-import com.hazelcast.core.EntryEvent;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.map.impl.MapService;
 import com.hazelcast.map.impl.MapServiceContext;
@@ -55,24 +54,18 @@ public class NodeQueryCacheEventServiceTest extends HazelcastTestSupport {
         final NodeQueryCacheEventService nodeQueryCacheEventService
                 = (NodeQueryCacheEventService) subscriberContext.getEventService();
 
-        final AtomicBoolean stop = new AtomicBoolean(false);
-        ArrayList<Thread> threads = new ArrayList<Thread>();
+        final AtomicBoolean stop = new AtomicBoolean();
+        ArrayList<Thread> threads = new ArrayList<>();
         for (int i = 0; i < 5; i++) {
-            Thread thread = new Thread() {
-                @Override
-                public void run() {
-                    while (!stop.get()) {
-                        nodeQueryCacheEventService.addListener(mapName, "a", new EntryAddedListener() {
-                            @Override
-                            public void entryAdded(EntryEvent event) {
+            Thread thread = new Thread(() -> {
+                while (!stop.get()) {
+                    nodeQueryCacheEventService.addListener(mapName, "a", (EntryAddedListener<Object, Object>) event -> {
 
-                            }
-                        });
+                    });
 
-                        nodeQueryCacheEventService.removeAllListeners(mapName, "a");
-                    }
+                    nodeQueryCacheEventService.removeAllListeners(mapName, "a");
                 }
-            };
+            });
             threads.add(thread);
         }
 

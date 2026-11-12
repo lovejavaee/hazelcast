@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,25 +18,20 @@ package com.hazelcast.internal.partition.impl;
 
 import com.hazelcast.cluster.ClusterState;
 import com.hazelcast.cluster.Member;
-import com.hazelcast.config.Config;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.core.HazelcastInstanceNotActiveException;
 import com.hazelcast.instance.impl.DefaultNodeExtension;
-import com.hazelcast.instance.impl.HazelcastInstanceFactory;
-import com.hazelcast.instance.impl.Node;
-import com.hazelcast.instance.impl.NodeContext;
-import com.hazelcast.instance.impl.NodeExtension;
 import com.hazelcast.internal.partition.InternalPartition;
+import com.hazelcast.internal.partition.MigrationInfo;
 import com.hazelcast.internal.partition.PartitionReplica;
+import com.hazelcast.internal.partition.PartitionRuntimeState;
 import com.hazelcast.internal.partition.PartitionTableView;
 import com.hazelcast.internal.partition.ReadonlyInternalPartition;
 import com.hazelcast.internal.util.RandomPicker;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
-import com.hazelcast.test.TestHazelcastInstanceFactory;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import com.hazelcast.test.mocknetwork.MockNodeContext;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
@@ -46,16 +41,18 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.hazelcast.internal.partition.InternalPartition.MAX_REPLICA_COUNT;
+import static com.hazelcast.internal.partition.PartitionStampUtil.calculateStamp;
 import static com.hazelcast.test.Accessors.getAddress;
 import static com.hazelcast.test.Accessors.getClusterService;
 import static com.hazelcast.test.Accessors.getPartitionService;
-import static org.hamcrest.Matchers.empty;
+import static java.util.Collections.singletonList;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
@@ -69,27 +66,22 @@ public class InternalPartitionServiceImplTest extends HazelcastTestSupport {
 
     @Before
     public void setup() {
-        TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory();
-        NodeContext nodeContext = new MockNodeContext(factory.getRegistry(), factory.nextAddress()) {
-            @Override
-            public NodeExtension createNodeExtension(Node node) {
-                return new DefaultNodeExtension(node) {
+        instance = createHazelcastInstanceFactory()
+                .withNodeExtensionCustomizer(node -> new DefaultNodeExtension(node) {
                     @Override
                     public boolean isStartCompleted() {
                         return startupDone.get();
                     }
-                };
-            }
-        };
+                })
+                .newHazelcastInstance();
 
-        instance = HazelcastInstanceFactory.newHazelcastInstance(new Config(), randomName(), nodeContext);
         partitionService = (InternalPartitionServiceImpl) getPartitionService(instance);
         localMember = getClusterService(instance).getLocalMember();
         partitionCount = partitionService.getPartitionCount();
     }
 
     @Test(expected = HazelcastInstanceNotActiveException.class)
-    public void test_getPartitionOwnerOrWait_throwsException_afterNodeShutdown() throws Exception {
+    public void test_getPartitionOwnerOrWait_throwsException_afterNodeShutdown() {
         instance.shutdown();
         partitionService.getPartitionOwnerOrWait(0);
     }
@@ -150,6 +142,39 @@ public class InternalPartitionServiceImplTest extends HazelcastTestSupport {
         assertNotEquals(0, partitionService.getPartitionStateStamp());
     }
 
+    @Test
+    public void test_createPromotionCommitPartitionState_reusesStampBufferWithoutChangingSnapshots() {
+        instance.getCluster().changeClusterState(ClusterState.FROZEN);
+        PartitionReplica destination = PartitionReplica.from(localMember);
+        InternalPartition[] initialPartitions = new InternalPartition[partitionCount];
+        for (int i = 0; i < partitionCount; i++) {
+            PartitionReplica[] replicas = new PartitionReplica[MAX_REPLICA_COUNT];
+            replicas[1] = destination;
+            initialPartitions[i] = new ReadonlyInternalPartition(replicas, i, i + 1);
+        }
+        PartitionTableView initialTable = new PartitionTableView(initialPartitions);
+        partitionService.setInitialState(initialTable);
+
+        PartitionRuntimeState[] snapshots = new PartitionRuntimeState[2];
+        for (int i = 0; i < snapshots.length; i++) {
+            MigrationInfo promotion = new MigrationInfo(i, null, destination, -1, -1, 1, 0)
+                    .setInitialPartitionVersion(initialPartitions[i].version());
+            snapshots[i] = partitionService.createPromotionCommitPartitionState(singletonList(promotion));
+        }
+
+        // Check both snapshots after the buffer has been reused for a different partition.
+        for (int i = 0; i < snapshots.length; i++) {
+            InternalPartition[] expected = initialPartitions.clone();
+            PartitionReplica[] replicas = new PartitionReplica[MAX_REPLICA_COUNT];
+            replicas[0] = destination;
+            expected[i] = new ReadonlyInternalPartition(replicas, i, initialPartitions[i].version() + 2);
+            assertArrayEquals(expected, snapshots[i].getPartitions());
+            assertEquals(calculateStamp(expected), snapshots[i].getStamp());
+        }
+        assertEquals(initialTable, partitionService.createPartitionTableView());
+        assertEquals(calculateStamp(initialPartitions), partitionService.getPartitionStateStamp());
+    }
+
     @Test(expected = IllegalStateException.class)
     public void test_setInitialState_multipleTimes() {
         InternalPartition[] partitions = new InternalPartition[partitionCount];
@@ -180,7 +205,7 @@ public class InternalPartitionServiceImplTest extends HazelcastTestSupport {
     @Test
     public void test_getMemberPartitionsIfAssigned_whenNotInitialized() {
         List<Integer> partitions = partitionService.getMemberPartitionsIfAssigned(getAddress(instance));
-        assertThat(partitions, empty());
+        assertThat(partitions).isEmpty();
     }
 
     @Test

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,8 @@ import com.hazelcast.auditlog.AuditlogService;
 import com.hazelcast.auditlog.impl.NoOpAuditlogService;
 import com.hazelcast.cache.impl.CacheService;
 import com.hazelcast.cache.impl.ICacheService;
+import com.hazelcast.client.impl.ClientEngine;
+import com.hazelcast.client.impl.ClientEngineImpl;
 import com.hazelcast.client.impl.ClusterViewListenerService;
 import com.hazelcast.cluster.ClusterState;
 import com.hazelcast.config.AuditlogConfig;
@@ -29,12 +31,17 @@ import com.hazelcast.config.InstanceTrackingConfig.InstanceMode;
 import com.hazelcast.config.InstanceTrackingConfig.InstanceProductName;
 import com.hazelcast.config.InvalidConfigurationException;
 import com.hazelcast.config.PersistenceConfig;
+import com.hazelcast.config.SSLConfig;
 import com.hazelcast.config.SecurityConfig;
 import com.hazelcast.config.SerializationConfig;
 import com.hazelcast.config.SymmetricEncryptionConfig;
 import com.hazelcast.config.cp.CPSubsystemConfig;
 import com.hazelcast.core.HazelcastInstanceAware;
 import com.hazelcast.core.HazelcastInstanceNotActiveException;
+import com.hazelcast.cp.CPSubsystem;
+import com.hazelcast.cp.internal.CPSubsystemImpl;
+import com.hazelcast.cp.internal.datastructures.atomicref.AtomicRefService;
+import com.hazelcast.cp.internal.datastructures.cpmap.CPMapService;
 import com.hazelcast.cp.internal.persistence.CPPersistenceService;
 import com.hazelcast.cp.internal.persistence.NopCPPersistenceService;
 import com.hazelcast.hotrestart.HotRestartService;
@@ -46,11 +53,14 @@ import com.hazelcast.internal.ascii.TextCommandServiceImpl;
 import com.hazelcast.internal.cluster.ClusterStateListener;
 import com.hazelcast.internal.cluster.ClusterVersionListener;
 import com.hazelcast.internal.cluster.impl.JoinMessage;
+import com.hazelcast.internal.cluster.impl.JoinRequest;
+import com.hazelcast.internal.cluster.impl.SplitBrainJoinMessage;
 import com.hazelcast.internal.cluster.impl.VersionMismatchException;
 import com.hazelcast.internal.diagnostics.BuildInfoPlugin;
 import com.hazelcast.internal.diagnostics.ConfigPropertiesPlugin;
 import com.hazelcast.internal.diagnostics.Diagnostics;
 import com.hazelcast.internal.diagnostics.EventQueuePlugin;
+import com.hazelcast.internal.diagnostics.HealthMonitor;
 import com.hazelcast.internal.diagnostics.InvocationProfilerPlugin;
 import com.hazelcast.internal.diagnostics.InvocationSamplePlugin;
 import com.hazelcast.internal.diagnostics.MemberHazelcastInstanceInfoPlugin;
@@ -75,12 +85,15 @@ import com.hazelcast.internal.jmx.ManagementService;
 import com.hazelcast.internal.management.TimedMemberStateFactory;
 import com.hazelcast.internal.memory.DefaultMemoryStats;
 import com.hazelcast.internal.memory.MemoryStats;
+import com.hazelcast.internal.namespace.UserCodeNamespaceService;
+import com.hazelcast.internal.namespace.impl.NoOpUserCodeNamespaceService;
 import com.hazelcast.internal.networking.ChannelInitializer;
 import com.hazelcast.internal.networking.InboundHandler;
 import com.hazelcast.internal.networking.OutboundHandler;
 import com.hazelcast.internal.nio.ClassLoaderUtil;
 import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.internal.serialization.SerializationServiceBuilder;
+import com.hazelcast.internal.serialization.impl.CodebaseClusterVersionAware;
 import com.hazelcast.internal.serialization.impl.DefaultSerializationServiceBuilder;
 import com.hazelcast.internal.serialization.impl.compact.schema.MemberSchemaService;
 import com.hazelcast.internal.server.ServerConnection;
@@ -88,11 +101,12 @@ import com.hazelcast.internal.server.ServerContext;
 import com.hazelcast.internal.server.tcp.ChannelInitializerFunction;
 import com.hazelcast.internal.server.tcp.PacketDecoder;
 import com.hazelcast.internal.server.tcp.PacketEncoder;
+import com.hazelcast.internal.tpc.TpcServerBootstrap;
+import com.hazelcast.internal.tpc.TpcServerBootstrapImpl;
 import com.hazelcast.internal.util.ConstructorFunction;
 import com.hazelcast.internal.util.JVMUtil;
 import com.hazelcast.internal.util.MapUtil;
 import com.hazelcast.internal.util.Preconditions;
-import com.hazelcast.internal.util.phonehome.PhoneHome;
 import com.hazelcast.jet.JetService;
 import com.hazelcast.jet.config.JetConfig;
 import com.hazelcast.jet.impl.JetServiceBackend;
@@ -100,24 +114,27 @@ import com.hazelcast.jet.impl.JobEventService;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.map.impl.MapService;
 import com.hazelcast.nio.MemberSocketInterceptor;
+import com.hazelcast.nio.ssl.SSLEngineFactory;
 import com.hazelcast.partition.PartitioningStrategy;
 import com.hazelcast.partition.strategy.DefaultPartitioningStrategy;
-import com.hazelcast.security.SecurityContext;
+import com.hazelcast.security.impl.InternalSecurityContext;
 import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.NodeEngineImpl;
+import com.hazelcast.spi.impl.NodeEngineThreadLocalContext;
 import com.hazelcast.spi.impl.eventservice.impl.EventServiceImpl;
 import com.hazelcast.spi.impl.servicemanager.ServiceManager;
 import com.hazelcast.spi.properties.ClusterProperty;
+import com.hazelcast.spi.properties.HazelcastProperties;
 import com.hazelcast.version.MemberVersion;
 import com.hazelcast.version.Version;
 import com.hazelcast.wan.impl.WanReplicationService;
 import com.hazelcast.wan.impl.WanReplicationServiceImpl;
 
 import javax.annotation.Nullable;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
 
@@ -128,96 +145,102 @@ import static com.hazelcast.config.InstanceTrackingConfig.InstanceTrackingProper
 import static com.hazelcast.config.InstanceTrackingConfig.InstanceTrackingProperties.PRODUCT;
 import static com.hazelcast.config.InstanceTrackingConfig.InstanceTrackingProperties.START_TIMESTAMP;
 import static com.hazelcast.config.InstanceTrackingConfig.InstanceTrackingProperties.VERSION;
+import static com.hazelcast.internal.util.CollectionUtil.setOf;
 import static com.hazelcast.internal.util.ExceptionUtil.rethrow;
 import static com.hazelcast.internal.util.InstanceTrackingUtil.writeInstanceTrackingFile;
+import static com.hazelcast.internal.util.StringUtil.isNullOrEmpty;
 import static com.hazelcast.jet.impl.util.Util.JET_IS_DISABLED_MESSAGE;
 import static com.hazelcast.jet.impl.util.Util.checkJetIsEnabled;
 import static com.hazelcast.map.impl.MapServiceConstructor.getDefaultMapServiceConstructor;
 
 @SuppressWarnings({"checkstyle:methodcount", "checkstyle:classfanoutcomplexity", "checkstyle:classdataabstractioncoupling"})
 public class DefaultNodeExtension implements NodeExtension {
-    private static final String PLATFORM_LOGO
-            = "\t+       +  o    o     o     o---o o----o o      o---o     o     o----o o--o--o\n"
-            + "\t+ +   + +  |    |    / \\       /  |      |     /         / \\    |         |   \n"
-            + "\t+ + + + +  o----o   o   o     o   o----o |    o         o   o   o----o    |   \n"
-            + "\t+ +   + +  |    |  /     \\   /    |      |     \\       /     \\       |    |   \n"
-            + "\t+       +  o    o o       o o---o o----o o----o o---o o       o o----o    o   ";
+    private static final String PLATFORM_LOGO = """
+      o    o     o     o---o   o--o o      o---o     o     o----o o--o--o
+      |    |    / \\       /         |     /         / \\    |         |
+      o----o       o     o   o----o |    o             o   o----o    |
+      |    |  *     \\   /           |     \\       *     \\       |    |
+      o    o *       o o---o   o--o o----o o---o *       o o----o    o
+      """.indent(4);
 
-    private static final String COPYRIGHT_LINE = "Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.";
+    private static final String COPYRIGHT_LINE = "Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.";
 
     protected final Node node;
     protected final ILogger logger;
     protected final ILogger logoLogger;
     protected final ILogger systemLogger;
     protected final List<ClusterVersionListener> clusterVersionListeners = new CopyOnWriteArrayList<>();
-    protected PhoneHome phoneHome;
     protected JetServiceBackend jetServiceBackend;
     protected IntegrityChecker integrityChecker;
 
     private final MemoryStats memoryStats = new DefaultMemoryStats();
+    private final Set<Version> supportedVersions;
 
     public DefaultNodeExtension(Node node) {
         this.node = node;
         this.logger = node.getLogger(NodeExtension.class);
         this.logoLogger = node.getLogger("com.hazelcast.system.logo");
         this.systemLogger = node.getLogger("com.hazelcast.system");
+
+        checkCPSubsystemAllowed();
         checkSecurityAllowed();
         checkPersistenceAllowed();
         checkLosslessRestartAllowed();
-        createAndSetPhoneHome();
         checkDynamicConfigurationPersistenceAllowed();
+        checkSqlCatalogPersistenceAllowed();
 
         if (node.getConfig().getJetConfig().isEnabled()) {
             jetServiceBackend = createService(JetServiceBackend.class);
         }
 
         integrityChecker = new IntegrityChecker(node.getConfig().getIntegrityCheckerConfig(), this.systemLogger);
+        supportedVersions = setOf(BuildInfoProvider.getBuildInfo().getCodebaseVersion().asVersion());
+    }
+
+    private void checkCPSubsystemAllowed() {
+        CPSubsystemConfig cpSubsystemConfig = node.getConfig().getCPSubsystemConfig();
+        if (cpSubsystemConfig == null || BuildInfoProvider.getBuildInfo().isEnterprise()) {
+            return;
+        }
+        if (cpSubsystemConfig.isPersistenceEnabled()) {
+            throw new IllegalStateException("CP Persistence requires Hazelcast Enterprise Edition");
+        }
+        if (cpSubsystemConfig.isAutoStepDownWhenLeader()) {
+            throw new IllegalStateException("CP auto-step-down-when-leader requires Hazelcast Enterprise Edition");
+        }
+        if (cpSubsystemConfig.getCPMemberPriority() != 0) {
+            throw new IllegalStateException("CP member priority requires Hazelcast Enterprise Edition");
+        }
     }
 
     private void checkPersistenceAllowed() {
         PersistenceConfig persistenceConfig = node.getConfig().getPersistenceConfig();
-        if (persistenceConfig != null && persistenceConfig.isEnabled()) {
-            if (!BuildInfoProvider.getBuildInfo().isEnterprise()) {
-                throw new IllegalStateException("Hot Restart requires Hazelcast Enterprise Edition");
-            }
-        }
-
-        CPSubsystemConfig cpSubsystemConfig = node.getConfig().getCPSubsystemConfig();
-        if (cpSubsystemConfig != null && cpSubsystemConfig.isPersistenceEnabled()) {
-            if (!BuildInfoProvider.getBuildInfo().isEnterprise()) {
-                throw new IllegalStateException("CP persistence requires Hazelcast Enterprise Edition");
-            }
+        if (persistenceConfig != null && persistenceConfig.isEnabled() && !BuildInfoProvider.getBuildInfo().isEnterprise()) {
+            throw new IllegalStateException("Hot Restart requires Hazelcast Enterprise Edition");
         }
     }
 
     private void checkSecurityAllowed() {
         SecurityConfig securityConfig = node.getConfig().getSecurityConfig();
-        if (securityConfig != null && securityConfig.isEnabled()) {
-            if (!BuildInfoProvider.getBuildInfo().isEnterprise()) {
-                throw new IllegalStateException("Security requires Hazelcast Enterprise Edition");
-            }
+        if (securityConfig != null && securityConfig.isEnabled() && !BuildInfoProvider.getBuildInfo().isEnterprise()) {
+            throw new IllegalStateException("Security requires Hazelcast Enterprise Edition");
         }
-        SymmetricEncryptionConfig symmetricEncryptionConfig
-                = getActiveMemberNetworkConfig(node.getConfig()).getSymmetricEncryptionConfig();
-        if (symmetricEncryptionConfig != null && symmetricEncryptionConfig.isEnabled()) {
-            if (!BuildInfoProvider.getBuildInfo().isEnterprise()) {
-                throw new IllegalStateException("Symmetric Encryption requires Hazelcast Enterprise Edition");
-            }
+        SymmetricEncryptionConfig symmetricEncryptionConfig =
+                getActiveMemberNetworkConfig(node.getConfig()).getSymmetricEncryptionConfig();
+        if (symmetricEncryptionConfig != null && symmetricEncryptionConfig.isEnabled()
+                && !BuildInfoProvider.getBuildInfo().isEnterprise()) {
+            throw new IllegalStateException("Symmetric Encryption requires Hazelcast Enterprise Edition");
         }
         AuditlogConfig auditlogConfig = node.getConfig().getAuditlogConfig();
-        if (auditlogConfig != null && auditlogConfig.isEnabled()) {
-            if (!BuildInfoProvider.getBuildInfo().isEnterprise()) {
-                throw new IllegalStateException("Auditlog requires Hazelcast Enterprise Edition");
-            }
+        if (auditlogConfig.isEnabled() && !BuildInfoProvider.getBuildInfo().isEnterprise()) {
+            throw new IllegalStateException("Auditlog requires Hazelcast Enterprise Edition");
         }
     }
 
     private void checkLosslessRestartAllowed() {
         JetConfig jetConfig = node.getConfig().getJetConfig();
-        if (jetConfig.isLosslessRestartEnabled()) {
-            if (!BuildInfoProvider.getBuildInfo().isEnterprise()) {
-                throw new IllegalStateException("Lossless Restart requires Hazelcast Enterprise Edition");
-            }
+        if (jetConfig.isLosslessRestartEnabled() && !BuildInfoProvider.getBuildInfo().isEnterprise()) {
+            throw new IllegalStateException("Lossless Restart requires Hazelcast Enterprise Edition");
         }
     }
 
@@ -234,6 +257,13 @@ public class DefaultNodeExtension implements NodeExtension {
                                 + " This is probably because declarative configuration isn't used."
                 );
             }
+        }
+    }
+
+    protected void checkSqlCatalogPersistenceAllowed() {
+        Config config = node.getConfig();
+        if (config.getSqlConfig().isCatalogPersistenceEnabled() && !BuildInfoProvider.getBuildInfo().isEnterprise()) {
+            throw new IllegalStateException("SQL Catalog Persistence requires Hazelcast Enterprise Edition");
         }
     }
 
@@ -254,8 +284,7 @@ public class DefaultNodeExtension implements NodeExtension {
     public void printNodeInfo() {
         BuildInfo buildInfo = node.getBuildInfo();
         printBannersBeforeNodeInfo();
-        String build = constructBuildString(buildInfo);
-        printNodeInfoInternal(buildInfo, build);
+        printNodeInfoInternal(buildInfo);
     }
 
     @Override
@@ -291,20 +320,11 @@ public class DefaultNodeExtension implements NodeExtension {
         systemLogger.info(COPYRIGHT_LINE);
     }
 
-    protected String constructBuildString(BuildInfo buildInfo) {
-        String build = buildInfo.getBuild();
-        String revision = buildInfo.getRevision();
-        if (!revision.isEmpty()) {
-            build += " - " + revision;
-        }
-        return build;
-    }
-
-    private void printNodeInfoInternal(BuildInfo buildInfo, String build) {
+    private void printNodeInfoInternal(BuildInfo buildInfo) {
         systemLogger.info(getEditionString() + " " + buildInfo.getVersion()
-                + " (" + build + ") starting at " + node.getThisAddress());
+                + " (" + buildInfo.toBuildString() + ") starting at " + node.getThisAddress());
         systemLogger.info("Cluster name: " + node.getConfig().getClusterName());
-        systemLogger.fine("Configured Hazelcast Serialization version: " + buildInfo.getSerializationVersion());
+        systemLogger.fine("Configured Hazelcast Serialization version: %s", buildInfo.getSerializationVersion());
     }
 
     protected String getEditionString() {
@@ -329,8 +349,14 @@ public class DefaultNodeExtension implements NodeExtension {
     }
 
     @Override
-    public SecurityContext getSecurityContext() {
+    public InternalSecurityContext getSecurityContext() {
         logger.warning("Security features are only available on Hazelcast Enterprise!");
+        return null;
+    }
+
+    @Nullable
+    @Override
+    public InternalSecurityContext getSecurityContextOrNull() {
         return null;
     }
 
@@ -355,7 +381,7 @@ public class DefaultNodeExtension implements NodeExtension {
      * 3.x or the 4.x format.
      *
      * @param isCompatibility {@code true} if the serialized format should conform to the
-     *                 3.x serialization format, {@code false} otherwise
+     *                        3.x serialization format, {@code false} otherwise
      * @return the serialization service
      */
     private InternalSerializationService createSerializationService(boolean isCompatibility) {
@@ -365,7 +391,7 @@ public class DefaultNodeExtension implements NodeExtension {
             ClassLoader configClassLoader = node.getConfigClassLoader();
 
             HazelcastInstanceImpl hazelcastInstance = node.hazelcastInstance;
-            PartitioningStrategy partitioningStrategy = getPartitioningStrategy(configClassLoader);
+            PartitioningStrategy<?> partitioningStrategy = getPartitioningStrategy(configClassLoader);
 
             SerializationServiceBuilder builder = new DefaultSerializationServiceBuilder();
             SerializationConfig serializationConfig = config.getSerializationConfig() != null
@@ -381,7 +407,10 @@ public class DefaultNodeExtension implements NodeExtension {
                     .setVersion(version)
                     .setSchemaService(node.getSchemaService())
                     .setNotActiveExceptionSupplier(HazelcastInstanceNotActiveException::new)
+                    .setVersionedSerializationEnabled(true)
+                    .setClusterVersionAware(new CodebaseClusterVersionAware())
                     .isCompatibility(isCompatibility)
+                    .setProperties(node.getProperties())
                     .build();
         } catch (Exception e) {
             throw rethrow(e);
@@ -391,7 +420,7 @@ public class DefaultNodeExtension implements NodeExtension {
 
     protected PartitioningStrategy getPartitioningStrategy(ClassLoader configClassLoader) throws Exception {
         String partitioningStrategyClassName = node.getProperties().getString(ClusterProperty.PARTITIONING_STRATEGY_CLASS);
-        if (partitioningStrategyClassName != null && partitioningStrategyClassName.length() > 0) {
+        if (!isNullOrEmpty(partitioningStrategyClassName)) {
             return ClassLoaderUtil.newInstance(configClassLoader, partitioningStrategyClassName);
         } else {
             return new DefaultPartitioningStrategy();
@@ -436,14 +465,29 @@ public class DefaultNodeExtension implements NodeExtension {
 
     @Override
     public Map<String, Object> createExtensionServices() {
+        Map<String, Object> services = new HashMap<>();
+
         if (jetServiceBackend != null) {
-            Map<String, Object> services = new HashMap<>();
             services.put(JetServiceBackend.SERVICE_NAME, jetServiceBackend);
             services.put(JobEventService.SERVICE_NAME, new JobEventService(node.getNodeEngine()));
-            return services;
         }
-        return Collections.emptyMap();
+
+        if (node.nodeEngine.getConfig().getCPSubsystemConfig().getCPMemberCount() > 0) {
+            services.put(CPMapService.SERVICE_NAME, createCPMapService());
+            services.put(AtomicRefService.SERVICE_NAME, createAtomicRefService());
+        }
+
+        return services;
     }
+
+    protected CPMapService createCPMapService() {
+        return new CPMapService(node.nodeEngine);
+    }
+
+    protected AtomicRefService createAtomicRefService() {
+        return new AtomicRefService(node.nodeEngine);
+    }
+
 
     @Override
     public MemberSocketInterceptor getSocketInterceptor(EndpointQualifier endpointQualifier) {
@@ -488,29 +532,37 @@ public class DefaultNodeExtension implements NodeExtension {
     @Override
     public void afterShutdown() {
         logger.info("Destroying node NodeExtension.");
-        if (phoneHome != null) {
-            phoneHome.shutdown();
-        }
     }
 
     @Override
     public void validateJoinRequest(JoinMessage joinMessage) {
-        // check joining member's major.minor version is same as current cluster version's major.minor numbers
+        // check joining member's version is in defined supported versions.
         MemberVersion memberVersion = joinMessage.getMemberVersion();
         Version clusterVersion = node.getClusterService().getClusterVersion();
-        if (!memberVersion.asVersion().equals(clusterVersion)) {
-            String msg = "Joining node's version " + memberVersion + " is not compatible with cluster version " + clusterVersion;
-            if (clusterVersion.getMajor() != memberVersion.getMajor()) {
-                msg += " (Rolling Member Upgrades are only supported for the same major version)";
-            }
-            if (clusterVersion.getMinor() > memberVersion.getMinor()) {
-                msg += " (Rolling Member Upgrades are only supported for the next minor version)";
-            }
-            if (!BuildInfoProvider.getBuildInfo().isEnterprise()) {
-                msg += " (Rolling Member Upgrades are only supported in Hazelcast Enterprise)";
-            }
-            throw new VersionMismatchException(msg);
+        if (joinMessage instanceof JoinRequest joinRequest && joinRequest.supportsVersion(clusterVersion)) {
+            return;
         }
+        // for split brain healing
+        if (joinMessage instanceof SplitBrainJoinMessage && memberVersion.asVersion().equals(clusterVersion)) {
+            return;
+        }
+        String msg = constructVersionMismatchMessage(memberVersion, clusterVersion);
+        throw new VersionMismatchException(msg);
+    }
+
+    @Override
+    public Set<Version> getSupportedVersions() {
+        return supportedVersions;
+    }
+
+    private static String constructVersionMismatchMessage(MemberVersion memberVersion, Version clusterVersion) {
+        String msg = "Joining node's version " + memberVersion + " is not compatible with cluster version " + clusterVersion;
+        if (!BuildInfoProvider.getBuildInfo().isEnterprise()) {
+            msg += " (Rolling Member Upgrades are only supported in Hazelcast Enterprise)";
+        } else {
+            msg += " (Rolling Member Upgrades is not licensed)";
+        }
+        return msg;
     }
 
     @Override
@@ -523,15 +575,12 @@ public class DefaultNodeExtension implements NodeExtension {
     @Override
     public void onClusterStateChange(ClusterState newState, boolean isTransient) {
         ServiceManager serviceManager = node.getNodeEngine().getServiceManager();
-        List<ClusterStateListener> listeners = serviceManager.getServices(ClusterStateListener.class);
-        for (ClusterStateListener listener : listeners) {
-            listener.onClusterStateChange(newState);
-        }
+        serviceManager.getServices(ClusterStateListener.class).forEach(listener -> listener.onClusterStateChange(newState));
     }
 
     @Override
     public void onPartitionStateChange() {
-        ClusterViewListenerService service = node.clientEngine.getClusterListenerService();
+        ClusterViewListenerService service = node.clientEngine.getClusterViewListenerService();
         if (service != null) {
             service.onPartitionStateChange();
         }
@@ -539,7 +588,7 @@ public class DefaultNodeExtension implements NodeExtension {
 
     @Override
     public void onMemberListChange() {
-        ClusterViewListenerService service = node.clientEngine.getClusterListenerService();
+        ClusterViewListenerService service = node.clientEngine.getClusterViewListenerService();
         if (service != null) {
             service.onMemberListChange();
         }
@@ -552,29 +601,28 @@ public class DefaultNodeExtension implements NodeExtension {
             systemLogger.info("Cluster version set to " + newVersion);
         }
         ServiceManager serviceManager = node.getNodeEngine().getServiceManager();
-        List<ClusterVersionListener> listeners = serviceManager.getServices(ClusterVersionListener.class);
-        for (ClusterVersionListener listener : listeners) {
-            listener.onClusterVersionChange(newVersion);
-        }
+        serviceManager.getServices(ClusterVersionListener.class)
+                .forEach(listener -> listener.onClusterVersionChange(newVersion));
         // also trigger cluster version change on explicitly registered listeners
-        for (ClusterVersionListener listener : clusterVersionListeners) {
-            listener.onClusterVersionChange(newVersion);
+        clusterVersionListeners.forEach(listener -> listener.onClusterVersionChange(newVersion));
+        ClusterViewListenerService service = node.clientEngine.getClusterViewListenerService();
+        if (service != null) {
+            service.onClusterVersionChange();
         }
     }
 
     @Override
     public boolean isNodeVersionCompatibleWith(Version clusterVersion) {
         Preconditions.checkNotNull(clusterVersion);
-        return node.getVersion().asVersion().equals(clusterVersion);
+        return getSupportedVersions().contains(clusterVersion);
     }
 
     @Override
     public boolean registerListener(Object listener) {
-        if (listener instanceof HazelcastInstanceAware) {
-            ((HazelcastInstanceAware) listener).setHazelcastInstance(node.hazelcastInstance);
+        if (listener instanceof HazelcastInstanceAware aware) {
+            aware.setHazelcastInstance(node.hazelcastInstance);
         }
-        if (listener instanceof ClusterVersionListener) {
-            ClusterVersionListener clusterVersionListener = (ClusterVersionListener) listener;
+        if (listener instanceof ClusterVersionListener clusterVersionListener) {
             clusterVersionListeners.add(clusterVersionListener);
             // on registration, invoke once the listening method so version is properly initialized on the listener
             clusterVersionListener.onClusterVersionChange(getClusterOrNodeVersion());
@@ -614,28 +662,39 @@ public class DefaultNodeExtension implements NodeExtension {
     @Override
     public void registerPlugins(Diagnostics diagnostics) {
         final NodeEngineImpl nodeEngine = node.nodeEngine;
+        HazelcastProperties properties = nodeEngine.getProperties();
 
         // static loggers at beginning of file
-        diagnostics.register(new BuildInfoPlugin(nodeEngine));
-        diagnostics.register(new SystemPropertiesPlugin(nodeEngine));
+        diagnostics.register(new BuildInfoPlugin(nodeEngine.getLogger(BuildInfoPlugin.class)));
+        diagnostics.register(new SystemPropertiesPlugin(nodeEngine.getLogger(SystemPropertiesPlugin.class)));
         diagnostics.register(new ConfigPropertiesPlugin(nodeEngine));
 
         // periodic loggers
         diagnostics.register(new OverloadedConnectionsPlugin(nodeEngine));
-        diagnostics.register(new EventQueuePlugin(nodeEngine,
-                ((EventServiceImpl) nodeEngine.getEventService()).getEventExecutor()));
-        diagnostics.register(new PendingInvocationsPlugin(nodeEngine));
-        diagnostics.register(new MetricsPlugin(nodeEngine));
-        diagnostics.register(new SlowOperationPlugin(nodeEngine));
-        diagnostics.register(new InvocationSamplePlugin(nodeEngine));
-        diagnostics.register(new InvocationProfilerPlugin(nodeEngine));
-        diagnostics.register(new OperationProfilerPlugin(nodeEngine));
+        diagnostics.register(new EventQueuePlugin(nodeEngine.getLogger(EventQueuePlugin.class),
+                ((EventServiceImpl) nodeEngine.getEventService()).getEventExecutor(), properties));
+        diagnostics.register(new PendingInvocationsPlugin(nodeEngine.getLogger(PendingInvocationsPlugin.class),
+                nodeEngine.getOperationService().getInvocationRegistry(), properties));
+        diagnostics.register(new MetricsPlugin(nodeEngine.getLogger(MetricsPlugin.class),
+                nodeEngine.getMetricsRegistry(), properties));
+        diagnostics.register(new SlowOperationPlugin(nodeEngine.getLogger(SlowOperationPlugin.class),
+                nodeEngine.getOperationService(), properties));
+        diagnostics.register(new InvocationSamplePlugin(nodeEngine.getLogger(InvocationSamplePlugin.class),
+                nodeEngine.getOperationService().getInvocationRegistry(), properties));
+        diagnostics.register(new InvocationProfilerPlugin(nodeEngine.getLogger(InvocationProfilerPlugin.class),
+                nodeEngine.getOperationService().getInvocationRegistry(), properties));
+        diagnostics.register(new OperationProfilerPlugin(nodeEngine.getLogger(OperationProfilerPlugin.class),
+                nodeEngine.getOperationService().getOpLatencyDistributions(), properties));
         diagnostics.register(new MemberHazelcastInstanceInfoPlugin(nodeEngine));
-        diagnostics.register(new SystemLogPlugin(nodeEngine));
-        diagnostics.register(new StoreLatencyPlugin(nodeEngine));
-        diagnostics.register(new MemberHeartbeatPlugin(nodeEngine));
-        diagnostics.register(new NetworkingImbalancePlugin(nodeEngine));
-        diagnostics.register(new OperationHeartbeatPlugin(nodeEngine));
+        diagnostics.register(new SystemLogPlugin(nodeEngine.getLogger(SystemLogPlugin.class), properties, node.getServer(),
+                nodeEngine.getHazelcastInstance(), node.getNodeExtension()));
+        diagnostics.register(new StoreLatencyPlugin(nodeEngine.getLogger(StoreLatencyPlugin.class), properties));
+        diagnostics.register(new MemberHeartbeatPlugin(nodeEngine.getLogger(MemberHeartbeatPlugin.class),
+                nodeEngine.getClusterService(), properties));
+        diagnostics.register(new NetworkingImbalancePlugin(nodeEngine.getLogger(NetworkingImbalancePlugin.class),
+                properties, node.getServer()));
+        diagnostics.register(new OperationHeartbeatPlugin(nodeEngine.getLogger(OperationHeartbeatPlugin.class),
+                nodeEngine.getOperationService().getInvocationMonitor(), properties));
         diagnostics.register(new OperationThreadSamplerPlugin(nodeEngine));
     }
 
@@ -650,17 +709,16 @@ public class DefaultNodeExtension implements NodeExtension {
     }
 
     @Override
-    public void sendPhoneHome() {
-        phoneHome.check();
-    }
-
-    @Override
     public CPPersistenceService getCPPersistenceService() {
         return NopCPPersistenceService.INSTANCE;
     }
 
-    protected void createAndSetPhoneHome() {
-        this.phoneHome = new PhoneHome(node);
+    @Override
+    public CPSubsystem createCPSubsystem(NodeEngine nodeEngine) {
+        if (nodeEngine.getConfig().getCPSubsystemConfig().getCPMemberCount() > 0) {
+            return new CPSubsystemImpl(nodeEngine);
+        }
+        return null;
     }
 
     public void setLicenseKey(String licenseKey) {
@@ -682,5 +740,42 @@ public class DefaultNodeExtension implements NodeExtension {
     @Nullable
     public JetServiceBackend getJetServiceBackend() {
         return jetServiceBackend;
+    }
+
+    @Override
+    public SSLEngineFactory createSslEngineFactory(SSLConfig sslConfig) {
+        throw new IllegalStateException("SSL/TLS requires Hazelcast Enterprise Edition");
+    }
+
+    @Override
+    public void onThreadStart(Thread thread) {
+        // Setup NodeEngine context for operations
+        NodeEngineThreadLocalContext.declareNodeEngineReference(node.getNodeEngine());
+    }
+
+    @Override
+    public void onThreadStop(Thread thread) {
+        // Destroy NodeEngine context
+        NodeEngineThreadLocalContext.destroyNodeEngineReference();
+    }
+
+    @Override
+    public UserCodeNamespaceService getNamespaceService() {
+        return new NoOpUserCodeNamespaceService(node.getConfigClassLoader());
+    }
+
+    @Override
+    public TpcServerBootstrap createTpcServerBootstrap() {
+        return new TpcServerBootstrapImpl(node);
+    }
+
+    @Override
+    public ClientEngine createClientEngine() {
+        return new ClientEngineImpl(node);
+    }
+
+    @Override
+    public HealthMonitor createHealthMonitor() {
+        return new HealthMonitor(node);
     }
 }

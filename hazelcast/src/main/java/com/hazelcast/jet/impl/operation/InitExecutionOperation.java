@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,13 +20,13 @@ import com.hazelcast.cluster.Address;
 import com.hazelcast.internal.cluster.MemberInfo;
 import com.hazelcast.internal.nio.IOUtil;
 import com.hazelcast.internal.serialization.Data;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.jet.JetException;
 import com.hazelcast.jet.config.JobConfig;
 import com.hazelcast.jet.impl.JetServiceBackend;
 import com.hazelcast.jet.impl.JobClassLoaderService;
 import com.hazelcast.jet.impl.execution.init.ExecutionPlan;
 import com.hazelcast.jet.impl.execution.init.JetInitDataSerializerHook;
-import com.hazelcast.jet.impl.util.LoggingUtil;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
@@ -86,7 +86,7 @@ public class InitExecutionOperation extends AsyncJobOperation {
 
         JetServiceBackend service = getJetServiceBackend();
         Address caller = getCallerAddress();
-        LoggingUtil.logFine(logger, "Initializing execution plan for %s from %s", jobIdAndExecutionId(jobId(), executionId),
+        logger.fine("Initializing execution plan for %s from %s", jobIdAndExecutionId(jobId(), executionId),
                 caller);
 
         ExecutionPlan plan = deserializePlan(serializedPlan);
@@ -113,10 +113,7 @@ public class InitExecutionOperation extends AsyncJobOperation {
         out.writeBoolean(isLightJob);
         out.writeInt(coordinatorMemberListVersion);
         out.writeObject(coordinatorVersion);
-        out.writeInt(participants.size());
-        for (MemberInfo participant : participants) {
-            out.writeObject(participant);
-        }
+        SerializationUtil.writeCollection(participants, out);
         IOUtil.writeData(out, serializedPlan);
     }
 

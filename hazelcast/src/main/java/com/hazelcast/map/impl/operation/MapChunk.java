@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,6 @@ import com.hazelcast.map.impl.MapContainer;
 import com.hazelcast.map.impl.MapDataSerializerHook;
 import com.hazelcast.map.impl.MapService;
 import com.hazelcast.map.impl.MapServiceContext;
-import com.hazelcast.map.impl.PartitionContainer;
 import com.hazelcast.map.impl.eviction.Evictor;
 import com.hazelcast.map.impl.mapstore.writebehind.WriteBehindStore;
 import com.hazelcast.map.impl.mapstore.writebehind.entry.DelayedEntry;
@@ -47,7 +46,7 @@ import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.nio.serialization.impl.Versioned;
-import com.hazelcast.query.impl.Indexes;
+import com.hazelcast.query.impl.IndexRegistry;
 import com.hazelcast.query.impl.MapIndexInfo;
 import com.hazelcast.spi.impl.operationservice.Operation;
 
@@ -65,6 +64,7 @@ import java.util.UUID;
 import java.util.function.Predicate;
 
 import static com.hazelcast.config.MaxSizePolicy.PER_NODE;
+import static com.hazelcast.internal.namespace.NamespaceUtil.runWithNamespace;
 import static com.hazelcast.internal.util.CollectionUtil.isNotEmpty;
 import static com.hazelcast.internal.util.MapUtil.createHashMap;
 import static com.hazelcast.internal.util.UUIDSerializationUtil.readUUID;
@@ -77,7 +77,7 @@ import static com.hazelcast.map.impl.mapstore.writebehind.entry.DelayedEntries.n
  *
  * @see #writeChunk
  */
-@SuppressWarnings("checkstyle:MethodCount")
+@SuppressWarnings({"checkstyle:MethodCount", "rawtypes", "unchecked"})
 public class MapChunk extends Operation
         implements IdentifiedDataSerializable, Versioned {
 
@@ -113,14 +113,17 @@ public class MapChunk extends Operation
         this.logger = context.getLogger(getClass().getName());
 
         if (logger.isFinestEnabled()) {
-            logger.finest(String.format("mapName:%s, chunkNumber:%d, partitionId:%d",
-                    context.getMapName(), chunkNumber, context.getPartitionId()));
+            logger.finest("mapName:%s, chunkNumber:%d, partitionId:%d",
+                    context.getMapName(), chunkNumber, context.getPartitionId());
         }
     }
 
     @Override
     public final void run() throws Exception {
         RecordStore recordStore = getRecordStore(mapName);
+        MapService mapService = getService();
+        final String userCodeNamespace = mapService.getMapServiceContext().getMapContainer(mapName)
+                                                   .getMapConfig().getUserCodeNamespace();
 
         if (firstChunk) {
             addIndexes(recordStore, mapIndexInfo.getIndexConfigs());
@@ -135,7 +138,7 @@ public class MapChunk extends Operation
         }
 
         if (isNotEmpty(keyRecordExpiry)) {
-            putInto(recordStore);
+            runWithNamespace(getNodeEngine(), userCodeNamespace, () -> putInto(recordStore));
             logProgress(recordStore);
         }
 
@@ -145,7 +148,7 @@ public class MapChunk extends Operation
     }
 
     @Override
-    public final void beforeRun() {
+    public void beforeRun() {
         RecordStore recordStore = getRecordStore(mapName);
         recordStore.beforeOperation();
     }
@@ -180,42 +183,39 @@ public class MapChunk extends Operation
         ILogger logger = recordStore.getMapContainer().getMapServiceContext()
                 .getNodeEngine().getLogger(getClass().getName());
         if (logger.isFinestEnabled()) {
-            logger.finest(String.format("mapName:%s, partitionId:%d,"
+            logger.finest("mapName:%s, partitionId:%d,"
                             + " numberOfEntriesMigrated:%d", mapName,
-                    getPartitionId(), (keyRecordExpiry.size() / 3)));
+                    getPartitionId(), (keyRecordExpiry.size() / 3));
         }
     }
 
     private void applyIndexStateAfter(RecordStore recordStore) {
         MapContainer mapContainer = recordStore.getMapContainer();
-        Indexes indexes = mapContainer.getIndexes(recordStore.getPartitionId());
+        IndexRegistry indexRegistry = mapContainer.getOrCreateIndexRegistry(recordStore.getPartitionId());
 
-        if (!indexesMustBePopulated(indexes)) {
+        if (!indexesMustBePopulated(indexRegistry)) {
             return;
         }
 
-        Indexes.markPartitionAsIndexed(getPartitionId(), indexes.getIndexes());
+        IndexRegistry.markPartitionAsIndexed(getPartitionId(), indexRegistry.getIndexes());
     }
 
     private void applyIndexStateBefore(RecordStore recordStore) {
         MapContainer mapContainer = recordStore.getMapContainer();
-        PartitionContainer partitionContainer = mapContainer.getMapServiceContext()
-                .getPartitionContainer(getPartitionId());
+        IndexRegistry indexRegistry = mapContainer.getOrCreateIndexRegistry(recordStore.getPartitionId());
 
         for (Map.Entry<String, IndexConfig> indexDefinition : mapContainer.getIndexDefinitions().entrySet()) {
-            Indexes indexes = mapContainer.getIndexes(partitionContainer.getPartitionId());
-            indexes.addOrGetIndex(indexDefinition.getValue());
+            indexRegistry.addOrGetIndex(indexDefinition.getValue());
         }
 
-        Indexes indexes = mapContainer.getIndexes(partitionContainer.getPartitionId());
-        boolean populateIndexes = indexesMustBePopulated(indexes);
+        boolean populateIndexes = indexesMustBePopulated(indexRegistry);
 
         if (populateIndexes) {
             // defensively clear possible stale
-            // leftovers in non-global indexes from
+            // leftovers in non-global indexRegistry from
             // the previous failed promotion attempt
-            Indexes.beginPartitionUpdate(indexes.getIndexes());
-            indexes.clearAll();
+            IndexRegistry.beginPartitionUpdate(indexRegistry.getIndexes());
+            indexRegistry.clearAll();
         }
     }
 
@@ -227,10 +227,10 @@ public class MapChunk extends Operation
             Record record = (Record) keyRecordExpiry.poll();
             ExpiryMetadata expiryMetadata = (ExpiryMetadata) keyRecordExpiry.poll();
 
-            Indexes indexes = recordStore.getMapContainer().getIndexes(recordStore.getPartitionId());
+            IndexRegistry indexRegistry = recordStore.getMapContainer().getOrCreateIndexRegistry(recordStore.getPartitionId());
 
             recordStore.putOrUpdateReplicatedRecord(dataKey, record, expiryMetadata,
-                    indexesMustBePopulated(indexes), nowInMillis);
+                    indexesMustBePopulated(indexRegistry), nowInMillis);
 
             if (recordStore.shouldEvict()) {
                 // No need to continue replicating records anymore.
@@ -266,10 +266,10 @@ public class MapChunk extends Operation
                     recordStore.doPostEvictionOperations(dataKey, record.getValue(), ExpiryReason.NOT_EXPIRED);
                 }
             } else {
-                Indexes indexes = mapContainer.getIndexes(recordStore.getPartitionId());
+                IndexRegistry indexRegistry = mapContainer.getOrCreateIndexRegistry(recordStore.getPartitionId());
 
                 recordStore.putOrUpdateReplicatedRecord(dataKey, record, expiryMetadata,
-                        indexesMustBePopulated(indexes), nowInMillis);
+                        indexesMustBePopulated(indexRegistry), nowInMillis);
 
                 ownedEntryCountOnThisNode++;
             }
@@ -343,45 +343,48 @@ public class MapChunk extends Operation
         }
 
         MapContainer mapContainer = recordStore.getMapContainer();
-        if (mapContainer.isGlobalIndexEnabled()) {
+        MapServiceContext mapServiceContext = mapContainer.getMapServiceContext();
+        if (mapContainer.shouldUseGlobalIndex()) {
             // creating global indexes on partition thread in case they do not exist
             for (IndexConfig indexConfig : indexConfigs) {
-                Indexes indexes = mapContainer.getIndexes();
+                IndexRegistry indexRegistry = mapContainer.getGlobalIndexRegistry();
 
                 // optimisation not to synchronize each partition thread on the addOrGetIndex method
-                if (indexes.getIndex(indexConfig.getName()) == null) {
-                    indexes.addOrGetIndex(indexConfig);
+                if (indexRegistry.getIndex(indexConfig.getName()) == null) {
+                    indexRegistry.addOrGetIndex(indexConfig);
                 }
+                mapServiceContext.registerIndex(mapName, indexConfig);
             }
         } else {
-            Indexes indexes = mapContainer.getIndexes(getPartitionId());
-            indexes.createIndexesFromRecordedDefinitions();
+            IndexRegistry indexRegistry = mapContainer.getOrCreateIndexRegistry(getPartitionId());
+            indexRegistry.createIndexesFromRecordedDefinitions();
             for (IndexConfig indexConfig : indexConfigs) {
-                indexes.addOrGetIndex(indexConfig);
+                indexRegistry.addOrGetIndex(indexConfig);
+                mapServiceContext.registerIndex(mapName, indexConfig);
             }
         }
     }
 
-    private boolean indexesMustBePopulated(Indexes indexes) {
-        if (!indexes.haveAtLeastOneIndex()) {
-            // no indexes to populate
+    private boolean indexesMustBePopulated(IndexRegistry indexRegistry) {
+        if (!indexRegistry.haveAtLeastOneIndex()) {
+            // no indexRegistry to populate
             return false;
         }
 
-        if (indexes.isGlobal()) {
-            // global indexes are populated during migration finalization
+        if (indexRegistry.isGlobal()) {
+            // global indexRegistry are populated during migration finalization
             return false;
         }
 
         if (getReplicaIndex() != 0) {
-            // backup partitions have no indexes to populate
+            // backup partitions have no indexRegistry to populate
             return false;
         }
 
         return true;
     }
 
-    private RecordStore getRecordStore(String mapName) {
+    protected RecordStore getRecordStore(String mapName) {
         MapService mapService = getService();
         MapServiceContext mapServiceContext = mapService.getMapServiceContext();
         return mapServiceContext.getRecordStore(getPartitionId(), mapName, true);
@@ -595,6 +598,7 @@ public class MapChunk extends Operation
 
     private void readChunk(ObjectDataInput in) throws IOException {
         this.mapName = in.readString();
+
         LinkedList keyRecordExpiry = new LinkedList<>();
         do {
             Data dataKey = IOUtil.readData(in);

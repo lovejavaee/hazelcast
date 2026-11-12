@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,12 +17,14 @@
 package com.hazelcast.internal.diagnostics;
 
 import com.hazelcast.config.Config;
+import com.hazelcast.internal.config.SensitiveDataMasker;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.spi.properties.HazelcastProperties;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static java.util.Collections.sort;
 
@@ -32,10 +34,13 @@ import static java.util.Collections.sort;
 public class ConfigPropertiesPlugin extends DiagnosticsPlugin {
 
     private final HazelcastProperties properties;
-    private final List<String> keyList = new ArrayList<String>();
+    private final List<String> keyList = new ArrayList<>();
+    private NodeEngineImpl nodeEngine;
 
     public ConfigPropertiesPlugin(NodeEngineImpl nodeEngine) {
-        this(nodeEngine.getLogger(ConfigPropertiesPlugin.class), nodeEngine.getProperties());
+        this(nodeEngine.getLogger(ConfigPropertiesPlugin.class),
+                nodeEngine.getProperties());
+        this.nodeEngine = nodeEngine;
     }
 
     public ConfigPropertiesPlugin(ILogger logger, HazelcastProperties properties) {
@@ -45,16 +50,31 @@ public class ConfigPropertiesPlugin extends DiagnosticsPlugin {
 
     @Override
     public void onStart() {
+        super.onStart();
         logger.info("Plugin:active");
     }
 
     @Override
+    void readProperties() {
+        // no properties to read
+    }
+
+    @Override
+    public void onShutdown() {
+        super.onShutdown();
+        logger.info("Plugin:inactive");
+    }
+
+    @Override
     public long getPeriodMillis() {
-        return STATIC;
+        return RUN_ONCE_PERIOD_MS;
     }
 
     @Override
     public void run(DiagnosticsLogWriter writer) {
+        if (!isActive()) {
+            return;
+        }
         keyList.clear();
         keyList.addAll(properties.keySet());
         sort(keyList);
@@ -62,8 +82,17 @@ public class ConfigPropertiesPlugin extends DiagnosticsPlugin {
         writer.startSection("ConfigProperties");
         for (String key : keyList) {
             String value = properties.get(key);
-            writer.writeKeyValueEntry(key, value);
+            writer.writeKeyValueEntry(key, SensitiveDataMasker.mask(key, value));
         }
+
+        // If diagnostics belong to client, then there is no nodeEngine.
+        if (nodeEngine != null) {
+            Map<String, String> pluginProperties = nodeEngine.getDiagnostics().getDiagnosticsConfig().getPluginProperties();
+            for (Map.Entry<String, String> entry : pluginProperties.entrySet()) {
+                writer.writeKeyValueEntry(entry.getKey(), SensitiveDataMasker.mask(entry.getKey(), entry.getValue()));
+            }
+        }
+
         writer.endSection();
     }
 }

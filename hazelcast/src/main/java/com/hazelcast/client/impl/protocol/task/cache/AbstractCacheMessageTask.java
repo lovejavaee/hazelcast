@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ public abstract class AbstractCacheMessageTask<P>
     }
 
     protected CacheOperationProvider getOperationProvider(String name) {
-        ICacheService service = getService(CacheService.SERVICE_NAME);
+        ICacheService service = getService(ICacheService.SERVICE_NAME);
         final CacheConfig cacheConfig = service.getCacheConfig(name);
         if (cacheConfig == null) {
             throw new CacheNotExistsException("Cache " + name + " is already destroyed or not created yet, on "
@@ -52,12 +52,7 @@ public abstract class AbstractCacheMessageTask<P>
 
     @Override
     public String getServiceName() {
-        return CacheService.SERVICE_NAME;
-    }
-
-    @Override
-    public String getMethodName() {
-        return null;
+        return ICacheService.SERVICE_NAME;
     }
 
     @Override
@@ -68,5 +63,10 @@ public abstract class AbstractCacheMessageTask<P>
     @Override
     public Permission getRequiredPermission() {
         return null;
+    }
+
+    @Override
+    protected String getUserCodeNamespace() {
+        return CacheService.lookupNamespace(nodeEngine, getDistributedObjectName());
     }
 }

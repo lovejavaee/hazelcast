@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +29,8 @@ import com.hazelcast.internal.metrics.ProbeUnit;
 import com.hazelcast.spi.impl.NodeEngine;
 
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -38,9 +40,10 @@ import static com.hazelcast.cp.internal.RaftService.withoutDefaultGroupName;
 import static com.hazelcast.cp.internal.datastructures.lock.AcquireResult.AcquireStatus.FAILED;
 import static com.hazelcast.cp.internal.datastructures.lock.AcquireResult.AcquireStatus.SUCCESSFUL;
 import static com.hazelcast.cp.internal.datastructures.lock.AcquireResult.AcquireStatus.WAIT_KEY_ADDED;
-import static com.hazelcast.internal.metrics.MetricDescriptorConstants.CP_TAG_NAME;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_TAG_NAME;
 import static com.hazelcast.internal.util.ExceptionUtil.rethrow;
 import static com.hazelcast.internal.util.Preconditions.checkNotNull;
+import static com.hazelcast.spi.properties.ClusterProperty.METRICS_DATASTRUCTURES;
 
 /**
  * Contains Raft-based lock instances
@@ -51,7 +54,7 @@ public class LockService extends AbstractBlockingService<LockInvocationKey, Lock
     /**
      * Name of the service
      */
-    public static final String SERVICE_NAME = "hz:raft:lockService";
+    public static final String SERVICE_NAME = LockServiceUtil.SERVICE_NAME;
 
     private final ConcurrentMap<String, FencedLockProxy> proxies = new ConcurrentHashMap<>();
 
@@ -62,7 +65,10 @@ public class LockService extends AbstractBlockingService<LockInvocationKey, Lock
     @Override
     protected void initImpl() {
         super.initImpl();
-        nodeEngine.getMetricsRegistry().registerDynamicMetricsProvider(this);
+
+        if (nodeEngine.getProperties().getBoolean(METRICS_DATASTRUCTURES)) {
+            nodeEngine.getMetricsRegistry().registerDynamicMetricsProvider(this);
+        }
     }
 
     public AcquireResult acquire(CPGroupId groupId, String name, LockInvocationKey key, long timeoutMs) {
@@ -116,7 +122,7 @@ public class LockService extends AbstractBlockingService<LockInvocationKey, Lock
         }
 
         notifyCancelledWaitKeys(groupId, name, result.completedWaitKeys());
-        throw new IllegalMonitorStateException("Current thread is not owner of the lock!");
+        throw new IllegalMonitorStateException(String.format("Current thread is not owner of the lock %s!", name));
     }
 
     private void notifyCancelledWaitKeys(CPGroupId groupId, String name, Collection<LockInvocationKey> keys) {
@@ -207,6 +213,7 @@ public class LockService extends AbstractBlockingService<LockInvocationKey, Lock
     public void provideDynamicMetrics(MetricDescriptor descriptor, MetricsCollectionContext context) {
         MetricDescriptor root = descriptor.withPrefix("cp.lock");
 
+        Map<CPGroupId, Integer> liveCount = new HashMap<>();
         for (CPGroupId groupId : getGroupIdSet()) {
             LockRegistry registry = getRegistryOrNull(groupId);
             for (Lock lock : registry.getAllLocks()) {
@@ -223,14 +230,30 @@ public class LockService extends AbstractBlockingService<LockInvocationKey, Lock
                 // We are reading two separate volatile fields but not atomically.
                 // We may observe a partial update.
                 if (owner != null && lockCount > 0) {
-                    context.collect(desc.copy().withUnit(ProbeUnit.COUNT).withMetric("lockCount"), lockCount);
-                    context.collect(desc.copy().withMetric("ownerSessionId"), owner.sessionId());
-                    context.collect(desc.copy().withTag("owner", owner.callerAddress().toString()).withMetric("owner"), 0);
+                    MetricDescriptor copy = desc.copy()
+                                                .withTag("sessionId", String.valueOf(owner.sessionId()))
+                                                .withTag("qualifiedSessionId", owner.sessionId() + "@" + groupId.getName());
+
+                    // Continue to provide `owner.sessionId()` as the value of this metric; although we now include this data in
+                    // tags for this metric, this provides backwards compatibility, and there is no significant meaningful data
+                    // to provide in its place related to the `owner`
+                    context.collect(copy.withMetric("ownerSessionId"), owner.sessionId());
+                    context.collect(copy.withTag("owner", owner.callerAddress().toString()).withMetric("owner"), 0);
+                    context.collect(copy.withUnit(ProbeUnit.COUNT).withMetric("lockCount"), lockCount);
                 } else {
                     context.collect(desc.copy().withUnit(ProbeUnit.COUNT).withMetric("lockCount"), 0);
                 }
             }
+            liveCount.put(groupId, registry.getAllLocks().size());
         }
+        addSummaryMetrics(root, context, "cp.lock.summary", liveCount);
     }
 
+    @Override
+    public boolean destroyRaftObject(CPGroupId groupId, String name) {
+        boolean result = super.destroyRaftObject(groupId, name);
+        String proxyName = withoutDefaultGroupName(name + "@" + groupId.getName());
+        proxies.remove(proxyName);
+        return result;
+    }
 }

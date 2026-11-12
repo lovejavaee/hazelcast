@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,14 +21,14 @@ import com.hazelcast.function.SupplierEx;
 import com.hazelcast.jet.config.ProcessingGuarantee;
 import com.hazelcast.jet.core.EventTimePolicy;
 import com.hazelcast.jet.core.ProcessorMetaSupplier;
+import jakarta.jms.Connection;
+import jakarta.jms.ConnectionFactory;
+import jakarta.jms.Message;
+import jakarta.jms.MessageConsumer;
+import jakarta.jms.Session;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import javax.jms.Connection;
-import javax.jms.ConnectionFactory;
-import javax.jms.Message;
-import javax.jms.MessageConsumer;
-import javax.jms.Session;
 
 import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 import static com.hazelcast.jet.core.processor.SourceProcessors.streamJmsQueueP;
@@ -90,7 +90,7 @@ public final class JmsSourceBuilder {
      *         ? factory.createConnection(usernameLocal, passwordLocal)
      *         : factory.createConnection()
      * </pre>
-     * The user name and password set with {@link #connectionParams} are used.
+     * The username and password set with {@link #connectionParams} are used.
      * <p>
      * The given function must be stateless.
      *
@@ -123,7 +123,7 @@ public final class JmsSourceBuilder {
      * If not provided, {@code Session#createConsumer(destinationName)} is used
      * to create the consumer. See {@link #destinationName(String)}.
      * <p>
-     * If you're consuming a topic and you create a shared consumer, make
+     * If you're consuming a topic, and you create a shared consumer, make
      * sure to also call {@link #sharedConsumer(boolean) sharedConsumer(true)}.
      * <p>
      * The given function must be stateless.
@@ -253,7 +253,7 @@ public final class JmsSourceBuilder {
                     ? session.createTopic(destinationLocal)
                     : session.createQueue(destinationLocal));
             if (isTopic) {
-                // the user didn't specify a custom consumerFn and we know we're using a non-durable consumer
+                // the user didn't specify a custom consumerFn, and we know we're using a non-durable consumer
                 // for a topic - there's no point in using any guarantee, see `maxGuarantee`
                 maxGuaranteeLocal = ProcessingGuarantee.NONE;
             }

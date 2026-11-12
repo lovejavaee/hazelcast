@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.RelRule;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.JoinRelType;
+import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
@@ -45,6 +46,9 @@ import static com.hazelcast.jet.sql.impl.opt.Conventions.LOGICAL;
 import static com.hazelcast.jet.sql.impl.opt.Conventions.PHYSICAL;
 import static com.hazelcast.jet.sql.impl.opt.OptUtils.metadataQuery;
 import static com.hazelcast.jet.sql.impl.opt.physical.StreamToStreamJoinPhysicalRule.Config.DEFAULT;
+import static com.hazelcast.jet.sql.impl.validate.types.HazelcastTypeUtils.hasSameTypeFamily;
+import static com.hazelcast.jet.sql.impl.validate.types.HazelcastTypeUtils.isNumericIntegerType;
+import static com.hazelcast.jet.sql.impl.validate.types.HazelcastTypeUtils.isTemporalType;
 
 @Value.Enclosing
 public final class StreamToStreamJoinPhysicalRule extends RelRule<RelRule.Config> {
@@ -147,8 +151,8 @@ public final class StreamToStreamJoinPhysicalRule extends RelRule<RelRule.Config
             call.transformTo(
                     fail(join, String.format(
                             "A stream-to-stream join must have a join condition constraining the maximum " +
-                            "difference between time values of the joined tables in both directions. " +
-                            "Time columns on the left side: %s, time columns on the right side: %s",
+                                    "difference between time values of the joined tables in both directions. " +
+                                    "Time columns on the left side: %s, time columns on the right side: %s",
                             // note that the join can be transposed and sides may not match original query
                             leftWatermarkedColumnNames, rightWatermarkedColumnNames)));
             return;
@@ -280,8 +284,7 @@ public final class StreamToStreamJoinPhysicalRule extends RelRule<RelRule.Config
             long[] constantsSum,
             boolean inverse
     ) {
-        if (expr instanceof RexLiteral) {
-            RexLiteral literal = (RexLiteral) expr;
+        if (expr instanceof RexLiteral literal) {
             if (!SqlTypeName.DAY_INTERVAL_TYPES.contains(literal.getType().getSqlTypeName())
                     && !SqlTypeName.INT_TYPES.contains(literal.getType().getSqlTypeName())) {
                 return false;
@@ -295,13 +298,24 @@ public final class StreamToStreamJoinPhysicalRule extends RelRule<RelRule.Config
             return true;
         }
 
-        if (expr instanceof RexInputRef) {
+        if (expr instanceof RexInputRef ref) {
             Integer[] field = inverse ? positiveField : negativeField;
             if (field[0] != null) {
                 return false;
             }
-            field[0] = ((RexInputRef) expr).getIndex();
+            field[0] = ref.getIndex();
             return true;
+        }
+
+        if (expr instanceof RexCall call) {
+            if (call.isA(SqlKind.CAST)) {
+                RexNode inputRef = call.getOperands().get(0);
+                RelDataType type = inputRef.getType();
+                // Only integer and temporal types are supported for watermarking for S2S JOIN.
+                if (hasSameTypeFamily(type, call.getType()) && (isNumericIntegerType(type) || isTemporalType(type))) {
+                    return addAddends(inputRef, positiveField, negativeField, constantsSum, inverse);
+                }
+            }
         }
 
         if (expr.getKind() == SqlKind.PLUS || expr.getKind() == SqlKind.MINUS) {

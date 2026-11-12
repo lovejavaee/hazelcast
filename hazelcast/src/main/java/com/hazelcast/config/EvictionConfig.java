@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -262,7 +262,7 @@ public class EvictionConfig implements EvictionConfiguration, IdentifiedDataSeri
         maxSizePolicy = MaxSizePolicy.valueOf(in.readString());
         evictionPolicy = EvictionPolicy.valueOf(in.readString());
         comparatorClassName = in.readString();
-        comparator = in.readObject();
+        comparator = ConfigDeserializationUtil.readObject(in, getClass(), "comparator");
     }
 
     @Override
@@ -281,11 +281,9 @@ public class EvictionConfig implements EvictionConfiguration, IdentifiedDataSeri
         if (this == o) {
             return true;
         }
-        if (!(o instanceof EvictionConfig)) {
+        if (!(o instanceof EvictionConfig that)) {
             return false;
         }
-
-        EvictionConfig that = (EvictionConfig) o;
 
         return size == that.size
                 && maxSizePolicy == that.maxSizePolicy

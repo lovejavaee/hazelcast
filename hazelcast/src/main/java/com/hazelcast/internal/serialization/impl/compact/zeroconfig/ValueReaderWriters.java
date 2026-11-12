@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,8 +51,6 @@ import static com.hazelcast.internal.serialization.impl.compact.CompactUtil.enum
 import static com.hazelcast.internal.serialization.impl.compact.CompactUtil.enumAsStringName;
 import static com.hazelcast.internal.serialization.impl.compact.CompactUtil.enumFromStringName;
 import static com.hazelcast.internal.serialization.impl.compact.CompactUtil.isFieldExist;
-import static com.hazelcast.internal.serialization.impl.compact.CompactUtil.verifyFieldClassIsCompactSerializable;
-import static com.hazelcast.internal.serialization.impl.compact.CompactUtil.verifyFieldClassShouldBeSerializedAsCompact;
 import static com.hazelcast.nio.serialization.FieldKind.ARRAY_OF_BOOLEAN;
 import static com.hazelcast.nio.serialization.FieldKind.ARRAY_OF_COMPACT;
 import static com.hazelcast.nio.serialization.FieldKind.ARRAY_OF_DATE;
@@ -100,7 +98,7 @@ import static com.hazelcast.nio.serialization.FieldKind.TIMESTAMP_WITH_TIMEZONE;
  * Class that stores all the value reader writers and returns the appropriate
  * one for the class that requested it.
  */
-@SuppressWarnings("checkstyle:executablestatementcount")
+@SuppressWarnings({"checkstyle:executablestatementcount", "checkstyle:ClassFanOutComplexity", "ClassDataAbstractionCoupling"})
 public final class ValueReaderWriters {
     private static final Map<Class<?>, Function<String, ValueReaderWriter<?>>> CONSTRUCTORS = new HashMap<>();
     private static final Map<Class<?>, Function<String, ValueReaderWriter<?>>> ARRAY_CONSTRUCTORS = new HashMap<>();
@@ -214,8 +212,7 @@ public final class ValueReaderWriters {
         // We allow serializing classes regardless of the following checks if there is an explicit serializer for them.
         if (!isRegisteredAsCompact) {
             // The nested field might not be Compact serializable
-            verifyFieldClassIsCompactSerializable(type, clazz);
-            verifyFieldClassShouldBeSerializedAsCompact(compactStreamSerializer, type, clazz);
+            compactStreamSerializer.verifyFieldCanBeSerializedAsCompact(clazz, type);
         }
         return new CompactReaderWriter(fieldName);
     }
@@ -236,8 +233,7 @@ public final class ValueReaderWriters {
         // We allow serializing classes regardless of the following checks if there is an explicit serializer for them.
         if (!isRegisteredAsCompact) {
             // Elements of the array might not be Compact serializable
-            verifyFieldClassIsCompactSerializable(componentType, clazz);
-            verifyFieldClassShouldBeSerializedAsCompact(compactStreamSerializer, componentType, clazz);
+            compactStreamSerializer.verifyFieldCanBeSerializedAsCompact(clazz, componentType);
         }
         return new CompactArrayReaderWriter(fieldName, componentType);
     }
@@ -255,13 +251,12 @@ public final class ValueReaderWriters {
     }
 
     private static Class<?> getSingleComponentType(Type genericType) {
-        if (!(genericType instanceof ParameterizedType)) {
+        if (!(genericType instanceof ParameterizedType parameterizedType)) {
             throw new HazelcastSerializationException(
                     "It is required that the type " + genericType + " must be parameterized."
             );
         }
 
-        ParameterizedType parameterizedType = (ParameterizedType) genericType;
         Type[] typeArguments = parameterizedType.getActualTypeArguments();
         if (typeArguments.length != 1) {
             throw new HazelcastSerializationException(
@@ -280,13 +275,12 @@ public final class ValueReaderWriters {
     }
 
     private static BiTuple<Class<?>, Class<?>> getTupleComponentTypes(Type genericType) {
-        if (!(genericType instanceof ParameterizedType)) {
+        if (!(genericType instanceof ParameterizedType parameterizedType)) {
             throw new HazelcastSerializationException(
                     "Expected the type " + genericType + " to be parameterized."
             );
         }
 
-        ParameterizedType parameterizedType = (ParameterizedType) genericType;
         Type[] typeArguments = parameterizedType.getActualTypeArguments();
         if (typeArguments.length != 2) {
             throw new HazelcastSerializationException(

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,22 +16,21 @@
 
 package com.hazelcast.jet.impl.util;
 
+import com.hazelcast.jet.config.JobConfig;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Properties;
 import java.util.function.Function;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
+import static com.hazelcast.jet.config.JobConfigArguments.KEY_JOB_IS_SUSPENDABLE;
 import static com.hazelcast.jet.config.ProcessingGuarantee.AT_LEAST_ONCE;
 import static com.hazelcast.jet.config.ProcessingGuarantee.EXACTLY_ONCE;
 import static com.hazelcast.jet.config.ProcessingGuarantee.NONE;
@@ -42,22 +41,20 @@ import static com.hazelcast.jet.impl.util.Util.distinctBy;
 import static com.hazelcast.jet.impl.util.Util.distributeObjects;
 import static com.hazelcast.jet.impl.util.Util.formatJobDuration;
 import static com.hazelcast.jet.impl.util.Util.gcd;
-import static com.hazelcast.jet.impl.util.Util.memoizeConcurrent;
 import static com.hazelcast.jet.impl.util.Util.roundRobinPart;
 import static com.hazelcast.jet.impl.util.Util.subtractClamped;
 import static java.util.Arrays.asList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class UtilTest {
-
-    @Rule
-    public ExpectedException exception = ExpectedException.none();
 
     @Test
     public void when_addClamped_then_doesNotOverflow() {
@@ -93,33 +90,6 @@ public class UtilTest {
         // overflow over MIN_VALUE
         assertEquals(Long.MIN_VALUE, subtractClamped(Long.MIN_VALUE, 1));
         assertEquals(Long.MIN_VALUE, subtractClamped(Long.MIN_VALUE, Long.MAX_VALUE));
-    }
-
-    @Test
-    public void when_memoizeConcurrent_then_threadSafe() {
-        final Object obj = new Object();
-        Supplier<Object> supplier = new Supplier<Object>() {
-            boolean supplied;
-
-            @Override
-            public Object get() {
-                if (supplied) {
-                    throw new IllegalStateException("Supplier was already called once.");
-                }
-                supplied = true;
-                return obj;
-            }
-        };
-
-        // does not fail 100% with non-concurrent memoize, but about 50% of the time.
-        List<Object> list = Stream.generate(memoizeConcurrent(supplier)).limit(4).parallel().collect(Collectors.toList());
-        assertTrue("Not all objects matched expected", list.stream().allMatch(o -> o.equals(obj)));
-    }
-
-    @Test(expected = NullPointerException.class)
-    public void when_memoizeConcurrentWithNullSupplier_then_exception() {
-        Supplier<Object> supplier = () -> null;
-        memoizeConcurrent(supplier).get();
     }
 
     @Test
@@ -180,6 +150,25 @@ public class UtilTest {
         assertEquals(AT_LEAST_ONCE, Util.min(AT_LEAST_ONCE, EXACTLY_ONCE));
         assertEquals(NONE, Util.min(NONE, EXACTLY_ONCE));
         assertEquals(NONE, Util.min(NONE, NONE));
+    }
+
+    @Test
+    public void test_mergeProps() {
+        Properties newProps = new Properties();
+        newProps.put("A", "B");
+        newProps.put("B", "C");
+
+        Properties existingProps =  new Properties();
+        existingProps.put("B", "D");
+        existingProps.put("D", "E");
+
+        Properties mergedProps = Util.mergeProps(existingProps, newProps);
+        assertThat(mergedProps.size()).isEqualTo(existingProps.size() + newProps.size() - 1);
+        assertThat(mergedProps).contains(
+                entry("A", "B"),
+                entry("B", "C"),
+                entry("D", "E")
+        );
     }
 
     @Test
@@ -286,5 +275,18 @@ public class UtilTest {
                 .filter(distinctBy(s -> s.charAt(0)))
                 .collect(Collectors.toList());
         assertEquals(asList("alice", "ben"), actual);
+    }
+
+    @Test
+    public void test_isJobSuspendable() {
+        JobConfig nonSuspendableJobConfig = new JobConfig().setArgument(KEY_JOB_IS_SUSPENDABLE, false);
+        assertFalse(Util.isJobSuspendable(nonSuspendableJobConfig));
+
+        JobConfig suspendableJobConfig = new JobConfig();
+        assertTrue(Util.isJobSuspendable(suspendableJobConfig));
+
+        // With 'true', job is suspendable
+        suspendableJobConfig = new JobConfig().setArgument(KEY_JOB_IS_SUSPENDABLE, true);
+        assertTrue(Util.isJobSuspendable(suspendableJobConfig));
     }
 }

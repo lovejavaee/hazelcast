@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ public enum ContainsKeyOpSteps implements IMapOpStep {
         @Override
         public void runStep(State state) {
             RecordStore recordStore = state.getRecordStore();
-            Record record = recordStore.getRecordOrNull(state.getKey());
+            Record record = recordStore.getRecordOrNull(state.getKey(), false);
 
             if (record != null) {
                 state.setOldValue(record.getValue());
@@ -39,7 +39,7 @@ public enum ContainsKeyOpSteps implements IMapOpStep {
         @Override
         public Step nextStep(State state) {
             return state.getOldValue() == null
-                    ? ContainsKeyOpSteps.LOAD : UtilSteps.SEND_RESPONSE;
+                    ? ContainsKeyOpSteps.LOAD : UtilSteps.FINAL_STEP;
         }
     },
 
@@ -57,7 +57,7 @@ public enum ContainsKeyOpSteps implements IMapOpStep {
         @Override
         public Step nextStep(State state) {
             return state.getOldValue() == null
-                    ? UtilSteps.SEND_RESPONSE : ContainsKeyOpSteps.ON_LOAD;
+                    ? UtilSteps.FINAL_STEP : ContainsKeyOpSteps.ON_LOAD;
         }
     },
 
@@ -66,7 +66,7 @@ public enum ContainsKeyOpSteps implements IMapOpStep {
         public void runStep(State state) {
             RecordStore recordStore = state.getRecordStore();
             Record record = ((DefaultRecordStore) recordStore).onLoadRecord(state.getKey(),
-                    state.getOldValue(), false, state.getCallerAddress());
+                    state.getLoadedOldValueWithTtl(), false, state.getCallerAddress(), state.getNow());
             record = recordStore.evictIfExpired(state.getKey(), state.getNow(), false) ? null : record;
             state.setOldValue(record == null ? null : record.getValue());
 
@@ -77,7 +77,7 @@ public enum ContainsKeyOpSteps implements IMapOpStep {
 
         @Override
         public Step nextStep(State state) {
-            return UtilSteps.SEND_RESPONSE;
+            return UtilSteps.FINAL_STEP;
         }
     };
 

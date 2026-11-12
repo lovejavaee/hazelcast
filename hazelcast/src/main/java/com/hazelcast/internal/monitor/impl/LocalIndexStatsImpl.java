@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,10 @@ import static com.hazelcast.internal.metrics.MetricDescriptorConstants.MAP_METRI
 import static com.hazelcast.internal.metrics.MetricDescriptorConstants.MAP_METRIC_INDEX_HIT_COUNT;
 import static com.hazelcast.internal.metrics.MetricDescriptorConstants.MAP_METRIC_INDEX_INSERT_COUNT;
 import static com.hazelcast.internal.metrics.MetricDescriptorConstants.MAP_METRIC_INDEX_MEMORY_COST;
+import static com.hazelcast.internal.metrics.MetricDescriptorConstants.MAP_METRIC_INDEX_NOT_READY_QUERY_COUNT;
+import static com.hazelcast.internal.metrics.MetricDescriptorConstants.MAP_METRIC_INDEX_PARTITIONS_INDEXED;
+import static com.hazelcast.internal.metrics.MetricDescriptorConstants.MAP_METRIC_INDEX_PARTITION_UPDATES_FINISHED;
+import static com.hazelcast.internal.metrics.MetricDescriptorConstants.MAP_METRIC_INDEX_PARTITION_UPDATES_STARTED;
 import static com.hazelcast.internal.metrics.MetricDescriptorConstants.MAP_METRIC_INDEX_QUERY_COUNT;
 import static com.hazelcast.internal.metrics.MetricDescriptorConstants.MAP_METRIC_INDEX_REMOVE_COUNT;
 import static com.hazelcast.internal.metrics.MetricDescriptorConstants.MAP_METRIC_INDEX_TOTAL_INSERT_LATENCY;
@@ -37,7 +41,7 @@ import static com.hazelcast.internal.metrics.ProbeUnit.NS;
 import static com.hazelcast.internal.metrics.ProbeUnit.PERCENT;
 
 /**
- * Implementation of local index stats that backs the stats exposed through the
+ * Implementation of partitioned index stats that backs the stats exposed through the
  * public API.
  */
 @SuppressWarnings("checkstyle:methodcount")
@@ -78,6 +82,18 @@ public class LocalIndexStatsImpl implements LocalIndexStats {
 
     @Probe(name = MAP_METRIC_INDEX_MEMORY_COST, unit = BYTES)
     private volatile long memoryCost;
+
+    @Probe(name = MAP_METRIC_INDEX_PARTITIONS_INDEXED)
+    private volatile long partitionsIndexed;
+
+    @Probe(name = MAP_METRIC_INDEX_PARTITION_UPDATES_STARTED)
+    private volatile long partitionUpdatesStarted;
+
+    @Probe(name = MAP_METRIC_INDEX_PARTITION_UPDATES_FINISHED)
+    private volatile long partitionUpdatesFinished;
+
+    @Probe(name = MAP_METRIC_INDEX_NOT_READY_QUERY_COUNT)
+    private volatile long indexNotReadyQueryCount;
 
     @Override
     public long getCreationTime() {
@@ -252,6 +268,22 @@ public class LocalIndexStatsImpl implements LocalIndexStats {
         this.memoryCost = memoryCost;
     }
 
+    public long getPartitionsIndexed() {
+        return partitionsIndexed;
+    }
+
+    public long getIndexNotReadyQueryCount() {
+        return indexNotReadyQueryCount;
+    }
+
+    public long getPartitionUpdatesStarted() {
+        return partitionUpdatesStarted;
+    }
+
+    public long getPartitionUpdatesFinished() {
+        return partitionUpdatesFinished;
+    }
+
     /**
      * Sets all the values in this stats to the corresponding values in the
      * given on-demand stats.
@@ -271,6 +303,10 @@ public class LocalIndexStatsImpl implements LocalIndexStats {
         this.removeCount = onDemandStats.getRemoveCount();
         this.totalRemoveLatency = onDemandStats.getTotalRemoveLatency();
         this.memoryCost = onDemandStats.getMemoryCost();
+        this.partitionsIndexed = onDemandStats.getPartitionsIndexed();
+        this.partitionUpdatesStarted = onDemandStats.getPartitionUpdatesStarted();
+        this.partitionUpdatesFinished = onDemandStats.getPartitionUpdatesFinished();
+        this.indexNotReadyQueryCount = onDemandStats.getIndexNotReadyQueryCount();
     }
 
     @Override
@@ -288,6 +324,10 @@ public class LocalIndexStatsImpl implements LocalIndexStats {
                 + ", removeCount=" + removeCount
                 + ", totalRemoveLatency=" + totalRemoveLatency
                 + ", memoryCost=" + memoryCost
+                + ", partitionsIndexed=" + partitionsIndexed
+                + ", indexNotReadyQueryCount=" + indexNotReadyQueryCount
+                + ", partitionUpdatesStarted=" + partitionUpdatesStarted
+                + ", partitionUpdatesFinished=" + partitionUpdatesFinished
                 + '}';
     }
 

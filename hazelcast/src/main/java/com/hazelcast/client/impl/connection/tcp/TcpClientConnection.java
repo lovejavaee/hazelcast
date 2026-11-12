@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.hazelcast.client.impl.connection.tcp;
 
+import com.hazelcast.client.impl.clientside.HazelcastClientInstance;
 import com.hazelcast.client.impl.clientside.HazelcastClientInstanceImpl;
 import com.hazelcast.client.impl.connection.ClientConnection;
 import com.hazelcast.client.impl.protocol.ClientMessage;
@@ -26,7 +27,6 @@ import com.hazelcast.core.LifecycleService;
 import com.hazelcast.internal.metrics.Probe;
 import com.hazelcast.internal.metrics.ProbeLevel;
 import com.hazelcast.internal.networking.Channel;
-import com.hazelcast.internal.networking.ChannelInitializer;
 import com.hazelcast.internal.networking.OutboundFrame;
 import com.hazelcast.internal.nio.Connection;
 import com.hazelcast.logging.ILogger;
@@ -64,11 +64,10 @@ public class TcpClientConnection implements ClientConnection {
     private final Channel channel;
     private final TcpClientConnectionManager connectionManager;
     private final LifecycleService lifecycleService;
-    private final HazelcastClientInstanceImpl client;
+    private final HazelcastClientInstance client;
     private final long startTime = System.currentTimeMillis();
     private final Consumer<ClientMessage> responseHandler;
     private final ConcurrentMap attributeMap;
-    private final ChannelInitializer channelInitializer;
 
     @Probe(name = CLIENT_METRIC_CONNECTION_EVENT_HANDLER_COUNT, level = MANDATORY)
     private final ConcurrentMap<Long, EventHandler> eventHandlerMap = new ConcurrentHashMap<>();
@@ -82,10 +81,7 @@ public class TcpClientConnection implements ClientConnection {
     private volatile UUID clusterUuid;
     private volatile Channel[] tpcChannels;
 
-    public TcpClientConnection(HazelcastClientInstanceImpl client,
-                               int connectionId,
-                               Channel channel,
-                               ChannelInitializer channelInitializer) {
+    public TcpClientConnection(HazelcastClientInstance client, int connectionId, Channel channel) {
         this.client = client;
         this.responseHandler = client.getInvocationService().getResponseHandler();
         this.connectionManager = (TcpClientConnectionManager) client.getConnectionManager();
@@ -94,7 +90,6 @@ public class TcpClientConnection implements ClientConnection {
         this.attributeMap = channel.attributeMap();
         this.connectionId = connectionId;
         this.logger = client.getLoggingService().getLogger(TcpClientConnection.class);
-        this.channelInitializer = channelInitializer;
 
         attributeMap.put(TcpClientConnection.class, this);
     }
@@ -107,7 +102,6 @@ public class TcpClientConnection implements ClientConnection {
         this.connectionId = connectionId;
         this.channel = null;
         this.attributeMap = null;
-        this.channelInitializer = null;
         this.logger = client.getLoggingService().getLogger(TcpClientConnection.class);
     }
 
@@ -157,6 +151,7 @@ public class TcpClientConnection implements ClientConnection {
         return remoteUuid;
     }
 
+    @Override
     public void setRemoteUuid(UUID remoteUuid) {
         this.remoteUuid = remoteUuid;
     }
@@ -272,6 +267,7 @@ public class TcpClientConnection implements ClientConnection {
         }
     }
 
+    @Override
     public long getStartTime() {
         return startTime;
     }
@@ -281,11 +277,10 @@ public class TcpClientConnection implements ClientConnection {
         if (this == o) {
             return true;
         }
-        if (!(o instanceof TcpClientConnection)) {
+        if (!(o instanceof TcpClientConnection that)) {
             return false;
         }
 
-        TcpClientConnection that = (TcpClientConnection) o;
         return connectionId == that.connectionId;
     }
 
@@ -301,6 +296,8 @@ public class TcpClientConnection implements ClientConnection {
                 + ", connectionId=" + connectionId
                 + ", channel=" + channel
                 + ", remoteAddress=" + remoteAddress
+                + ", remoteUuid=" + remoteUuid
+                + ", clusterUuid=" + clusterUuid
                 + ", lastReadTime=" + timeToStringFriendly(lastReadTimeMillis())
                 + ", lastWriteTime=" + timeToStringFriendly(lastWriteTimeMillis())
                 + ", closedTime=" + timeToStringFriendly(closedTime.get())
@@ -336,10 +333,6 @@ public class TcpClientConnection implements ClientConnection {
     @Override
     public Map<Long, EventHandler> getEventHandlers() {
         return Collections.unmodifiableMap(eventHandlerMap);
-    }
-
-    public ChannelInitializer getChannelInitializer() {
-        return channelInitializer;
     }
 
     public void setTpcChannels(Channel[] tpcChannels) {

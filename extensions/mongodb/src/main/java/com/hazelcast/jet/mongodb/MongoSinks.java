@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package com.hazelcast.jet.mongodb;
 import com.hazelcast.function.SupplierEx;
 import com.hazelcast.jet.pipeline.DataConnectionRef;
 import com.hazelcast.jet.pipeline.Sink;
-import com.hazelcast.spi.annotation.Beta;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
@@ -32,7 +31,6 @@ import javax.annotation.Nonnull;
  *
  * @since 5.3
  */
-@Beta
 public final class MongoSinks {
 
     private MongoSinks() {
@@ -72,7 +70,6 @@ public final class MongoSinks {
      * @param itemClass          type of document that will be saved
      * @param <T>                type of the items the sink accepts
      */
-    @Beta
     public static <T> MongoSinkBuilder<T> builder(
             @Nonnull Class<T> itemClass,
             @Nonnull SupplierEx<MongoClient> clientSupplier
@@ -118,7 +115,6 @@ public final class MongoSinks {
      * @param <T>               type of the items the sink accepts
      * @since 5.3
      */
-    @Beta
     public static <T> MongoSinkBuilder<T> builder(
             @Nonnull Class<T> itemClass,
             @Nonnull DataConnectionRef dataConnectionRef
@@ -133,7 +129,7 @@ public final class MongoSinks {
      * Example usage:
      * <pre>{@code
      * Sink<Document> mongoSink =
-     *         MongoSinks.builder(
+     *         MongoSinks.mongodb(
      *                 "mongodb://127.0.0.1:27017",
      *                 "myDatabase",
      *                 "myCollection"
@@ -150,7 +146,6 @@ public final class MongoSinks {
      * @param database database to which the documents will be put into
      * @param collection collection to which the documents will be put into
      */
-    @Beta
     public static Sink<Document> mongodb(
             @Nonnull String connectionString,
             @Nonnull String database,
@@ -169,7 +164,7 @@ public final class MongoSinks {
      * Example usage:
      * <pre>{@code
      * Sink<Document> mongoSink =
-     *         MongoSinks.builder(
+     *         MongoSinks.mongodb(
      *                 dataConnectionRef("someMongoDB"),
      *                 "myDatabase",
      *                 "myCollection"
@@ -186,7 +181,6 @@ public final class MongoSinks {
      * @param database database to which the documents will be put into
      * @param collection collection to which the documents will be put into
      */
-    @Beta
     public static Sink<Document> mongodb(
             @Nonnull DataConnectionRef dataConnectionRef,
             @Nonnull String database,

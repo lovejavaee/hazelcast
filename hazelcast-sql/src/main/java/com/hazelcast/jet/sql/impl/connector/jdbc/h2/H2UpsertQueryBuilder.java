@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,14 +18,15 @@ package com.hazelcast.jet.sql.impl.connector.jdbc.h2;
 
 import com.hazelcast.jet.sql.impl.connector.jdbc.AbstractQueryBuilder;
 import com.hazelcast.jet.sql.impl.connector.jdbc.JdbcTable;
+import org.apache.calcite.sql.SqlDialect;
 
 /**
  * Builder for upsert statement
  */
 public class H2UpsertQueryBuilder extends AbstractQueryBuilder {
 
-    public H2UpsertQueryBuilder(JdbcTable jdbcTable) {
-        super(jdbcTable);
+    public H2UpsertQueryBuilder(JdbcTable jdbcTable, SqlDialect dialect) {
+        super(jdbcTable, dialect);
 
         StringBuilder sb = new StringBuilder();
         appendMergeClause(sb);

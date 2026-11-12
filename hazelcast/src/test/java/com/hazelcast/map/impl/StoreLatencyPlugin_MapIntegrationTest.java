@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import com.hazelcast.config.Config;
 import com.hazelcast.config.MapConfig;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.map.MapStore;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
@@ -32,13 +31,13 @@ import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
 import java.io.File;
+import java.nio.file.Files;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Random;
 
 import static com.hazelcast.internal.nio.IOUtil.deleteQuietly;
 import static com.hazelcast.test.Accessors.getNodeEngineImpl;
-import static com.hazelcast.test.TestStringUtils.fileAsText;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
@@ -71,13 +70,10 @@ public class StoreLatencyPlugin_MapIntegrationTest extends HazelcastTestSupport 
             map.get(k);
         }
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                File file = getNodeEngineImpl(hz).getDiagnostics().currentFile();
-                String content = fileAsText(file);
-                assertContains(content, "mappy");
-            }
+        assertTrueEventually(() -> {
+            File file = getNodeEngineImpl(hz).getDiagnostics().currentFile();
+            String content = Files.readString(file.toPath());
+            assertContains(content, "mappy");
         });
     }
 
@@ -85,7 +81,7 @@ public class StoreLatencyPlugin_MapIntegrationTest extends HazelcastTestSupport 
         MapConfig mapConfig = config.getMapConfig("mappy");
         mapConfig.getMapStoreConfig()
                 .setEnabled(true)
-                .setImplementation(new MapStore() {
+                .setImplementation(new MapStore<>() {
                     private final Random random = new Random();
 
                     @Override
@@ -108,12 +104,12 @@ public class StoreLatencyPlugin_MapIntegrationTest extends HazelcastTestSupport 
                     }
 
                     @Override
-                    public Map loadAll(Collection keys) {
+                    public Map<Object, Object> loadAll(Collection<Object> keys) {
                         return null;
                     }
 
                     @Override
-                    public void storeAll(Map map) {
+                    public void storeAll(Map<Object, Object> map) {
                     }
 
                     @Override
@@ -121,12 +117,12 @@ public class StoreLatencyPlugin_MapIntegrationTest extends HazelcastTestSupport 
                     }
 
                     @Override
-                    public Iterable loadAllKeys() {
+                    public Iterable<Object> loadAllKeys() {
                         return null;
                     }
 
                     @Override
-                    public void deleteAll(Collection keys) {
+                    public void deleteAll(Collection<Object> keys) {
 
                     }
                 });

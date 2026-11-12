@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.internal.server.Server;
 import com.hazelcast.internal.server.ServerConnection;
 import com.hazelcast.internal.server.ServerConnectionManager;
+import com.hazelcast.internal.tpcengine.util.ReflectionUtil;
 import com.hazelcast.internal.util.Clock;
 import com.hazelcast.internal.util.counters.MwCounter;
 import com.hazelcast.internal.util.executor.ManagedExecutorService;
@@ -57,10 +58,9 @@ import com.hazelcast.spi.impl.operationservice.TargetAware;
 import com.hazelcast.spi.impl.operationservice.impl.responses.CallTimeoutResponse;
 import com.hazelcast.spi.impl.operationservice.impl.responses.ErrorResponse;
 import com.hazelcast.spi.impl.operationservice.impl.responses.NormalResponse;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+import java.lang.invoke.VarHandle;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 import java.util.logging.Level;
 
 import static com.hazelcast.internal.util.ExceptionUtil.rethrow;
@@ -98,9 +98,7 @@ import static java.util.logging.Level.WARNING;
  */
 @SuppressWarnings("checkstyle:methodcount")
 public abstract class Invocation<T> extends BaseInvocation implements OperationResponseHandler {
-
-    private static final AtomicReferenceFieldUpdater<Invocation, Boolean> RESPONSE_RECEIVED =
-            AtomicReferenceFieldUpdater.newUpdater(Invocation.class, Boolean.class, "responseReceived");
+    private static final VarHandle RESPONSE_RECEIVED = ReflectionUtil.findVarHandle("responseReceived", Boolean.class);
 
     private static final long MIN_TIMEOUT_MILLIS = SECONDS.toMillis(10);
     private static final int MAX_FAST_INVOCATION_COUNT = 5;
@@ -163,7 +161,7 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
      * Shows the current target member.
      * <p>
      * If this Invocation is targeting an existing member, then this field will be set.
-     * Otherwise it can be null in some cases (join, wan-replication etc.).
+     * Otherwise, it can be null in some cases (join, wan-replication etc.).
      */
     private Member targetMember;
     /**
@@ -228,8 +226,7 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
             notifyCallTimeout();
         } else if (response instanceof ErrorResponse || response instanceof Throwable) {
             notifyError(response);
-        } else if (response instanceof NormalResponse) {
-            NormalResponse normalResponse = (NormalResponse) response;
+        } else if (response instanceof NormalResponse normalResponse) {
             notifyNormalResponse(normalResponse.getValue(), normalResponse.getBackupAcks());
         } else {
             // there are no backups or the number of expected backups has returned; so signal the future that the result is ready
@@ -247,6 +244,7 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
         return future;
     }
 
+    @Override
     protected boolean shouldFailOnIndeterminateOperationState() {
         return false;
     }
@@ -292,8 +290,8 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
             }
         }
 
-        if (op instanceof TargetAware) {
-            ((TargetAware) op).setTarget(targetAddress);
+        if (op instanceof TargetAware aware) {
+            aware.setTarget(targetAddress);
         }
     }
 
@@ -325,8 +323,8 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
     void notifyError(Object error) {
         assert error != null;
 
-        Throwable cause = error instanceof Throwable
-                ? (Throwable) error
+        Throwable cause = error instanceof Throwable t
+                ? t
                 : ((ErrorResponse) error).getCause();
 
         switch (onException(cause)) {
@@ -364,7 +362,7 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
 
     protected void notifyThrowable(Throwable cause, int expectedBackups) {
         // if a regular response comes and there are backups, we need to wait for the backups
-        // when the backups complete, the response will be send by the last backup or backup-timeout-handle mechanism kicks on
+        // when the backups complete, the response will be sent by the last backup or backup-timeout-handle mechanism kicks on
 
         if (expectedBackups > backupsAcksReceived) {
             // so the invocation has backups and since not all backups have completed, we need to wait
@@ -379,7 +377,7 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
             this.pendingResponse = new ExceptionalResult(cause);
 
             if (backupsAcksReceived != expectedBackups) {
-                // we are done since not all backups have completed. Therefore we should not notify the future
+                // we are done since not all backups have completed. Therefore, we should not notify the future
                 return;
             }
         }
@@ -390,18 +388,19 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
         completeExceptionally(cause);
     }
 
-    @SuppressFBWarnings(value = "VO_VOLATILE_INCREMENT",
-            justification = "We have the guarantee that only a single thread at any given time can change the volatile field")
+//    @SuppressFBWarnings(value = "VO_VOLATILE_INCREMENT",
+//            justification = "We have the guarantee that only a single thread at any given time can change the volatile field")
     void notifyCallTimeout() {
+        context.callTimeoutCount.inc();
         if (!(op instanceof BlockingOperation)) {
-            // if the call is not a BLockingOperation, then in case of a call-timeout, we are not going to retry;
+            // if the call is not a BlockingOperation, then in case of a call-timeout, we are not going to retry;
             // only blocking operations are going to be retried, because they rely on a repeated execution mechanism
             complete(CALL_TIMEOUT);
             return;
         }
 
         if (logger.isFinestEnabled()) {
-            logger.finest("Call timed-out either in operation queue or during wait-notify phase, retrying call: " + this);
+            logger.finest("Call timed-out either in operation queue or during wait-notify phase, retrying call: %s", this);
         }
 
         long oldWaitTimeout = op.getWaitTimeout();
@@ -430,10 +429,10 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
 
     /**
      * Checks if this Invocation has received a heartbeat in time.
-     *
+     * <p>
      * If the response is already set, or if a heartbeat has been received in time, then {@code false} is returned.
      * If no heartbeat has been received, then the future.set is called with HEARTBEAT_TIMEOUT and {@code true} is returned.
-     *
+     * <p>
      * Gets called from the monitor-thread.
      *
      * @return {@code true} if there is a timeout detected, {@code false} otherwise.
@@ -503,6 +502,7 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
         return TIMEOUT;
     }
 
+    @Override
     protected boolean shouldCompleteWithoutBackups() {
         boolean targetDead = context.clusterService.getMember(targetAddress) == null;
         if (targetDead) {
@@ -562,8 +562,8 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
     }
 
 
-    @SuppressFBWarnings(value = "VO_VOLATILE_INCREMENT",
-            justification = "We have the guarantee that only a single thread at any given time can change the volatile field")
+//    @SuppressFBWarnings(value = "VO_VOLATILE_INCREMENT",
+//            justification = "We have the guarantee that only a single thread at any given time can change the volatile field")
     private void doInvoke(boolean isAsync) {
         if (!engineActive()) {
             return;
@@ -574,7 +574,7 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
         setInvocationTime(op, context.clusterClock.getClusterTime());
 
         // We'll initialize the invocation before registering it. Invocation monitor iterates over
-        // registered invocations and it must observe completely initialized invocations.
+        // registered invocations, and it must observe completely initialized invocations.
         Exception initializationFailure = null;
         try {
             initInvocationTarget();
@@ -756,11 +756,11 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
         doInvoke(false);
     }
 
-    Address getTargetAddress() {
+    public Address getTargetAddress() {
         return targetAddress;
     }
 
-    Member getTargetMember() {
+    public Member getTargetMember() {
         return targetMember;
     }
 
@@ -804,8 +804,7 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
                 }
 
                 if (logger.isFinestEnabled()) {
-                    logger.finest("Node is not joined. Re-scheduling " + this
-                            + " to be executed in " + tryPauseMillis + " ms.");
+                    logger.finest("Node is not joined. Re-scheduling %s to be executed in %s ms.", this, tryPauseMillis);
                 }
                 try {
                     context.invocationMonitor.schedule(new InvocationRetryTask(), tryPauseMillis);
@@ -838,9 +837,9 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
     /**
      * The {@link Context} contains all 'static' dependencies for an Invocation; dependencies that don't change between
      * invocations. All invocation specific dependencies/settings are passed in through the constructor of the invocation.
-     *
+     * <p>
      * This object should have no functionality apart from providing dependencies. So no methods should be added to this class.
-     *
+     * <p>
      * The goals of the Context are:
      * <ol>
      * <li>reduce the need on having a cluster running when testing Invocations. This is one of the primary drivers behind this
@@ -867,6 +866,7 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
         final OperationServiceImpl operationService;
         final OperationExecutor operationExecutor;
         final MwCounter retryCount;
+        final MwCounter callTimeoutCount;
         final InternalSerializationService serializationService;
         final Address thisAddress;
         final OutboundOperationHandler outboundOperationHandler;
@@ -888,6 +888,7 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
                 OperationServiceImpl operationService,
                 OperationExecutor operationExecutor,
                 MwCounter retryCount,
+                MwCounter callTimeoutCount,
                 InternalSerializationService serializationService,
                 Address thisAddress,
                 OutboundOperationHandler outboundOperationHandler,
@@ -907,6 +908,7 @@ public abstract class Invocation<T> extends BaseInvocation implements OperationR
             this.operationService = operationService;
             this.operationExecutor = operationExecutor;
             this.retryCount = retryCount;
+            this.callTimeoutCount = callTimeoutCount;
             this.serializationService = serializationService;
             this.thisAddress = thisAddress;
             this.outboundOperationHandler = outboundOperationHandler;

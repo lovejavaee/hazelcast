@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 package com.hazelcast.commandline;
 
 import com.hazelcast.core.server.HazelcastMemberStarter;
-import com.hazelcast.jet.function.RunnableEx;
+import com.hazelcast.function.ThrowingRunnable;
 import picocli.CommandLine;
 
 import java.io.OutputStreamWriter;
@@ -38,13 +38,13 @@ import static picocli.CommandLine.Option;
         versionProvider = VersionProvider.class, mixinStandardHelpOptions = true, sortOptions = false)
 public class HazelcastServerCommandLine {
 
-    private final RunnableEx start;
+    private final ThrowingRunnable start;
 
     public HazelcastServerCommandLine() {
         start = () -> HazelcastMemberStarter.main(new String[]{});
     }
 
-    HazelcastServerCommandLine(RunnableEx start) {
+    HazelcastServerCommandLine(ThrowingRunnable start) {
         this.start = start;
     }
 
@@ -64,12 +64,9 @@ public class HazelcastServerCommandLine {
 
         String version = getBuildInfo().getVersion();
         cmd.getCommandSpec().usageMessage().header("Hazelcast " + version);
-        if (args.length == 0) {
-            cmd.usage(out);
-        }
     }
 
-    private static PrintWriter createPrintWriter(PrintStream printStream) {
+    static PrintWriter createPrintWriter(PrintStream printStream) {
         return new PrintWriter(new OutputStreamWriter(printStream, StandardCharsets.UTF_8));
     }
 

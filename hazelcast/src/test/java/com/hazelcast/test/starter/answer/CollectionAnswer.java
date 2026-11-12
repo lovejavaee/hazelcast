@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +33,9 @@ class CollectionAnswer extends AbstractAnswer {
     @Override
     Object answer(InvocationOnMock invocation, String methodName, Object[] arguments) throws Exception {
         if (arguments.length == 1 && methodName.equals("get")) {
+            Method delegateMethod = getDelegateMethod(methodName, Object.class);
+            return invoke(delegateMethod, arguments);
+        } else if (arguments.length == 1 && methodName.equals("contains")) {
             Method delegateMethod = getDelegateMethod(methodName, Object.class);
             return invoke(delegateMethod, arguments);
         } else if (arguments.length == 0) {

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ~ Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+  ~ Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
   ~
   ~ Licensed under the Apache License, Version 2.0 (the "License");
   ~ you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 <hazelcast-client xmlns="http://www.hazelcast.com/schema/client-config"
                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                   xsi:schemaLocation="http://www.hazelcast.com/schema/client-config
-                  http://www.hazelcast.com/schema/client-config/hazelcast-client-config-5.3.xsd">
+                  http://www.hazelcast.com/schema/client-config/hazelcast-client-config-6.0.xsd">
 
     <instance-name>MyInstanceName</instance-name>
 
@@ -26,6 +26,7 @@
         <time-to-live-seconds>10000</time-to-live-seconds>
         <max-idle-seconds>5000</max-idle-seconds>
         <invalidate-on-change>false</invalidate-on-change>
+        <serialize-keys>false</serialize-keys>
         <in-memory-format>OBJECT</in-memory-format>
         <eviction size="100" max-size-policy="ENTRY_COUNT" eviction-policy="LFU"/>
         <preloader enabled="true" directory="/tmp/myNearCache"

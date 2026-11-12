@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,16 +24,19 @@ import com.hazelcast.jet.impl.JobAndSqlSummary;
 import com.hazelcast.jet.sql.impl.connector.test.TestBatchSqlConnector;
 import com.hazelcast.sql.SqlResult;
 import com.hazelcast.sql.SqlStatement;
+import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
+import org.junit.runner.RunWith;
 
 import java.util.List;
 
 import static com.hazelcast.jet.config.JobConfigArguments.KEY_SQL_QUERY_TEXT;
 import static com.hazelcast.jet.config.JobConfigArguments.KEY_SQL_UNBOUNDED;
+import static com.hazelcast.jet.core.JobAssertions.assertThat;
 import static com.hazelcast.jet.core.JobStatus.COMPLETED;
 import static com.hazelcast.jet.core.JobStatus.RUNNING;
 import static java.util.stream.Collectors.toList;
@@ -41,6 +44,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
 @Category({QuickTest.class, ParallelJVMTest.class})
+@RunWith(HazelcastSerialClassRunner.class)
 public class SqlMetadataInJobConfigTest extends SqlTestSupport {
     @BeforeClass
     public static void setUpClass() {
@@ -96,7 +100,8 @@ public class SqlMetadataInJobConfigTest extends SqlTestSupport {
 
         String sql = "CREATE JOB testJob AS INSERT INTO dest SELECT v * 2, 'value-' || v FROM src WHERE v < 2";
         instance().getSql().execute(sql);
-        assertJobStatusEventually(instance().getJet().getJob("testJob"), COMPLETED);
+        Job job = instance().getJet().getJob("testJob");
+        assertThat(job).eventuallyHasStatus(COMPLETED);
 
         List<Job> completedJobs = getJobsByStatus(COMPLETED);
         assertEquals(1, completedJobs.size());
@@ -136,7 +141,7 @@ public class SqlMetadataInJobConfigTest extends SqlTestSupport {
         assertEquals(1, runningJobs.size());
         JobConfig config = runningJobs.get(0).getConfig();
         assertEquals(sql, config.getArgument(KEY_SQL_QUERY_TEXT));
-        assertEquals(Boolean.FALSE, config.getArgument(KEY_SQL_UNBOUNDED));
+        assertEquals(Boolean.TRUE, config.getArgument(KEY_SQL_UNBOUNDED));
     }
 
     private void waitForJobRunning() {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,15 @@
 package com.hazelcast.map.impl.operation;
 
 import com.hazelcast.core.EntryEventType;
-import com.hazelcast.internal.cluster.Versions;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.map.IMap;
 import com.hazelcast.map.impl.MapDataSerializerHook;
 import com.hazelcast.map.impl.MapEntries;
-import com.hazelcast.map.impl.operation.steps.engine.Step;
 import com.hazelcast.map.impl.operation.steps.PutAllOpSteps;
 import com.hazelcast.map.impl.operation.steps.engine.State;
+import com.hazelcast.map.impl.operation.steps.engine.Step;
 import com.hazelcast.map.impl.record.Record;
+import com.hazelcast.map.impl.recordstore.DefaultRecordStore;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.impl.Versioned;
@@ -51,6 +51,7 @@ import static com.hazelcast.map.impl.record.Record.UNSET;
  * Used to reduce the number of remote invocations
  * of an {@link IMap#putAll(Map)} or {@link IMap#setAll(Map)} call.
  */
+// RU_COMPAT_5_3 "implements Versioned" can be removed in 5.5
 public class PutAllOperation extends MapOperation
         implements PartitionAwareOperation, BackupAwareOperation,
         MutatingOperation, Versioned {
@@ -85,7 +86,7 @@ public class PutAllOperation extends MapOperation
         }
 
         hasMapListener = mapEventPublisher.hasEventListener(name);
-        hasWanReplication = mapContainer.isWanReplicationEnabled();
+        hasWanReplication = mapContainer.getWanContext().isWanReplicationEnabled();
         hasBackups = hasBackups();
         hasInvalidation = mapContainer.hasInvalidationListener();
 
@@ -246,7 +247,7 @@ public class PutAllOperation extends MapOperation
         List toBackupList = new ArrayList(backupPairs.size());
         for (int i = 0; i < backupPairs.size(); i += 2) {
             Data dataKey = ((Data) backupPairs.get(i));
-            Record record = recordStore.getRecord(dataKey);
+            Record record = ((DefaultRecordStore) recordStore).getRecordSafe(dataKey);
             if (record != null) {
                 toBackupList.add(dataKey);
                 toBackupList.add(backupPairs.get(i + 1));
@@ -261,20 +262,14 @@ public class PutAllOperation extends MapOperation
     protected void writeInternal(ObjectDataOutput out) throws IOException {
         super.writeInternal(out);
         out.writeObject(mapEntries);
-        if (out.getVersion().isGreaterOrEqual(Versions.V4_1)) {
-            out.writeBoolean(triggerMapLoader);
-        }
+        out.writeBoolean(triggerMapLoader);
     }
 
     @Override
     protected void readInternal(ObjectDataInput in) throws IOException {
         super.readInternal(in);
         mapEntries = in.readObject();
-        if (in.getVersion().isGreaterOrEqual(Versions.V4_1)) {
-            triggerMapLoader = in.readBoolean();
-        } else {
-            triggerMapLoader = true;
-        }
+        triggerMapLoader = in.readBoolean();
     }
 
     @Override

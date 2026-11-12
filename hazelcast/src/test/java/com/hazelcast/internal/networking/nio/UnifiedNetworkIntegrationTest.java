@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,10 +30,8 @@ import com.hazelcast.test.Accessors;
 import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.After;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import static com.hazelcast.core.Hazelcast.newHazelcastInstance;
@@ -42,16 +40,50 @@ import static com.hazelcast.internal.networking.nio.NetworkTestUtil.assumeKeepAl
 import static com.hazelcast.test.HazelcastTestSupport.assertClusterSizeEventually;
 import static com.hazelcast.test.HazelcastTestSupport.smallInstanceConfig;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
 
 @RunWith(HazelcastSerialClassRunner.class)
 @Category(QuickTest.class)
 public class UnifiedNetworkIntegrationTest {
-    @Rule
-    public ExpectedException expect = ExpectedException.none();
-
     @After
     public void tearDown() {
         Hazelcast.shutdownAll();
+    }
+
+    @Test
+    public void testInvalidKeepIdleCount_failsStartup() throws Throwable {
+        assumeKeepAlivePerSocketOptionsSupported();
+        Config config = smallInstanceConfig();
+        config.setProperty(ClusterProperty.SOCKET_KEEP_COUNT.getName(), "-1");
+        assertThrows(IllegalArgumentException.class, () -> newHazelcastInstance(config));
+        config.setProperty(ClusterProperty.SOCKET_KEEP_COUNT.getName(), "128");
+        assertThrows(IllegalArgumentException.class, () -> newHazelcastInstance(config));
+        config.setProperty(ClusterProperty.SOCKET_KEEP_COUNT.getName(), "0");
+        assertThrows(IllegalArgumentException.class, () -> newHazelcastInstance(config));
+    }
+
+    @Test
+    public void testInvalidKeepIntervalSeconds_failsStartup() throws Throwable {
+        assumeKeepAlivePerSocketOptionsSupported();
+        Config config = smallInstanceConfig();
+        config.setProperty(ClusterProperty.SOCKET_KEEP_INTERVAL.getName(), "-1");
+        assertThrows(IllegalArgumentException.class, () -> newHazelcastInstance(config));
+        config.setProperty(ClusterProperty.SOCKET_KEEP_INTERVAL.getName(), "32768");
+        assertThrows(IllegalArgumentException.class, () -> newHazelcastInstance(config));
+        config.setProperty(ClusterProperty.SOCKET_KEEP_INTERVAL.getName(), "0");
+        assertThrows(IllegalArgumentException.class, () -> newHazelcastInstance(config));
+    }
+
+    @Test
+    public void testInvalidKeepIdleSeconds_failsStartup() throws Throwable {
+        assumeKeepAlivePerSocketOptionsSupported();
+        Config config = smallInstanceConfig();
+        config.setProperty(ClusterProperty.SOCKET_KEEP_IDLE.getName(), "-1");
+        assertThrows(IllegalArgumentException.class, () -> newHazelcastInstance(config));
+        config.setProperty(ClusterProperty.SOCKET_KEEP_IDLE.getName(), "32768");
+        assertThrows(IllegalArgumentException.class, () -> newHazelcastInstance(config));
+        config.setProperty(ClusterProperty.SOCKET_KEEP_IDLE.getName(), "0");
+        assertThrows(IllegalArgumentException.class, () -> newHazelcastInstance(config));
     }
 
     @Test

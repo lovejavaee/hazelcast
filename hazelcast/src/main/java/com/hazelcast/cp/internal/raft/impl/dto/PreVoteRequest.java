@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,8 +21,10 @@ import com.hazelcast.cp.internal.raft.impl.RaftDataSerializerHook;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
+import com.hazelcast.nio.serialization.impl.Versioned;
 
 import java.io.IOException;
+
 
 /**
  * Struct for PreVoteRequest RPC.
@@ -32,21 +34,23 @@ import java.io.IOException;
  *
  * @see VoteRequest
  */
-public class PreVoteRequest implements IdentifiedDataSerializable {
+public class PreVoteRequest implements IdentifiedDataSerializable, Versioned {
 
     private RaftEndpoint candidate;
     private int nextTerm;
     private int lastLogTerm;
     private long lastLogIndex;
+    private boolean autoStepDownLeader;
 
     public PreVoteRequest() {
     }
 
-    public PreVoteRequest(RaftEndpoint candidate, int nextTerm, int lastLogTerm, long lastLogIndex) {
+    public PreVoteRequest(RaftEndpoint candidate, int nextTerm, int lastLogTerm, long lastLogIndex, boolean autoStepDownLeader) {
         this.nextTerm = nextTerm;
         this.candidate = candidate;
         this.lastLogTerm = lastLogTerm;
         this.lastLogIndex = lastLogIndex;
+        this.autoStepDownLeader = autoStepDownLeader;
     }
 
     public RaftEndpoint candidate() {
@@ -65,6 +69,10 @@ public class PreVoteRequest implements IdentifiedDataSerializable {
         return lastLogIndex;
     }
 
+    public boolean isAutoStepDownLeader() {
+        return autoStepDownLeader;
+    }
+
     @Override
     public int getFactoryId() {
         return RaftDataSerializerHook.F_ID;
@@ -81,6 +89,7 @@ public class PreVoteRequest implements IdentifiedDataSerializable {
         out.writeObject(candidate);
         out.writeInt(lastLogTerm);
         out.writeLong(lastLogIndex);
+        out.writeBoolean(autoStepDownLeader);
     }
 
     @Override
@@ -89,12 +98,13 @@ public class PreVoteRequest implements IdentifiedDataSerializable {
         candidate = in.readObject();
         lastLogTerm = in.readInt();
         lastLogIndex = in.readLong();
+        autoStepDownLeader = in.readBoolean();
     }
 
     @Override
     public String toString() {
         return "PreVoteRequest{" + "candidate=" + candidate + ", nextTerm=" + nextTerm + ", lastLogTerm=" + lastLogTerm
-                + ", lastLogIndex=" + lastLogIndex + '}';
+                + ", lastLogIndex=" + lastLogIndex + '}' + ", autoStepDownLeader=" + autoStepDownLeader;
     }
 
 }

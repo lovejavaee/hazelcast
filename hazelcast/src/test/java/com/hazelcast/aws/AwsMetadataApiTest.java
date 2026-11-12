@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 
+import java.net.HttpURLConnection;
 import java.util.Optional;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
@@ -55,7 +56,7 @@ public class AwsMetadataApiTest {
         AwsConfig awsConfig = AwsConfig.builder().setConnectionRetries(RETRY_COUNT).build();
         String endpoint = String.format("http://localhost:%s", wireMockRule.port());
         stubFor(put(urlEqualTo(METADATA_TOKEN_URL))
-            .willReturn(aResponse().withStatus(200).withBody("defaulttoken")));
+            .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_OK).withBody("defaulttoken")));
         String tokenEndpoint = endpoint.concat(METADATA_TOKEN_URL);
         awsMetadataApi = new AwsMetadataApi(endpoint, endpoint, endpoint, tokenEndpoint, awsConfig);
     }
@@ -65,7 +66,7 @@ public class AwsMetadataApiTest {
         // given
         String availabilityZone = "eu-central-1b";
         stubFor(get(urlEqualTo("/placement/availability-zone/"))
-            .willReturn(aResponse().withStatus(200).withBody(availabilityZone)));
+            .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_OK).withBody(availabilityZone)));
 
         // when
         String result = awsMetadataApi.availabilityZoneEc2();
@@ -78,13 +79,14 @@ public class AwsMetadataApiTest {
     public void availabilityZoneEcs() {
         // given
         //language=JSON
-        String response = "{\n"
-                + "  \"Cluster\" : \"hz-cluster\",\n"
-                + "  \"AvailabilityZone\": \"ca-central-1a\"\n"
-                + "}";
+        String response = """
+                {
+                  "Cluster" : "hz-cluster",
+                  "AvailabilityZone": "ca-central-1a"
+                }""";
 
         stubFor(get(urlEqualTo("/task"))
-                .willReturn(aResponse().withStatus(200).withBody(response)));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_OK).withBody(response)));
 
         // when
         String result = awsMetadataApi.availabilityZoneEcs();
@@ -98,7 +100,7 @@ public class AwsMetadataApiTest {
         // given
         String placementGroup = "placement-group-1";
         stubFor(get(urlEqualTo(GROUP_NAME_URL))
-                .willReturn(aResponse().withStatus(200).withBody(placementGroup)));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_OK).withBody(placementGroup)));
 
         // when
         Optional<String> result = awsMetadataApi.placementGroupEc2();
@@ -113,7 +115,7 @@ public class AwsMetadataApiTest {
         // given
         String partitionNumber = "42";
         stubFor(get(urlEqualTo(PARTITION_NO_URL))
-                .willReturn(aResponse().withStatus(200).withBody(partitionNumber)));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_OK).withBody(partitionNumber)));
 
         // when
         Optional<String> result = awsMetadataApi.placementPartitionNumberEc2();
@@ -127,9 +129,9 @@ public class AwsMetadataApiTest {
     public void missingPlacementGroupEc2() {
         // given
         stubFor(get(urlEqualTo(GROUP_NAME_URL))
-                .willReturn(aResponse().withStatus(404).withBody("Not found")));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_NOT_FOUND).withBody("Not found")));
         stubFor(get(urlEqualTo(PARTITION_NO_URL))
-                .willReturn(aResponse().withStatus(404).withBody("Not found")));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_NOT_FOUND).withBody("Not found")));
 
         // when
         Optional<String> placementGroupResult = awsMetadataApi.placementGroupEc2();
@@ -146,7 +148,7 @@ public class AwsMetadataApiTest {
     public void failToFetchPlacementGroupEc2() {
         // given
         stubFor(get(urlEqualTo(GROUP_NAME_URL))
-                .willReturn(aResponse().withStatus(500).withBody("Service Unavailable")));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_INTERNAL_ERROR).withBody("Service Unavailable")));
 
         // when
         Optional<String> placementGroupResult = awsMetadataApi.placementGroupEc2();
@@ -161,13 +163,14 @@ public class AwsMetadataApiTest {
     public void clusterEcs() {
         // given
         //language=JSON
-        String response = "{\n"
-                + "  \"Cluster\" : \"hz-cluster\",\n"
-                + "  \"AvailabilityZone\": \"ca-central-1a\"\n"
-                + "}";
+        String response = """
+                {
+                  "Cluster" : "hz-cluster",
+                  "AvailabilityZone": "ca-central-1a"
+                }""";
 
         stubFor(get(urlEqualTo("/task"))
-                .willReturn(aResponse().withStatus(200).withBody(response)));
+                .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_OK).withBody(response)));
 
         // when
         String result = awsMetadataApi.clusterEcs();
@@ -181,7 +184,7 @@ public class AwsMetadataApiTest {
         // given
         String defaultIamRole = "default-role-name";
         stubFor(get(urlEqualTo("/iam/security-credentials/"))
-            .willReturn(aResponse().withStatus(200).withBody(defaultIamRole)));
+            .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_OK).withBody(defaultIamRole)));
 
         // when
         String result = awsMetadataApi.defaultIamRoleEc2();
@@ -194,15 +197,16 @@ public class AwsMetadataApiTest {
     public void credentialsEc2() {
         // given
         String iamRole = "some-iam-role";
-        String response = "{\n"
-            + "  \"Code\": \"Success\",\n"
-            + "  \"AccessKeyId\": \"Access1234\",\n"
-            + "  \"SecretAccessKey\": \"Secret1234\",\n"
-            + "  \"Token\": \"Token1234\",\n"
-            + "  \"Expiration\": \"2020-03-27T21:01:33Z\"\n"
-            + "}";
+        String response = """
+                {
+                  "Code": "Success",
+                  "AccessKeyId": "Access1234",
+                  "SecretAccessKey": "Secret1234",
+                  "Token": "Token1234",
+                  "Expiration": "2020-03-27T21:01:33Z"
+                }""";
         stubFor(get(urlEqualTo(String.format("/iam/security-credentials/%s", iamRole)))
-            .willReturn(aResponse().withStatus(200).withBody(response)));
+            .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_OK).withBody(response)));
 
         // when
         AwsCredentials result = awsMetadataApi.credentialsEc2(iamRole);
@@ -216,15 +220,16 @@ public class AwsMetadataApiTest {
     @Test
     public void credentialsEcs() {
         // given
-        String response = "{\n"
-            + "  \"Code\": \"Success\",\n"
-            + "  \"AccessKeyId\": \"Access1234\",\n"
-            + "  \"SecretAccessKey\": \"Secret1234\",\n"
-            + "  \"Token\": \"Token1234\",\n"
-            + "  \"Expiration\": \"2020-03-27T21:01:33Z\"\n"
-            + "}";
+        String response = """
+                {
+                  "Code": "Success",
+                  "AccessKeyId": "Access1234",
+                  "SecretAccessKey": "Secret1234",
+                  "Token": "Token1234",
+                  "Expiration": "2020-03-27T21:01:33Z"
+                }""";
         stubFor(get(urlEqualTo("/"))
-            .willReturn(aResponse().withStatus(200).withBody(response)));
+            .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_OK).withBody(response)));
 
         // when
         AwsCredentials result = awsMetadataApi.credentialsEcs();
@@ -257,7 +262,7 @@ public class AwsMetadataApiTest {
         // given
         String token = "retrievetoken";
         stubFor(put(urlEqualTo(METADATA_TOKEN_URL))
-            .willReturn(aResponse().withStatus(200).withBody(token)));
+            .willReturn(aResponse().withStatus(HttpURLConnection.HTTP_OK).withBody(token)));
 
         // when
         String result = awsMetadataApi.retrieveToken();

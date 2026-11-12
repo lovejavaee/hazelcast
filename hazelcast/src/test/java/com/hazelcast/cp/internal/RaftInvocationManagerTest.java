@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ import static org.junit.Assert.fail;
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class RaftInvocationManagerTest extends HazelcastRaftTestSupport {
 
-    private HazelcastInstance[] instances;
+    protected HazelcastInstance[] instances;
 
     @Test
     public void when_raftGroupIsCreated_then_raftOperationsAreExecuted() throws ExecutionException, InterruptedException {
@@ -84,4 +84,4 @@ public class RaftInvocationManagerTest extends HazelcastRaftTestSupport {
             }
         });
     }
-}
+ }

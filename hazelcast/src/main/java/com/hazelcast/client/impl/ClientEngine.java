@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.function.LongConsumer;
 
 /**
  * The client Engine.
@@ -87,7 +88,17 @@ public interface ClientEngine extends Consumer<ClientMessage> {
 
     TransactionManagerService getTransactionManagerService();
 
-    ClusterViewListenerService getClusterListenerService();
+    ClusterViewListenerService getClusterViewListenerService();
+
+    /**
+     * Retrieves the {@link CPGroupViewListenerService} which maintains
+     * a view of CP leaders based on events received by cluster members.
+     * This service is called internally when license requirements are met
+     * to provide direct-to-leader CP operation sending.
+     *
+     * @return the {@link CPGroupViewListenerService} implementation
+     */
+    CPGroupViewListenerService getCPGroupViewListenerService();
 
     /**
      * Returns the map of the active clients connected to
@@ -134,7 +145,8 @@ public interface ClientEngine extends Consumer<ClientMessage> {
     /**
      * @param client to check if allowed through current ClientSelector.
      *               <p>
-     *               Note: Management Center clients ({@link ConnectionType#MC_JAVA_CLIENT}) are always allowed.
+     *               Note: Management Center clients
+     *               ({@link ConnectionType#MC_JAVA_CLIENT} and {@link ConnectionType#MC_CL_CLIENT}) are always allowed.
      * @return true if allowed, false otherwise
      */
     boolean isClientAllowed(Client client);
@@ -143,7 +155,8 @@ public interface ClientEngine extends Consumer<ClientMessage> {
      * Only Clients that can pass through filter are allowed to connect to cluster.
      * Only one selector can be active at a time. Applying new one will override old selector.
      * <p>
-     * Note: the only exception to this rule are Management Center clients ({@link ConnectionType#MC_JAVA_CLIENT}).
+     * Note: the only exception to this rule are Management Center clients
+     * ({@link ConnectionType#MC_JAVA_CLIENT} and {@link ConnectionType#MC_CL_CLIENT}).
      *
      * @param selector to select a client or group of clients to act upon
      */
@@ -156,9 +169,9 @@ public interface ClientEngine extends Consumer<ClientMessage> {
      */
     void onClientAcquiredResource(UUID uuid);
 
-    void addBackupListener(UUID clientUUID, Consumer<Long> backupListener);
+    void addBackupListener(UUID clientUUID, LongConsumer backupListener);
 
-    boolean deregisterBackupListener(UUID clientUUID, Consumer<Long> backupListener);
+    boolean deregisterBackupListener(UUID clientUUID, LongConsumer backupListener);
 
     void dispatchBackupEvent(UUID clientUUID, long clientCorrelationId);
 

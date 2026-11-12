@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -97,7 +97,7 @@ public class MembershipChangeTask implements Runnable {
                 return;
             }
 
-            Collection<RaftEndpoint> members = new LinkedHashSet<RaftEndpoint>(state.members());
+            Collection<RaftEndpoint> members = new LinkedHashSet<>(state.members());
             boolean memberExists = members.contains(member);
 
             switch (membershipChangeMode) {
@@ -123,7 +123,8 @@ public class MembershipChangeTask implements Runnable {
             }
 
             logger.info("New members after " + membershipChangeMode + " " + member + " -> " + members);
-            new ReplicateTask(raftNode, new UpdateRaftGroupMembersCmd(members, member, membershipChangeMode), resultFuture).run();
+            raftNode.createReplicationTask(new UpdateRaftGroupMembersCmd(members, member, membershipChangeMode),
+                    resultFuture).run();
         } catch (Throwable t) {
             logger.severe(this + " failed", t);
             RaftEndpoint leader = raftNode.getLeader();

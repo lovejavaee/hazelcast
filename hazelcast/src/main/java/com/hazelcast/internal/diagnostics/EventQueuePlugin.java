@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@ import com.hazelcast.collection.impl.set.SetService;
 import com.hazelcast.core.EntryEventType;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.map.impl.event.EntryEventData;
-import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.spi.impl.eventservice.impl.LocalEventDispatcher;
 import com.hazelcast.spi.properties.HazelcastProperties;
 import com.hazelcast.spi.properties.HazelcastProperty;
@@ -76,30 +75,30 @@ public class EventQueuePlugin extends DiagnosticsPlugin {
     public static final HazelcastProperty SAMPLES
             = new HazelcastProperty("hazelcast.diagnostics.event.queue.samples", 100);
 
-    private final ItemCounter<String> occurrenceMap = new ItemCounter<String>();
+    private final ItemCounter<String> occurrenceMap = new ItemCounter<>();
     private final Random random = new Random();
     private final NumberFormat defaultFormat = NumberFormat.getPercentInstance();
 
     private final StripedExecutor eventExecutor;
-    private final long periodMillis;
-    private final int threshold;
-    private final int samples;
-
+    private long periodMillis;
+    private int threshold;
+    private int samples;
     private int eventCount;
-
-    public EventQueuePlugin(NodeEngineImpl nodeEngine, StripedExecutor eventExecutor) {
-        this(nodeEngine.getLogger(EventQueuePlugin.class), eventExecutor, nodeEngine.getProperties());
-    }
+    private final HazelcastProperties props;
 
     public EventQueuePlugin(ILogger logger, StripedExecutor eventExecutor, HazelcastProperties props) {
         super(logger);
-
         this.defaultFormat.setMinimumFractionDigits(3);
         this.eventExecutor = eventExecutor;
+        this.props = props;
+        readProperties();
+    }
 
-        this.periodMillis = props.getMillis(PERIOD_SECONDS);
-        this.threshold = props.getInteger(THRESHOLD);
-        this.samples = props.getInteger(SAMPLES);
+    @Override
+    void readProperties() {
+        this.periodMillis = props.getMillis(overrideProperty(PERIOD_SECONDS));
+        this.threshold = props.getInteger(overrideProperty(THRESHOLD));
+        this.samples = props.getInteger(overrideProperty(SAMPLES));
     }
 
     @Override
@@ -109,11 +108,23 @@ public class EventQueuePlugin extends DiagnosticsPlugin {
 
     @Override
     public void onStart() {
+        super.onStart();
         logger.info("Plugin:active, period-millis:" + periodMillis + " threshold:" + threshold + " samples:" + samples);
     }
 
     @Override
+    public void onShutdown() {
+        occurrenceMap.clear();
+        occurrenceMap.reset();
+        super.onShutdown();
+        logger.info("Plugin:inactive");
+    }
+
+    @Override
     public void run(DiagnosticsLogWriter writer) {
+        if (!isActive()) {
+            return;
+        }
         writer.startSection("EventQueues");
 
         int index = 1;
@@ -128,6 +139,14 @@ public class EventQueuePlugin extends DiagnosticsPlugin {
     // just for testing
     ItemCounter<String> getOccurrenceMap() {
         return occurrenceMap;
+    }
+
+    int getThreshold() {
+        return threshold;
+    }
+
+    int getSamples() {
+        return samples;
     }
 
     private List<BlockingQueue<Runnable>> getEventQueues() {
@@ -174,10 +193,10 @@ public class EventQueuePlugin extends DiagnosticsPlugin {
      * Samples the queue.
      *
      * @param queue the queue to sample
-     * @return the number of samples, or -1 if there were not sufficient samples
+     * @return The number of samples, or -1 if there were insufficient samples.
      */
     private int sample(BlockingQueue<Runnable> queue) {
-        ArrayList<Runnable> events = new ArrayList<Runnable>(queue);
+        ArrayList<Runnable> events = new ArrayList<>(queue);
         eventCount = events.size();
         if (eventCount < threshold) {
             return -1;
@@ -194,8 +213,7 @@ public class EventQueuePlugin extends DiagnosticsPlugin {
     }
 
     int sampleRunnable(Runnable runnable) {
-        if (runnable instanceof LocalEventDispatcher) {
-            LocalEventDispatcher eventDispatcher = (LocalEventDispatcher) runnable;
+        if (runnable instanceof LocalEventDispatcher eventDispatcher) {
             return sampleLocalDispatcherEvent(eventDispatcher);
         }
         occurrenceMap.add(runnable.getClass().getName(), 1);
@@ -204,29 +222,25 @@ public class EventQueuePlugin extends DiagnosticsPlugin {
 
     private int sampleLocalDispatcherEvent(LocalEventDispatcher eventDispatcher) {
         Object dispatcherEvent = eventDispatcher.getEvent();
-        if (dispatcherEvent instanceof EntryEventData) {
+        if (dispatcherEvent instanceof EntryEventData event) {
             // IMap event
-            EntryEventData event = (EntryEventData) dispatcherEvent;
             EntryEventType type = EntryEventType.getByType(event.getEventType());
             String mapName = event.getMapName();
             occurrenceMap.add(format("IMap '%s' %s", mapName, type), 1);
             return 1;
-        } else if (dispatcherEvent instanceof CacheEventSet) {
+        } else if (dispatcherEvent instanceof CacheEventSet eventSet) {
             // ICache event
-            CacheEventSet eventSet = (CacheEventSet) dispatcherEvent;
             Set<CacheEventData> events = eventSet.getEvents();
             for (CacheEventData event : events) {
                 occurrenceMap.add(format("ICache '%s' %s", event.getName(), event.getCacheEventType()), 1);
             }
             return events.size();
-        } else if (dispatcherEvent instanceof QueueEvent) {
+        } else if (dispatcherEvent instanceof QueueEvent event) {
             // IQueue event
-            QueueEvent event = (QueueEvent) dispatcherEvent;
             occurrenceMap.add(format("IQueue '%s' %s", event.getName(), event.getEventType()), 1);
             return 1;
-        } else if (dispatcherEvent instanceof CollectionEvent) {
+        } else if (dispatcherEvent instanceof CollectionEvent event) {
             // ISet or IList event
-            CollectionEvent event = (CollectionEvent) dispatcherEvent;
             String serviceName = eventDispatcher.getServiceName();
             if (SetService.SERVICE_NAME.equals(serviceName)) {
                 serviceName = "ISet";

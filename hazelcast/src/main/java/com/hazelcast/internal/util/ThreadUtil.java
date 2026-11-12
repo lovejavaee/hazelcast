@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -83,6 +83,18 @@ public final class ThreadUtil {
      */
     public static String createThreadPoolName(String hzName, String poolName) {
         return createThreadName(hzName, poolName) + ".thread-";
+    }
+
+    /**
+     * Creates the workerpool name with prefix and notation.
+     *
+     * @param hzName   the name of the hazelcast instance
+     * @param poolName the name of the pool.
+     * @return the workerpool name.
+     * @throws java.lang.NullPointerException if poolname is null.
+     */
+    public static String createWorkerPoolName(String hzName, String poolName) {
+        return createThreadName(hzName, poolName) + ".worker-";
     }
 
     public static void assertRunningOnPartitionThread() {

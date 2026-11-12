@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,17 +18,20 @@ package com.hazelcast.jet.elastic;
 
 import com.hazelcast.client.test.TestHazelcastFactory;
 import com.hazelcast.core.HazelcastInstance;
-import com.hazelcast.jet.JetException;
 import com.hazelcast.jet.pipeline.BatchSource;
 import com.hazelcast.jet.pipeline.Pipeline;
 import com.hazelcast.jet.pipeline.Sinks;
+import com.hazelcast.jet.test.IgnoreInJenkinsOnWindows;
+import com.hazelcast.jet.test.SerialTest;
+import com.hazelcast.test.annotation.NightlyTest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.client.RestClientBuilder;
 import org.junit.After;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
-import static com.google.common.collect.ImmutableMap.of;
+import static java.util.Map.of;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
@@ -36,11 +39,13 @@ import static org.mockito.Mockito.when;
 /**
  * Test running single Jet member locally and Elastic in docker
  */
+@Category({NightlyTest.class, SerialTest.class, IgnoreInJenkinsOnWindows.class})
 public class LocalElasticSourcesTest extends CommonElasticSourcesTest {
 
-    private TestHazelcastFactory factory = new TestHazelcastFactory();
+    private final TestHazelcastFactory factory = new TestHazelcastFactory();
 
     @After
+    @Override
     public void tearDown() {
         factory.terminateAll();
     }
@@ -68,8 +73,7 @@ public class LocalElasticSourcesTest extends CommonElasticSourcesTest {
          .writeTo(Sinks.logger());
 
         assertThatThrownBy(() -> super.hz.getJet().newJob(p).join())
-                .hasCauseInstanceOf(JetException.class)
-                .hasMessageContaining("Shard locations are not equal to Hazelcast members locations");
+                .hasMessageContaining("Selected members do not contain shard 'my-index-0'");
     }
 
     @Test

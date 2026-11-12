@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import com.hazelcast.map.impl.operation.EntryOperation;
 import com.hazelcast.map.impl.operation.EntryOperator;
 import com.hazelcast.map.impl.operation.steps.engine.State;
 import com.hazelcast.map.impl.operation.steps.engine.Step;
+import com.hazelcast.map.impl.record.Record;
 import com.hazelcast.map.impl.recordstore.RecordStore;
 import com.hazelcast.spi.impl.executionservice.impl.StatsAwareRunnable;
 
@@ -58,7 +59,8 @@ public enum EntryOpSteps implements IMapOpStep {
                 return EntryOpSteps.LOAD;
             }
 
-            if (state.isEntryProcessorOffload()) {
+            if (state.isEntryProcessorOffloadable()) {
+                updateOldValueByConvertingItToHeapData(state);
                 return EntryOpSteps.RUN_OFFLOADED_ENTRY_PROCESSOR;
             }
             return EntryOpSteps.PROCESS;
@@ -82,16 +84,17 @@ public enum EntryOpSteps implements IMapOpStep {
                 return EntryOpSteps.ON_LOAD;
             }
 
-            if (state.isEntryProcessorOffload()) {
+            if (state.isEntryProcessorOffloadable()) {
                 return EntryOpSteps.RUN_OFFLOADED_ENTRY_PROCESSOR;
             }
+
             return EntryOpSteps.PROCESS;
         }
     },
 
     RUN_OFFLOADED_ENTRY_PROCESSOR() {
         @Override
-        public boolean isStoreStep() {
+        public boolean isOffloadStep(State state) {
             return true;
         }
 
@@ -108,10 +111,16 @@ public enum EntryOpSteps implements IMapOpStep {
             ExecutorStats executorStats = mapContainer.getMapServiceContext()
                     .getOffloadedEntryProcessorExecutorStats();
 
+            EntryOpSteps.interceptGet(state);
+
             if (statisticsEnabled) {
-                new StatsAwareRunnable(() -> {
-                    runStepInternal(state);
-                }, getExecutorName(state), executorStats).run();
+                // When stats are enabled, to update
+                // the stats wrap execution inside a
+                // StatsAwareRunnable and run directly here
+                StatsAwareRunnable statsAwareRunnable = new StatsAwareRunnable(() ->
+                        runStepInternal(state), getExecutorName(state), executorStats);
+                // directly run StatsAwareRunnable
+                statsAwareRunnable.run();
             } else {
                 runStepInternal(state);
             }
@@ -119,10 +128,8 @@ public enum EntryOpSteps implements IMapOpStep {
 
         private void runStepInternal(State state) {
             EntryOperation operation = (EntryOperation) state.getOperation();
-            Object oldValueByInMemoryFormat = operation.getOldValueByInMemoryFormat(state.getOldValue());
-
             EntryOperator entryOperator = operator(operation, state.getEntryProcessor())
-                    .operateOnKeyValue(state.getKey(), oldValueByInMemoryFormat);
+                    .operateOnKeyValue(state.getKey(), state.getOldValue());
             state.setEntryOperator(entryOperator);
         }
 
@@ -134,7 +141,7 @@ public enum EntryOpSteps implements IMapOpStep {
                 return DO_POST_OPERATE_OPS;
             }
 
-            return UtilSteps.SEND_RESPONSE;
+            return UtilSteps.FINAL_STEP;
         }
     },
 
@@ -146,7 +153,8 @@ public enum EntryOpSteps implements IMapOpStep {
 
         @Override
         public Step nextStep(State state) {
-            if (state.isEntryProcessorOffload()) {
+            if (state.isEntryProcessorOffloadable()) {
+                updateOldValueByConvertingItToHeapData(state);
                 return EntryOpSteps.RUN_OFFLOADED_ENTRY_PROCESSOR;
             }
             return EntryOpSteps.PROCESS;
@@ -157,6 +165,7 @@ public enum EntryOpSteps implements IMapOpStep {
         @Override
         public void runStep(State state) {
             RecordStore recordStore = state.getRecordStore();
+            EntryOpSteps.interceptGet(state);
 
             EntryOperator entryOperator = state.getOperator();
             entryOperator.init(state.getKey(), state.getOldValue(),
@@ -212,13 +221,26 @@ public enum EntryOpSteps implements IMapOpStep {
                         }
                         Object newValue = entryOperator.extractNewValue();
                         newValue = mapServiceContext.interceptPut(mapContainer.getInterceptorRegistry(),
-                                state.getOldValue(), newValue);
+                                entryOperator.getOldValueClone(), newValue);
                         state.setNewValue(newValue);
                         state.setTtl(entryOperator.getEntry().getNewTtl());
                         state.setChangeExpiryOnUpdate(entryOperator.getEntry().isChangeExpiryOnUpdate());
                         break;
                     case REMOVED:
-                        DeleteOpSteps.READ.runStep(state);
+                        // Almost the same as DeleteOpSteps.READ but without expiration,
+                        // which was already checked when EP first obtained the entry.
+                        // However, we handle missing record in case another overlapping operation evicted it.
+                        Record record = state.getRecordStore().getRecord(state.getKey());
+                        state.setOldValue(record == null ? null : record.getValue());
+                        state.setRecordExistsInMemory(record != null);
+
+                        if (record != null) {
+                            Object oldValue = record.getValue();
+                            oldValue = mapServiceContext.interceptRemove(mapContainer.getInterceptorRegistry(), oldValue);
+                            if (oldValue != null) {
+                                state.setOldValue(oldValue);
+                            }
+                        }
                         break;
                     default:
                         throw new IllegalArgumentException("Unexpected event found:" + eventType);
@@ -331,10 +353,23 @@ public enum EntryOpSteps implements IMapOpStep {
 
         @Override
         public Step nextStep(State state) {
-            return UtilSteps.SEND_RESPONSE;
+            return UtilSteps.FINAL_STEP;
         }
     };
 
     EntryOpSteps() {
+    }
+
+    private static void updateOldValueByConvertingItToHeapData(State state) {
+        EntryOperation operation = (EntryOperation) state.getOperation();
+        Object oldValueByInMemoryFormat = operation.copyOldValueToHeapWhenNeeded(state.getOldValue());
+        state.setOldValue(oldValueByInMemoryFormat);
+    }
+
+    private static void interceptGet(State state) {
+        MapContainer mapContainer = state.getRecordStore().getMapContainer();
+        MapServiceContext mapServiceContext = mapContainer.getMapServiceContext();
+        Object value = mapServiceContext.interceptGet(mapContainer.getInterceptorRegistry(), state.getOldValue());
+        state.setOldValue(value);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,11 +28,13 @@ import com.hazelcast.core.IndeterminateOperationStateException;
 import com.hazelcast.core.LocalMemberResetException;
 import com.hazelcast.core.MemberLeftException;
 import com.hazelcast.core.OperationTimeoutException;
+import com.hazelcast.cp.exception.CPLeaderSteppingDownException;
 import com.hazelcast.crdt.MutationDisallowedException;
 import com.hazelcast.crdt.TargetNotReplicaException;
 import com.hazelcast.durableexecutor.StaleTaskIdException;
 import com.hazelcast.internal.cluster.impl.ConfigMismatchException;
 import com.hazelcast.internal.util.AddressUtil;
+import com.hazelcast.logging.LoggingService;
 import com.hazelcast.map.QueryResultSizeExceededException;
 import com.hazelcast.map.ReachedMaxSizeException;
 import com.hazelcast.memory.NativeOutOfMemoryError;
@@ -86,13 +88,15 @@ import java.net.URISyntaxException;
 import java.security.AccessControlException;
 import java.util.ConcurrentModificationException;
 import java.util.NoSuchElementException;
+import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeoutException;
 
 import static java.util.Arrays.asList;
-import static junit.framework.TestCase.assertEquals;
+import static org.junit.Assert.assertEquals;
+import static org.mockito.Mockito.mock;
 
 @RunWith(HazelcastParametrizedRunner.class)
 @UseParametersRunnerFactory(HazelcastParallelParametersRunnerFactory.class)
@@ -103,7 +107,7 @@ public class ClientExceptionFactoryTest extends HazelcastTestSupport {
     public Throwable throwable;
 
     private ClientExceptionFactory exceptionFactory = new ClientExceptionFactory(true,
-            Thread.currentThread().getContextClassLoader());
+            Thread.currentThread().getContextClassLoader(), mock(LoggingService.class));
 
     @Test
     public void testException() {
@@ -264,7 +268,8 @@ public class ClientExceptionFactoryTest extends HazelcastTestSupport {
                 new Object[]{new CustomExceptions.CustomExceptionWithMessageAndCause(randomString(),
                         new CustomExceptions.CustomExceptionWithMessage(randomString()))},
                 new Object[]{new CustomExceptions.CustomExceptionWithCause(new RuntimeException())},
-                new Object[]{new RuntimeException("blabla", new CustomExceptions.CustomExceptionWithMessage(randomString()))}
-        );
+                new Object[]{new RuntimeException("blabla", new CustomExceptions.CustomExceptionWithMessage(randomString()))},
+                new Object[]{new CPLeaderSteppingDownException(randomString(), UUID.randomUUID())}
+                );
     }
 }

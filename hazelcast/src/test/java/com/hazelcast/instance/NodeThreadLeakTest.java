@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,6 @@ import com.hazelcast.internal.server.tcp.ServerSocketRegistry;
 import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
-import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
@@ -46,7 +45,7 @@ import static org.junit.Assert.fail;
  * Tests that an exception in the {@link Node} and {@link NodeEngineImpl} constructor leads to properly finished services.
  */
 @RunWith(HazelcastSerialClassRunner.class)
-@Category({QuickTest.class, ParallelJVMTest.class})
+@Category(QuickTest.class)
 public class NodeThreadLeakTest extends HazelcastTestSupport {
 
     private static final HazelcastException HAZELCAST_EXCEPTION
@@ -55,7 +54,7 @@ public class NodeThreadLeakTest extends HazelcastTestSupport {
     private static final int TEST_TIMEOUT_IN_MILLIS = 30_000;
 
     @Test(timeout = TEST_TIMEOUT_IN_MILLIS)
-    public void testLeakWhenCreatingConnectionManager() throws Exception {
+    public void testLeakWhenCreatingConnectionManager() {
         testFailingHazelcastCreation(new DefaultNodeContext() {
             @Override
             public Server createServer(Node node, ServerSocketRegistry registry, LocalAddressRegistry addressRegistry) {
@@ -69,7 +68,7 @@ public class NodeThreadLeakTest extends HazelcastTestSupport {
     }
 
     @Test(timeout = TEST_TIMEOUT_IN_MILLIS)
-    public void testFailingInNodeEngineImplConstructor() throws Exception {
+    public void testFailingInNodeEngineImplConstructor() {
         testFailingHazelcastCreation(new DefaultNodeContext() {
             @Override
             public NodeExtension createNodeExtension(Node node) {

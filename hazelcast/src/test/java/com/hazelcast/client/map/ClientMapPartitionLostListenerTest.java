@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.client.map;
 
 import com.hazelcast.client.config.ClientConfig;
+import com.hazelcast.client.config.RoutingMode;
 import com.hazelcast.client.test.TestHazelcastFactory;
 import com.hazelcast.config.Config;
 import com.hazelcast.core.HazelcastInstance;
@@ -28,7 +29,6 @@ import com.hazelcast.map.impl.MapService;
 import com.hazelcast.map.listener.MapPartitionLostListener;
 import com.hazelcast.spi.impl.eventservice.EventRegistration;
 import com.hazelcast.spi.impl.eventservice.EventService;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
@@ -115,7 +115,7 @@ public class ClientMapPartitionLostListenerTest extends HazelcastTestSupport {
 
         HazelcastInstance instance1 = hazelcastFactory.newHazelcastInstance(config);
         ClientConfig clientConfig = getClientConfig();
-        clientConfig.getNetworkConfig().setSmartRouting(false);
+        clientConfig.getNetworkConfig().getClusterRoutingConfig().setRoutingMode(RoutingMode.SINGLE_MEMBER);
         HazelcastInstance client = hazelcastFactory.newHazelcastClient(clientConfig);
         HazelcastInstance instance2 = hazelcastFactory.newHazelcastInstance(config);
 
@@ -138,35 +138,28 @@ public class ClientMapPartitionLostListenerTest extends HazelcastTestSupport {
 
     private static void assertMapPartitionLostEventEventually(final TestEventCollectingMapPartitionLostListener listener,
                                                               final int partitionId) {
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run()
-                    throws Exception {
+        assertTrueEventually(() -> {
 
-                final List<MapPartitionLostEvent> events = listener.getEvents();
-                assertFalse(events.isEmpty());
-                assertEquals(partitionId, events.get(0).getPartitionId());
+            final List<MapPartitionLostEvent> events = listener.getEvents();
+            assertFalse(events.isEmpty());
+            assertEquals(partitionId, events.get(0).getPartitionId());
 
-            }
         });
     }
 
     private static void assertRegistrationEventually(final HazelcastInstance instance, final String mapName,
                                                      final boolean shouldBeRegistered) {
         final EventService eventService = getNode(instance).getNodeEngine().getEventService();
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() throws Exception {
-                boolean registered = false;
-                for (EventRegistration registration : eventService.getRegistrations(SERVICE_NAME, mapName)) {
-                    if (registration.getFilter() instanceof MapPartitionLostEventFilter) {
-                        registered = true;
-                        break;
-                    }
+        assertTrueEventually(() -> {
+            boolean registered = false;
+            for (EventRegistration registration : eventService.getRegistrations(SERVICE_NAME, mapName)) {
+                if (registration.getFilter() instanceof MapPartitionLostEventFilter) {
+                    registered = true;
+                    break;
                 }
-                if (shouldBeRegistered != registered) {
-                    fail("shouldBeRegistered: " + shouldBeRegistered + " registered: " + registered);
-                }
+            }
+            if (shouldBeRegistered != registered) {
+                fail("shouldBeRegistered: " + shouldBeRegistered + " registered: " + registered);
             }
         });
     }

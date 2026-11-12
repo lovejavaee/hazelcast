@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,8 +69,8 @@ public final class RetryUtils {
                     throw ExceptionUtil.rethrow(e);
                 }
                 long waitIntervalMs = backoffIntervalForRetry(retryCount);
-                LOGGER.warning(String.format("Couldn't connect to the service, [%s] retrying in %s seconds...", retryCount,
-                        waitIntervalMs / MS_IN_SECOND));
+                LOGGER.warning(String.format("Couldn't connect to the service, [%s] retrying in %s seconds. Cause: %s",
+                        retryCount, waitIntervalMs / MS_IN_SECOND, e));
                 sleep(waitIntervalMs);
             }
         }

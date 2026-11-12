@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import com.hazelcast.nio.serialization.genericrecord.GenericRecordBuilder;
 import com.hazelcast.sql.SqlColumnMetadata;
 import com.hazelcast.sql.SqlColumnType;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.List;
@@ -70,7 +70,7 @@ public class JdbcParametersTest {
                                                           .build();
 
         Integer key = 10;
-        JdbcParameters jdbcParameters = JdbcParameters.convert(key, genericRecord, columnMetadata, "id");
+        JdbcParameters jdbcParameters = JdbcParameters.convert(key, genericRecord, columnMetadata, "id", false);
 
         Object[] expected = {10, "name_value", "address_value"};
         assertThat(jdbcParameters.getParams()).isEqualTo(expected);

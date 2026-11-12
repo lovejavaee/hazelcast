@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,9 @@ package com.hazelcast.jet.kafka.connect.impl;
 
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
+import org.apache.kafka.common.metrics.PluginMetrics;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.kafka.connect.source.SourceTask;
-import org.apache.kafka.connect.source.SourceTaskContext;
-import org.apache.kafka.connect.storage.OffsetStorageReader;
 
 import java.util.Collections;
 import java.util.List;
@@ -29,10 +28,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.locks.ReentrantLock;
 
-import static com.hazelcast.jet.impl.util.ExceptionUtil.rethrow;
+import static com.hazelcast.jet.impl.util.JetExceptionUtil.rethrow;
 
-class TaskRunner {
-    private static final ILogger LOGGER = Logger.getLogger(TaskRunner.class);
+public class TaskRunner {
+    private final ILogger logger;
+    private final PluginMetrics pluginMetrics;
     private final String name;
     private final ReentrantLock taskLifecycleLock = new ReentrantLock();
     private final State state;
@@ -40,16 +40,17 @@ class TaskRunner {
     private volatile boolean running;
     private volatile boolean reconfigurationNeeded;
     private SourceTask task;
-    private Map<String, String> taskConfig;
+    private volatile Map<String, String> taskConfigReference;
 
-
-    TaskRunner(String name, State state, SourceTaskFactory sourceTaskFactory) {
+    TaskRunner(String name, State state, SourceTaskFactory sourceTaskFactory, PluginMetrics pluginMetrics) {
         this.name = name;
         this.state = state;
         this.sourceTaskFactory = sourceTaskFactory;
+        this.logger = Logger.getLogger(getClass().getName() + " " + name);
+        this.pluginMetrics = pluginMetrics;
     }
 
-    List<SourceRecord> poll() {
+    public List<SourceRecord> poll() {
         restartTaskIfNeeded();
         if (running) {
             return doPoll();
@@ -58,13 +59,13 @@ class TaskRunner {
         }
     }
 
-    void stop() {
+    public void stop() {
         try {
             taskLifecycleLock.lock();
             if (running) {
-                LOGGER.fine("Stopping task '" + name + "'");
+                logger.info("Stopping task '" + name + "'");
                 task.stop();
-                LOGGER.fine("Task '" + name + "' stopped");
+                logger.info("Task '" + name + "' stopped");
             }
         } finally {
             running = false;
@@ -82,24 +83,24 @@ class TaskRunner {
         }
     }
 
-    private void restartTaskIfNeeded() {
+    void restartTaskIfNeeded() {
         if (reconfigurationNeeded) {
             reconfigurationNeeded = false;
             try {
                 stop();
             } catch (Exception ex) {
-                LOGGER.warning("Stopping task '" + name + "' failed but proceeding with re-start", ex);
+                logger.warning("Stopping task '" + name + "' failed but proceeding with re-start", ex);
             }
         }
         start();
     }
 
-    void updateTaskConfig(Map<String, String> taskConfig) {
+    public void updateTaskConfig(Map<String, String> taskConfig) {
         try {
             taskLifecycleLock.lock();
-            if (!Objects.equals(this.taskConfig, taskConfig)) {
-                LOGGER.info("Updating task '" + name + "' configuration");
-                this.taskConfig = taskConfig;
+            if (!Objects.equals(this.taskConfigReference, taskConfig)) {
+                logger.info("Updating task '" + name + "' configuration");
+                taskConfigReference = taskConfig;
                 reconfigurationNeeded = true;
             }
         } finally {
@@ -111,16 +112,17 @@ class TaskRunner {
         try {
             taskLifecycleLock.lock();
             if (!running) {
+                Map<String, String> taskConfig = taskConfigReference;
                 if (taskConfig != null) {
                     SourceTask taskLocal = sourceTaskFactory.create();
-                    LOGGER.info("Initializing task '" + name + "'");
-                    taskLocal.initialize(new JetSourceTaskContext(taskConfig, state));
-                    LOGGER.info("Starting task '" + name + "'");
+                    logger.info("Initializing task '" + name + "'");
+                    taskLocal.initialize(new JetSourceTaskContext(pluginMetrics, taskConfig, state));
+                    logger.info("Starting task '" + name + "'");
                     taskLocal.start(taskConfig);
                     this.task = taskLocal;
                     running = true;
                 } else {
-                    LOGGER.finest("No task config for task '" + name + "'");
+                    logger.info("No task config for task '" + name + "'");
                 }
             }
         } finally {
@@ -133,30 +135,9 @@ class TaskRunner {
             try {
                 task.commit();
             } catch (InterruptedException e) {
-                LOGGER.warning("Interrupted while committing");
+                logger.warning("Interrupted while committing");
                 Thread.currentThread().interrupt();
             }
-        }
-    }
-
-    private static final class JetSourceTaskContext implements SourceTaskContext {
-        private final Map<String, String> taskConfig;
-        private final State state;
-
-        private JetSourceTaskContext(Map<String, String> taskConfig,
-                                     State state) {
-            this.taskConfig = taskConfig;
-            this.state = state;
-        }
-
-        @Override
-        public Map<String, String> configs() {
-            return taskConfig;
-        }
-
-        @Override
-        public OffsetStorageReader offsetStorageReader() {
-            return new SourceOffsetStorageReader(state);
         }
     }
 
@@ -167,18 +148,18 @@ class TaskRunner {
                 task.commitRecord(rec, null);
             }
         } catch (InterruptedException ie) {
-            LOGGER.warning("Interrupted while committing record");
+            logger.warning("Interrupted while committing record");
             Thread.currentThread().interrupt();
         }
     }
 
-    public State createSnapshot() {
+    public State copyState() {
         State snapshot = new State();
         snapshot.load(state);
         return snapshot;
     }
 
-    public void restoreSnapshot(State state) {
+    public void restoreState(State state) {
         this.state.load(state);
     }
 
@@ -189,8 +170,12 @@ class TaskRunner {
     @Override
     public String toString() {
         return "TaskRunner{" +
-                "name='" + name + '\'' +
-                '}';
+               "name='" + name + '\'' +
+               '}';
+    }
+
+    void forceRestart() {
+        reconfigurationNeeded = true;
     }
 
     @FunctionalInterface

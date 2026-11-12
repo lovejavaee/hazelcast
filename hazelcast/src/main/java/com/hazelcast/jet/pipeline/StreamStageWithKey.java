@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import com.hazelcast.map.IMap;
 import javax.annotation.Nonnull;
 import java.util.List;
 import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
@@ -108,7 +109,7 @@ public interface StreamStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
      * @param createFn   function that returns the state object
      * @param mapFn      function that receives the state object and the input item and
      *                   outputs the result item. It may modify the state object.
-     * @param onEvictFn  function that Jet calls when evicting a state object
+     * @param onEvictFn  function that Jet calls when evicting a state object due to TTL expiration
      *
      * @param <S>        type of the state object
      * @param <R>        type of the result
@@ -118,6 +119,71 @@ public interface StreamStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
             long ttl,
             @Nonnull SupplierEx<? extends S> createFn,
             @Nonnull TriFunction<? super S, ? super K, ? super T, ? extends R> mapFn,
+            @Nonnull TriFunction<? super S, ? super K, ? super Long, ? extends R> onEvictFn
+    );
+
+    /**
+     * The same as {@link StreamStageWithKey#mapStateful(long, SupplierEx, TriFunction, TriFunction)},
+     * with an additional parameter {@code deleteStatePredicate} that allows the state to be deleted
+     * before the TTL-based eviction occurs.
+     * <p>
+     * This sample processes a stream of user session events {@code (sessionId, event)}
+     * and keeps per-session state until the session is explicitly terminated by a
+     * {@code LOGOUT} event. Each session tracks the number of page views.
+     * <p>
+     * For every session, the pipeline emits a {@code SessionSummary} when the user
+     * logs out. The session state is evicted immediately after processing the
+     * {@code LOGOUT} event using the {@code deleteStatePredicate}, without waiting
+     * for the TTL to expire. If no logout event is received, the session state is
+     * eventually evicted by TTL expiration.
+     * <pre>{@code
+     * StreamStage<SessionEvent> events = /source of events/;
+     *
+     * StreamStage<SessionSummary> summaries = events
+     *         .groupingKey(SessionEvent::getSessionId)
+     *         .mapStateful(
+     *                 MINUTES.toMillis(30),
+     *                 SessionState::new,
+     *                 (state, sessionId, event) -> {
+     *                     if (event.getType() == EventType.PAGE_VIEW) {
+     *                         state.pageViews++;
+     *                     }
+     *                     if (event.getType() == EventType.LOGOUT) {
+     *                         return new SessionSummary(sessionId, state.pageViews);
+     *                     }
+     *                     return null;
+     *                 },
+     *                 (state, sessionId, event) ->
+     *                         event.getType() == EventType.LOGOUT,
+     *                 null
+     *         );
+     * }</pre>
+     * <p>
+     * The {@code deleteStatePredicate} allows the pipeline to release session state
+     * immediately when a terminal event is observed, avoiding unnecessary memory
+     * retention until TTL-based eviction occurs.
+     *
+     * @param ttl        time-to-live for each state object, disabled if zero or less
+     * @param createFn   function that returns the state object
+     * @param mapFn      function that receives the state object and the input item and
+     *                   outputs the result item. It may modify the state object.
+     * @param deleteStatePredicate
+     *                   predicate that determines whether the state should be deleted
+     *                   immediately after processing the event. If this predicate returns
+     *                   {@code true}, the state is removed right away.
+     * @param onEvictFn  function that Jet calls when evicting a state object due to TTL expiration
+     *
+     * @param <S>        type of the state object
+     * @param <R>        type of the result
+     *
+     * @since 5.7
+     */
+    @Nonnull
+    <S, R> StreamStage<R> mapStateful(
+            long ttl,
+            @Nonnull SupplierEx<? extends S> createFn,
+            @Nonnull TriFunction<? super S, ? super K, ? super T, ? extends R> mapFn,
+            @Nonnull TriPredicate<? super S, ? super K, ? super T> deleteStatePredicate,
             @Nonnull TriFunction<? super S, ? super K, ? super Long, ? extends R> onEvictFn
     );
 
@@ -175,10 +241,73 @@ public interface StreamStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
      * @param <S>      type of the state object
      */
     @Nonnull
-    <S> StreamStage<T> filterStateful(
+    default <S> StreamStage<T> filterStateful(
             long ttl,
             @Nonnull SupplierEx<? extends S> createFn,
             @Nonnull BiPredicateEx<? super S, ? super T> filterFn
+    ) {
+        return filterStateful(ttl, createFn, filterFn, null);
+    }
+
+    /**
+     * The same as {@link StreamStageWithKey#filterStateful(long, SupplierEx, BiPredicateEx)},
+     * with an additional parameter {@code deleteStatePredicate} that allows the state to be deleted
+     * before the TTL-based eviction occurs.
+     * <p>
+     * This example processes user activity events and allows page view events
+     * only while the user session is active.
+     * <p>
+     * A session starts with a {@code LOGIN} event. Only after login are
+     * {@code PAGE_VIEW} events allowed to pass through. When a {@code LOGOUT}
+     * event is received, the session state is immediately evicted using
+     * {@code deleteStatePredicate}. Any subsequent page view events are dropped
+     * until a new login occurs.
+     * <p>
+     * <pre>{@code
+     * StreamStage<UserEvent> events = /source of events/;
+     *
+     * StreamStage<UserEvent> filteredEvents = events
+     *         .groupingKey(UserEvent::getUserId)
+     *         .filterStateful(
+     *                 HOURS.toMillis(1),
+     *                 () -> new boolean[1], // sessionActive flag
+     *                 (state, event) -> {
+     *                     if (event.getType() == EventType.LOGIN) {
+     *                         state[0] = true;
+     *                         return false;
+     *                     }
+     *                     if (event.getType() == EventType.PAGE_VIEW) {
+     *                         return state[0];
+     *                     }
+     *                     return false;
+     *                 },
+     *                 (state, userId, event) ->
+     *                         event.getType() == EventType.LOGOUT || state[0] == false
+     *         );
+     * }</pre>
+     *
+     * The {@code deleteStatePredicate} ensures that session state is removed
+     * immediately on logout, avoiding unnecessary memory retention until TTL-based eviction occurs.
+     *
+     * @param ttl      time-to-live for each state object, disabled if zero or less
+     * @param createFn function that returns the state object
+     * @param filterFn predicate that receives the state object and the input item and
+     *                 outputs a boolean value. It may modify the state object.
+     * @param deleteStatePredicate
+     *                 predicate that determines whether the state should be deleted
+     *                 immediately after processing the event. If this predicate returns
+     *                 {@code true}, the state is removed right away.
+     *
+     * @param <S>        type of the state object
+     *
+     * @since 5.7
+     */
+    @Nonnull
+    <S> StreamStage<T> filterStateful(
+            long ttl,
+            @Nonnull SupplierEx<? extends S> createFn,
+            @Nonnull BiPredicateEx<? super S, ? super T> filterFn,
+            @Nonnull TriPredicate<? super S, ? super K, ? super T> deleteStatePredicate
     );
 
     @Nonnull @Override
@@ -234,7 +363,7 @@ public interface StreamStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
      * @param createFn   function that returns the state object
      * @param flatMapFn  function that receives the state object and the input item and
      *                   outputs the result items. It may modify the state object.
-     * @param onEvictFn  function that Jet calls when evicting a state object
+     * @param onEvictFn  function that Jet calls when evicting a state object due to TTL expiration
      *
      * @param <S>        type of the state object
      * @param <R>        type of the result
@@ -244,6 +373,34 @@ public interface StreamStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
             long ttl,
             @Nonnull SupplierEx<? extends S> createFn,
             @Nonnull TriFunction<? super S, ? super K, ? super T, ? extends Traverser<R>> flatMapFn,
+            @Nonnull TriFunction<? super S, ? super K, ? super Long, ? extends Traverser<R>> onEvictFn
+    );
+
+    /**
+     * The same as {@link StreamStageWithKey#flatMapStateful(long, SupplierEx, TriFunction, TriFunction)},
+     * with an additional parameter {@code deleteStatePredicate} that allows the state to be deleted
+     * before the TTL-based eviction occurs.
+     * @param ttl        time-to-live for each state object, disabled if zero or less
+     * @param createFn   function that returns the state object
+     * @param flatMapFn  function that receives the state object and the input item and
+     *                   outputs the result items. It may modify the state object.
+     * @param deleteStatePredicate
+     *                   predicate that determines whether the state should be deleted
+     *                   immediately after processing the event. If this predicate returns
+     *                   {@code true}, the state is removed right away.
+     * @param onEvictFn  function that Jet calls when evicting a state object due to TTL expiration
+     *
+     * @param <S>        type of the state object
+     * @param <R>        type of the result
+     *
+     * @since 5.7
+     */
+    @Nonnull
+    <S, R> StreamStage<R> flatMapStateful(
+            long ttl,
+            @Nonnull SupplierEx<? extends S> createFn,
+            @Nonnull TriFunction<? super S, ? super K, ? super T, ? extends Traverser<R>> flatMapFn,
+            @Nonnull TriPredicate<? super S, ? super K, ? super T> deleteStatePredicate,
             @Nonnull TriFunction<? super S, ? super K, ? super Long, ? extends Traverser<R>> onEvictFn
     );
 
@@ -303,6 +460,11 @@ public interface StreamStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
         }, (state, key, wm) -> null);
     }
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.7")
     @Nonnull @Override
     default <V, R> StreamStage<R> mapUsingIMap(
             @Nonnull String mapName,
@@ -311,6 +473,11 @@ public interface StreamStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
         return (StreamStage<R>) GeneralStageWithKey.super.<V, R>mapUsingIMap(mapName, mapFn);
     }
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.7")
     @Nonnull @Override
     @SuppressWarnings("unchecked")
     default <V, R> StreamStage<R> mapUsingIMap(
@@ -320,12 +487,22 @@ public interface StreamStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
         return (StreamStage<R>) GeneralStageWithKey.super.mapUsingIMap(iMap, mapFn);
     }
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.4")
     @Nonnull @Override
     <S, R> StreamStage<R> mapUsingService(
             @Nonnull ServiceFactory<?, S> serviceFactory,
             @Nonnull TriFunction<? super S, ? super K, ? super T, ? extends R> mapFn
     );
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.4")
     @Nonnull @Override
     default <S, R> StreamStage<R> mapUsingServiceAsync(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -334,6 +511,11 @@ public interface StreamStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
         return (StreamStage<R>) GeneralStageWithKey.super.mapUsingServiceAsync(serviceFactory, mapAsyncFn);
     }
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.4")
     @Nonnull @Override
     <S, R> StreamStage<R> mapUsingServiceAsync(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -342,6 +524,11 @@ public interface StreamStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
             @Nonnull TriFunction<? super S, ? super K, ? super T, CompletableFuture<R>> mapAsyncFn
     );
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.4")
     @Nonnull @Override
     <S, R> StreamStage<R> mapUsingServiceAsyncBatched(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -349,6 +536,11 @@ public interface StreamStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
             @Nonnull BiFunctionEx<? super S, ? super List<T>, ? extends CompletableFuture<List<R>>> mapAsyncFn
     );
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.4")
     @Nonnull @Override
     <S, R> StreamStage<R> mapUsingServiceAsyncBatched(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -357,12 +549,22 @@ public interface StreamStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
                     ? extends CompletableFuture<List<R>>> mapAsyncFn
     );
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.4")
     @Nonnull @Override
     <S> StreamStage<T> filterUsingService(
             @Nonnull ServiceFactory<?, S> serviceFactory,
             @Nonnull TriPredicate<? super S, ? super K, ? super T> filterFn
     );
 
+    /**
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
+     */
+    @Deprecated(since = "5.4")
     @Nonnull @Override
     <S, R> StreamStage<R> flatMapUsingService(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -384,4 +586,69 @@ public interface StreamStageWithKey<T, K> extends GeneralStageWithKey<T, K> {
 
     @Nonnull @Override
     <R> StreamStage<R> customTransform(@Nonnull String stageName, @Nonnull ProcessorMetaSupplier procSupplier);
+
+
+    /**
+     * Extension of {@link StreamStageWithKey} providing additional capabilities
+     * or convenience methods on top of the default stage API using fluent
+     * interface.
+     *
+     * @param <T> the type of the stream items
+     * @param <K> the type of the key (if applicable)
+     * @param <S> the type implementing additional methods for {@link StreamStageWithKey}
+     *
+     * @apiNote This interface in essence is a visitor pattern for different stage types.
+     * @implNote Extension API type {@code S} should be an interface. It is not mandatory for
+     * {@code S} to extend {@link StreamStageWithKey}. Single extension class can be
+     * applicable to multiple stage types by implementing multiple interfaces.
+     *
+     * @since 5.7
+     */
+    interface StageExtension<T, K, S> {
+        /**
+         * Provides additional API to given stage in a fluent way.
+         *
+         * @param streamStage stage to be extended
+         * @return extended stage
+         *
+         * @implNote The simplest implementation is just to wrap given stage
+         * and use its methods to implement extension's methods.
+         */
+        @Nonnull
+        S extend(@Nonnull StreamStageWithKey<T, K> streamStage);
+    }
+
+    /**
+     * Applies extension to this stage in a fluent way.
+     *
+     * <pre>{@code
+     * srcStage.groupingKey(e -> e % 10)
+     *         .using(IMapExtension.iMapExtension())
+     *         // additional methods available here
+     *         .mapUsingPutIfAbsent("my-map", e -> e + 5, Tuple3::tuple3)
+     *         .writeTo(Sinks.logger());
+     * }</pre>
+     * <p>
+     * Usually if the extension creates a pipeline stage, the new stage should be returned
+     * at the end so the pipeline can be continued. {@link Stage#setName(String)} and
+     * {@link Stage#setLocalParallelism(int)} can be used to adjust such stage
+     * in the usual way, for example:
+     * <pre>{@code
+     * srcStage.groupingKey(e -> e % 10)
+     *         .using(IMapExtension.iMapExtension())
+     *         .mapUsingPutIfAbsent("my-map", e -> e + 5, Tuple3::tuple3)
+     *         .setName("check-if-known").setLocalParallelism(2);
+     * }</pre>
+     *
+     * @param extension extension to be applied to this stage
+     * @param <S> the type implementing additional methods for {@link StreamStageWithKey}
+     * @return extended stage
+     *
+     * @since 5.7
+     */
+    @Nonnull
+    default <S> S using(@Nonnull StageExtension<T, K, S> extension) {
+        Objects.requireNonNull(extension, "extension cannot be null");
+        return extension.extend(this);
+    }
 }

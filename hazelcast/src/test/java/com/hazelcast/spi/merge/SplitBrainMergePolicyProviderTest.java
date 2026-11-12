@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,12 +21,9 @@ import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import org.hamcrest.core.IsInstanceOf;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import java.util.Set;
@@ -34,6 +31,7 @@ import java.util.Set;
 import static com.hazelcast.test.Accessors.getNode;
 import static com.hazelcast.test.ReflectionsHelper.REFLECTIONS;
 import static java.lang.reflect.Modifier.isAbstract;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
@@ -43,25 +41,22 @@ public class SplitBrainMergePolicyProviderTest extends HazelcastTestSupport {
 
     private SplitBrainMergePolicyProvider mergePolicyProvider;
 
-    @Rule
-    public ExpectedException expected = ExpectedException.none();
-
     @Before
     public void setup() {
-        mergePolicyProvider = new SplitBrainMergePolicyProvider(getNode(createHazelcastInstance()).getConfigClassLoader());
+        mergePolicyProvider = new SplitBrainMergePolicyProvider(getNode(createHazelcastInstance()).getNodeEngine().getConfigClassLoader());
     }
 
     @Test
     public void getMergePolicy_withNotExistingMergePolicy() {
-        expected.expect(InvalidConfigurationException.class);
-        expected.expectCause(IsInstanceOf.any(ClassNotFoundException.class));
-        mergePolicyProvider.getMergePolicy("No such policy!");
+        assertThatThrownBy(() -> mergePolicyProvider.getMergePolicy("No such policy!", null))
+                .isInstanceOf(InvalidConfigurationException.class)
+                .hasCauseInstanceOf(ClassNotFoundException.class);
     }
 
     @Test
     public void getMergePolicy_withNullPolicy() {
-        expected.expect(InvalidConfigurationException.class);
-        mergePolicyProvider.getMergePolicy(null);
+        assertThatThrownBy(() -> mergePolicyProvider.getMergePolicy(null, null))
+                .isInstanceOf(InvalidConfigurationException.class);
     }
 
     @Test
@@ -75,9 +70,18 @@ public class SplitBrainMergePolicyProviderTest extends HazelcastTestSupport {
             assertMergePolicyCorrectlyInitialised(mergePolicyClass.getName(), mergePolicyClass);
         }
     }
+
+    @Test
+    public void getMergePolicyUCN_withPolicyExists() {
+        assertThatThrownBy(() -> mergePolicyProvider.getMergePolicy("No such policy!", "uc1"))
+                .isInstanceOf(InvalidConfigurationException.class)
+                .hasCauseInstanceOf(ClassNotFoundException.class);
+    }
+
+
     private void assertMergePolicyCorrectlyInitialised(String mergePolicyName,
                                                        Class<? extends SplitBrainMergePolicy> expectedMergePolicyClass) {
-        SplitBrainMergePolicy mergePolicy = mergePolicyProvider.getMergePolicy(mergePolicyName);
+        SplitBrainMergePolicy mergePolicy = mergePolicyProvider.getMergePolicy(mergePolicyName, null);
 
         assertNotNull(mergePolicy);
         assertEquals(expectedMergePolicyClass, mergePolicy.getClass());

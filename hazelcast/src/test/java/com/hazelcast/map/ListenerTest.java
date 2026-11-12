@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,7 +40,6 @@ import com.hazelcast.query.Predicates;
 import com.hazelcast.query.QueryConstants;
 import com.hazelcast.spi.impl.eventservice.EventRegistration;
 import com.hazelcast.spi.impl.eventservice.EventService;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
@@ -51,7 +50,6 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
-import java.io.IOException;
 import java.io.Serializable;
 import java.util.Collection;
 import java.util.HashMap;
@@ -135,7 +133,7 @@ public class ListenerTest extends HazelcastTestSupport {
         IMap<String, String> map1 = instance1.getMap(name);
         IMap<String, String> map2 = instance2.getMap(name);
         final CountDownLatch latch = new CountDownLatch(1);
-        map1.addEntryListener(new EntryAdapter<Object, Object>() {
+        map1.addEntryListener(new EntryAdapter<>() {
             @Override
             public void entryAdded(EntryEvent<Object, Object> event) {
                 assertNotNull(event.getMember());
@@ -241,13 +239,10 @@ public class ListenerTest extends HazelcastTestSupport {
     }
 
     private void checkCountWithExpected(final int expectedGlobal, final int expectedLocal, final int expectedValue) {
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertEquals(expectedLocal, localCount.get());
-                assertEquals(expectedGlobal, globalCount.get());
-                assertEquals(expectedValue, valueCount.get());
-            }
+        assertTrueEventually(() -> {
+            assertEquals(expectedLocal, localCount.get());
+            assertEquals(expectedGlobal, globalCount.get());
+            assertEquals(expectedValue, valueCount.get());
         });
     }
 
@@ -256,7 +251,7 @@ public class ListenerTest extends HazelcastTestSupport {
      */
     @Test
     public void replaceFiresUpdatedEvent() {
-        final AtomicInteger entryUpdatedEventCount = new AtomicInteger(0);
+        final AtomicInteger entryUpdatedEventCount = new AtomicInteger();
 
         HazelcastInstance node = createHazelcastInstance(getConfig());
         IMap<Integer, Integer> map = node.getMap(randomMapName());
@@ -271,12 +266,7 @@ public class ListenerTest extends HazelcastTestSupport {
 
         map.replace(1, 1, 2);
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertEquals(1, entryUpdatedEventCount.get());
-            }
-        });
+        assertTrueEventually(() -> assertEquals(1, entryUpdatedEventCount.get()));
     }
 
     /**
@@ -288,7 +278,7 @@ public class ListenerTest extends HazelcastTestSupport {
         IMap<Object, Object> map = instance.getMap(randomString());
         final CountDownLatch updateLatch = new CountDownLatch(1);
         final CountDownLatch addLatch = new CountDownLatch(1);
-        map.addEntryListener(new EntryAdapter<Object, Object>() {
+        map.addEntryListener(new EntryAdapter<>() {
             @Override
             public void entryAdded(EntryEvent<Object, Object> event) {
                 addLatch.countDown();
@@ -351,12 +341,7 @@ public class ListenerTest extends HazelcastTestSupport {
         }
         final int eventPerPartitionMin = count / instanceCount - count / 10;
         final int eventPerPartitionMax = count / instanceCount + count / 10;
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertTrue(globalCount.get() > eventPerPartitionMin && globalCount.get() < eventPerPartitionMax);
-            }
-        });
+        assertTrueEventually(() -> assertTrue(globalCount.get() > eventPerPartitionMin && globalCount.get() < eventPerPartitionMax));
     }
 
     @Test
@@ -370,12 +355,7 @@ public class ListenerTest extends HazelcastTestSupport {
         for (int i = 0; i < count; i++) {
             map.put("key" + i, "value" + i);
         }
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertTrue(globalCount.get() == 1);
-            }
-        });
+        assertTrueEventually(() -> assertEquals(1, globalCount.get()));
     }
 
     @Test
@@ -399,15 +379,12 @@ public class ListenerTest extends HazelcastTestSupport {
             map.replace(i, "WrongValue", newVal);
         }
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                for (int i = 0; i < replaceTotal; i++) {
-                    assertEquals(oldVal, map.get(i));
-                }
-                assertEquals(putTotal, listener.addCount.get());
-                assertEquals(0, listener.updateCount.get());
+        assertTrueEventually(() -> {
+            for (int i = 0; i < replaceTotal; i++) {
+                assertEquals(oldVal, map.get(i));
             }
+            assertEquals(putTotal, listener.addCount.get());
+            assertEquals(0, listener.updateCount.get());
         });
     }
 
@@ -418,11 +395,12 @@ public class ListenerTest extends HazelcastTestSupport {
     public void testEntryListenerEvent_getValueWhenEntryRemoved() {
         HazelcastInstance instance = createHazelcastInstance(getConfig());
         IMap<String, String> map = instance.getMap(randomString());
-        final AtomicReference<String> valueRef = new AtomicReference<String>();
-        final AtomicReference<String> oldValueRef = new AtomicReference<String>();
+        final AtomicReference<String> valueRef = new AtomicReference<>();
+        final AtomicReference<String> oldValueRef = new AtomicReference<>();
         final CountDownLatch latch = new CountDownLatch(1);
 
         map.addEntryListener(new EntryAdapter<String, String>() {
+            @Override
             public void entryRemoved(EntryEvent<String, String> event) {
                 valueRef.set(event.getValue());
                 oldValueRef.set(event.getOldValue());
@@ -480,16 +458,13 @@ public class ListenerTest extends HazelcastTestSupport {
             map.replace(i, oldVal, newVal);
         }
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                for (int i = 0; i < replaceTotal; i++) {
-                    assertEquals(newVal, map.get(i));
-                }
-
-                assertEquals(putTotal, listener.addCount.get());
-                assertEquals(replaceTotal, listener.updateCount.get());
+        assertTrueEventually(() -> {
+            for (int i = 0; i < replaceTotal; i++) {
+                assertEquals(newVal, map.get(i));
             }
+
+            assertEquals(putTotal, listener.addCount.get());
+            assertEquals(replaceTotal, listener.updateCount.get());
         });
     }
 
@@ -506,9 +481,10 @@ public class ListenerTest extends HazelcastTestSupport {
         final String key = "key";
         final String value = "value";
 
-        final ConcurrentMap<String, String> resultHolder = new ConcurrentHashMap<String, String>(1);
+        final ConcurrentMap<String, String> resultHolder = new ConcurrentHashMap<>(1);
 
         map.addEntryListener(new EntryAdapter<String, String>() {
+            @Override
             public void entryRemoved(EntryEvent<String, String> event) {
                 final String oldValue = event.getOldValue();
                 resultHolder.put(key, oldValue);
@@ -540,12 +516,9 @@ public class ListenerTest extends HazelcastTestSupport {
 
         final EventService eventService = getNode(instance).getNodeEngine().getEventService();
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                final Collection<EventRegistration> registrations = eventService.getRegistrations(MapService.SERVICE_NAME, name);
-                assertFalse(registrations.isEmpty());
-            }
+        assertTrueEventually(() -> {
+            final Collection<EventRegistration> registrations = eventService.getRegistrations(MapService.SERVICE_NAME, name);
+            assertFalse(registrations.isEmpty());
         });
     }
 
@@ -559,7 +532,7 @@ public class ListenerTest extends HazelcastTestSupport {
 
         map.put(key, initialValue);
 
-        UpdateListenerRecordingOldValue<Integer, String> listener = new UpdateListenerRecordingOldValue<Integer, String>();
+        UpdateListenerRecordingOldValue<Integer, String> listener = new UpdateListenerRecordingOldValue<>();
         map.addEntryListener(listener, true);
 
         Map<Integer, String> newMap = createMapWithEntry(key, newValue);
@@ -647,12 +620,12 @@ public class ListenerTest extends HazelcastTestSupport {
         static volatile boolean deserialized = false;
 
         @Override
-        public void writeData(ObjectDataOutput out) throws IOException {
+        public void writeData(ObjectDataOutput out) {
             serialized = true;
         }
 
         @Override
-        public void readData(ObjectDataInput in) throws IOException {
+        public void readData(ObjectDataInput in) {
             deserialized = true;
         }
 
@@ -672,12 +645,7 @@ public class ListenerTest extends HazelcastTestSupport {
         HazelcastInstance hz = createHazelcastInstance(getConfig());
         IMap<String, String> map = hz.getMap("updates_with_putTransient_triggers_entryUpdatedListener");
         final CountDownLatch updateEventCounterLatch = new CountDownLatch(1);
-        map.addEntryListener(new EntryUpdatedListener<String, String>() {
-            @Override
-            public void entryUpdated(EntryEvent<String, String> event) {
-                updateEventCounterLatch.countDown();
-            }
-        }, true);
+        map.addEntryListener((EntryUpdatedListener<String, String>) event -> updateEventCounterLatch.countDown(), true);
 
         map.putTransient("hello", "world", 0, TimeUnit.SECONDS);
         map.putTransient("hello", "another world", 0, TimeUnit.SECONDS);
@@ -686,30 +654,20 @@ public class ListenerTest extends HazelcastTestSupport {
     }
 
     private <K, V> Map<K, V> createMapWithEntry(K key, V newValue) {
-        Map<K, V> map = new HashMap<K, V>();
+        Map<K, V> map = new HashMap<>();
         map.put(key, newValue);
         return map;
     }
 
     private Predicate<String, String> matchingPredicate() {
-        return new Predicate<String, String>() {
-            @Override
-            public boolean apply(Map.Entry<String, String> mapEntry) {
-                return true;
-            }
-        };
+        return mapEntry -> true;
     }
 
     private Predicate<String, String> nonMatchingPredicate() {
-        return new Predicate<String, String>() {
-            @Override
-            public boolean apply(Map.Entry<String, String> mapEntry) {
-                return false;
-            }
-        };
+        return mapEntry -> false;
     }
 
-    private class UpdateListenerRecordingOldValue<K, V> implements EntryUpdatedListener<K, V> {
+    private static class UpdateListenerRecordingOldValue<K, V> implements EntryUpdatedListener<K, V> {
 
         private volatile V oldValue;
         private final CountDownLatch latch = new CountDownLatch(1);
@@ -727,9 +685,10 @@ public class ListenerTest extends HazelcastTestSupport {
     }
 
     private EntryListener<String, String> createEntryListener(final boolean isLocal) {
-        return new EntryAdapter<String, String>() {
+        return new EntryAdapter<>() {
             private final boolean local = isLocal;
 
+            @Override
             public void entryAdded(EntryEvent<String, String> event) {
                 if (local) {
                     localCount.incrementAndGet();
@@ -800,16 +759,13 @@ public class ListenerTest extends HazelcastTestSupport {
         }
     }
 
-    public class CounterEntryListener implements EntryListener<Object, Object> {
+    private static class CounterEntryListener implements EntryListener<Object, Object> {
 
         final AtomicLong addCount = new AtomicLong();
         final AtomicLong removeCount = new AtomicLong();
         final AtomicLong updateCount = new AtomicLong();
         final AtomicLong evictCount = new AtomicLong();
         final AtomicLong expiryCount = new AtomicLong();
-
-        public CounterEntryListener() {
-        }
 
         @Override
         public void entryAdded(EntryEvent<Object, Object> objectObjectEntryEvent) {

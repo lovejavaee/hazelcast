@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -120,37 +120,6 @@ public class MapWordCountAggregationBenchmark extends HazelcastTestSupport {
         }
     }
 
-    private static void fillMapWithDataEachLineNewEntry(HazelcastInstance hazelcastInstance) throws Exception {
-
-        IMap<String, String> map = hazelcastInstance.getMap(MAP_NAME);
-        for (String file : DATA_RESOURCES_TO_LOAD) {
-            InputStream is = MapWordCountAggregationBenchmark.class.getResourceAsStream("/wordcount/" + file);
-            LineNumberReader reader = new LineNumberReader(new InputStreamReader(is));
-
-            int batchSize = 10000;
-            int batchSizeCount = 0;
-            Map<String, String> batch = new HashMap<String, String>(batchSize);
-            String line;
-            while ((line = reader.readLine()) != null) {
-                batch.put(UuidUtil.newSecureUuidString(), line);
-                batchSizeCount++;
-                if (batchSizeCount == batchSize) {
-                    map.putAll(batch);
-                    batchSizeCount = 0;
-                    batch.clear();
-                }
-            }
-
-            if (batchSizeCount > 0) {
-                map.putAll(batch);
-                batch.clear();
-            }
-
-            is.close();
-            reader.close();
-        }
-    }
-
     private static class MutableInt implements Serializable {
 
         private int value = 0;
@@ -167,7 +136,7 @@ public class MapWordCountAggregationBenchmark extends HazelcastTestSupport {
 
     private static class WordCountAggregator implements Aggregator<Map.Entry<String, String>, Map<String, MutableInt>> {
 
-        Map<String, MutableInt> result = new HashMap<String, MutableInt>(1000);
+        Map<String, MutableInt> result = new HashMap<>(1000);
 
         void accumulate(String value, int times) {
             StringTokenizer tokenizer = new StringTokenizer(value);

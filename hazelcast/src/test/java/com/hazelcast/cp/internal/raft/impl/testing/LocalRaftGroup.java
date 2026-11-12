@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import com.hazelcast.cp.internal.raft.impl.persistence.RaftStateLoader;
 import com.hazelcast.cp.internal.raft.impl.persistence.RaftStateStore;
 import com.hazelcast.cp.internal.raft.impl.persistence.RestoredRaftState;
 import com.hazelcast.function.BiFunctionEx;
+import com.hazelcast.spi.impl.servicemanager.ServiceInfo;
 import org.junit.Assert;
 
 import java.util.Arrays;
@@ -42,12 +43,11 @@ import static com.hazelcast.cp.internal.raft.impl.RaftUtil.minority;
 import static com.hazelcast.cp.internal.raft.impl.RaftUtil.newRaftMember;
 import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 import static com.hazelcast.test.HazelcastTestSupport.assertTrueEventually;
+import static com.hazelcast.test.HazelcastTestSupport.sleepSeconds;
 import static java.util.Arrays.asList;
-import static org.hamcrest.Matchers.greaterThan;
-import static org.hamcrest.Matchers.lessThan;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertThat;
 
 /**
  * Represents a local single Raft group, provides methods to access specific nodes, to terminate nodes,
@@ -61,8 +61,7 @@ public class LocalRaftGroup {
         private RaftAlgorithmConfig config;
         private boolean appendNopEntryOnLeaderElection;
         private IntFunction<TestRaftEndpoint> endpointFactory;
-        private BiFunctionEx<RaftEndpoint, RaftAlgorithmConfig, RaftStateStore> raftStateStoreFactory =
-                (BiFunctionEx<RaftEndpoint, RaftAlgorithmConfig, RaftStateStore>) (endpoint, config) -> NopRaftStateStore.INSTANCE;
+        private BiFunctionEx<RaftEndpoint, RaftAlgorithmConfig, RaftStateStore> raftStateStoreFactory = (BiFunctionEx<RaftEndpoint, RaftAlgorithmConfig, RaftStateStore>) (endpoint, config) -> NopRaftStateStore.INSTANCE;
         private BiFunctionEx<RaftEndpoint, RaftAlgorithmConfig, RaftStateLoader> raftStateLoaderFactory;
 
         public LocalRaftGroupBuilder(int nodeCount) {
@@ -79,12 +78,14 @@ public class LocalRaftGroup {
             return this;
         }
 
-        public LocalRaftGroupBuilder setRaftStateStoreFactory(BiFunctionEx<RaftEndpoint, RaftAlgorithmConfig, RaftStateStore> raftStateStoreFactory) {
+        public LocalRaftGroupBuilder setRaftStateStoreFactory(
+                BiFunctionEx<RaftEndpoint, RaftAlgorithmConfig, RaftStateStore> raftStateStoreFactory) {
             this.raftStateStoreFactory = raftStateStoreFactory;
             return this;
         }
 
-        public LocalRaftGroupBuilder setRaftStateLoaderFactory(BiFunctionEx<RaftEndpoint, RaftAlgorithmConfig, RaftStateLoader> raftStateLoaderFactory) {
+        public LocalRaftGroupBuilder setRaftStateLoaderFactory(
+                BiFunctionEx<RaftEndpoint, RaftAlgorithmConfig, RaftStateLoader> raftStateLoaderFactory) {
             this.raftStateLoaderFactory = raftStateLoaderFactory;
             return this;
         }
@@ -110,7 +111,6 @@ public class LocalRaftGroup {
 
     private static final int FIRST_RAFT_NODE_PORT = 5000;
 
-
     private final CPGroupId groupId;
     private final RaftAlgorithmConfig raftAlgorithmConfig;
     private final String serviceName;
@@ -129,12 +129,11 @@ public class LocalRaftGroup {
     }
 
     public LocalRaftGroup(int size, RaftAlgorithmConfig raftAlgorithmConfig) {
-        this(size, raftAlgorithmConfig,  null, null, false);
+        this(size, raftAlgorithmConfig, null, null, false);
     }
 
-    public LocalRaftGroup(int size, RaftAlgorithmConfig raftAlgorithmConfig,
-                          String serviceName, Class<? extends SnapshotAwareService> serviceClazz,
-                          boolean appendNopEntryOnLeaderElection) {
+    public LocalRaftGroup(int size, RaftAlgorithmConfig raftAlgorithmConfig, String serviceName,
+                          Class<? extends SnapshotAwareService> serviceClazz, boolean appendNopEntryOnLeaderElection) {
         this(size, raftAlgorithmConfig, serviceName, serviceClazz, appendNopEntryOnLeaderElection, null, null, null);
     }
 
@@ -211,10 +210,10 @@ public class LocalRaftGroup {
         return new LocalRaftIntegration(endpoint, groupId, createServiceInstance(), appendNopEntryOnLeaderElection);
     }
 
-    private SnapshotAwareService createServiceInstance() {
+    private ServiceInfo createServiceInstance() {
         if (serviceName != null && serviceClazz != null) {
             try {
-                return serviceClazz.newInstance();
+                return new ServiceInfo(serviceName, serviceClazz.newInstance());
             } catch (Exception e) {
                 throw new AssertionError(e);
             }
@@ -380,9 +379,9 @@ public class LocalRaftGroup {
                     continue;
                 }
 
-                    assertEquals(leaderNode.getLocalMember(), getLeaderMember(raftNode));
-                    assertEquals(leaderTerm, getTerm(raftNode));
-                }
+                assertEquals(leaderNode.getLocalMember(), getLeaderMember(raftNode));
+                assertEquals(leaderTerm, getTerm(raftNode));
+            }
 
             leaderRef[0] = leaderNode;
         });
@@ -477,7 +476,6 @@ public class LocalRaftGroup {
         throw new IllegalArgumentException("Unknown endpoint: " + endpoint);
     }
 
-
     public void destroy() {
         for (int i = 0; i < nodes.length; i++) {
             RaftNodeImpl node = nodes[i];
@@ -490,6 +488,14 @@ public class LocalRaftGroup {
         }
     }
 
+    /**
+     * Creates an artificial load on the given Raft node by sleeping its thread for
+     * the given duration.
+     */
+    public void slowDownNode(RaftEndpoint endpoint, int seconds) {
+        getNode(endpoint).execute(() -> sleepSeconds(seconds));
+    }
+
     public int size() {
         return members.length;
     }
@@ -498,8 +504,8 @@ public class LocalRaftGroup {
      * Split nodes with these indexes from rest of the cluster.
      */
     public void split(int... indexes) {
-        assertThat(indexes.length, greaterThan(0));
-        assertThat(indexes.length, lessThan(size()));
+        assertThat(indexes.length).isPositive();
+        assertThat(indexes.length).isLessThan(size());
         Arrays.sort(indexes);
 
         int runningMemberCount = 0;
@@ -588,18 +594,18 @@ public class LocalRaftGroup {
     /**
      * Drops specific message type one-way between from -> to.
      */
-    public void dropMessagesToMember(RaftEndpoint from, RaftEndpoint to, Class messageType) {
+    public void dropMessagesToMember(RaftEndpoint from, RaftEndpoint to, Class<?> messageType) {
         getIntegration(getIndexOfRunning(from)).dropMessagesToEndpoint(to, messageType);
     }
 
     /**
      * Allows specific message type one-way between from -> to.
      */
-    public void allowMessagesToMember(RaftEndpoint from, RaftEndpoint to, Class messageType) {
+    public void allowMessagesToMember(RaftEndpoint from, RaftEndpoint to, Class<?> messageType) {
         LocalRaftIntegration integration = getIntegration(getIndexOfRunning(from));
         if (!integration.isReachable(to)) {
-            throw new IllegalStateException("Cannot allow " + messageType + " from " + from
-                    + " -> " + to + ", since all messages are dropped between.");
+            throw new IllegalStateException(
+                    "Cannot allow " + messageType + " from " + from + " -> " + to + ", since all messages are dropped between.");
         }
         integration.allowMessagesToEndpoint(to, messageType);
     }
@@ -623,19 +629,19 @@ public class LocalRaftGroup {
     /**
      * Drops specific message type one-way from -> to all nodes.
      */
-    public void dropMessagesToAll(RaftEndpoint from, Class messageType) {
+    public void dropMessagesToAll(RaftEndpoint from, Class<?> messageType) {
         getIntegration(getIndexOfRunning(from)).dropMessagesToAll(messageType);
     }
 
     /**
      * Allows specific message type one-way from -> to all nodes.
      */
-    public void allowMessagesToAll(RaftEndpoint from, Class messageType) {
+    public void allowMessagesToAll(RaftEndpoint from, Class<?> messageType) {
         LocalRaftIntegration integration = getIntegration(getIndexOfRunning(from));
         for (RaftEndpoint endpoint : members) {
             if (!integration.isReachable(endpoint)) {
-                throw new IllegalStateException("Cannot allow " + messageType + " from " + from
-                        + " -> " + endpoint + ", since all messages are dropped between.");
+                throw new IllegalStateException("Cannot allow " + messageType + " from " + from + " -> " + endpoint
+                        + ", since all messages are dropped between.");
             }
         }
         integration.allowMessagesToAll(messageType);

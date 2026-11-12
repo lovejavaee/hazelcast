@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,13 @@
 
 package com.hazelcast.jet.hadoop.impl;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.MappingIterator;
-import com.fasterxml.jackson.databind.ObjectReader;
-import com.fasterxml.jackson.dataformat.csv.CsvMapper;
-import com.fasterxml.jackson.dataformat.csv.CsvParser.Feature;
-import com.fasterxml.jackson.dataformat.csv.CsvSchema;
-import com.fasterxml.jackson.dataformat.csv.CsvSchema.Builder;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.MappingIterator;
+import tools.jackson.databind.ObjectReader;
+import tools.jackson.dataformat.csv.CsvMapper;
+import tools.jackson.dataformat.csv.CsvReadFeature;
+import tools.jackson.dataformat.csv.CsvSchema;
+import tools.jackson.dataformat.csv.CsvSchema.Builder;
 import com.hazelcast.jet.JetException;
 import com.hazelcast.jet.impl.util.ReflectionUtils;
 import org.apache.hadoop.conf.Configuration;
@@ -55,9 +55,10 @@ public class CsvInputFormat extends FileInputFormat<NullWritable, Object> {
     public static final String CSV_INPUT_FORMAT_FIELD_LIST_PREFIX = "csv.field.list.";
 
     @Override
+    @SuppressWarnings("AnonInnerLength")
     public RecordReader<NullWritable, Object> createRecordReader(InputSplit split, TaskAttemptContext context) {
 
-        return new RecordReader<NullWritable, Object>() {
+        return new RecordReader<>() {
 
             private Class<?> formatClazz;
             private final LineRecordReader reader = new LineRecordReader();
@@ -82,10 +83,11 @@ public class CsvInputFormat extends FileInputFormat<NullWritable, Object> {
                 formatClazz = className == null ? null : ReflectionUtils.loadClass(className);
                 String[] header = readHeader(fileSplit, context);
                 if (formatClazz == String[].class) {
-                    objectReader = new CsvMapper()
-                            .enable(Feature.WRAP_AS_ARRAY)
-                            .readerFor(String[].class)
-                            .with(CsvSchema.emptySchema().withSkipFirstDataRow(false));
+                    objectReader = CsvMapper.builder()
+                                            .enable(CsvReadFeature.WRAP_AS_ARRAY)
+                                            .build()
+                                            .readerFor(String[].class)
+                                            .with(CsvSchema.emptySchema());
 
                     List<String> fieldNames = new ArrayList<>();
                     String field;
@@ -110,10 +112,11 @@ public class CsvInputFormat extends FileInputFormat<NullWritable, Object> {
                 Path file = fileSplit.getPath();
                 FileSystem fs = file.getFileSystem(configuration);
 
-                ObjectReader headerReader = new CsvMapper()
-                        .enable(Feature.WRAP_AS_ARRAY)
-                        .readerFor(String[].class)
-                        .with(CsvSchema.emptySchema().withSkipFirstDataRow(false));
+                ObjectReader headerReader = CsvMapper.builder()
+                                                     .enable(CsvReadFeature.WRAP_AS_ARRAY)
+                                                     .build()
+                                                     .readerFor(String[].class)
+                                                     .with(CsvSchema.emptySchema().withSkipFirstDataRow(false));
 
                 try (InputStream in = fs.open(file);
                      InputStream wrapped = wrap(in, configuration, file);
@@ -143,7 +146,7 @@ public class CsvInputFormat extends FileInputFormat<NullWritable, Object> {
             }
 
             @Override
-            public Object getCurrentValue() throws IOException {
+            public Object getCurrentValue() {
                 String current = reader.getCurrentValue().toString();
                 if (formatClazz == String[].class) {
                     try (MappingIterator<Object> iterator = objectReader.readValues(current)) {

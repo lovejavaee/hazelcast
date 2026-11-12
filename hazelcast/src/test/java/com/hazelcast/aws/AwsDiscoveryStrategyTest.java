@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package com.hazelcast.aws;
 
-import com.google.common.collect.ImmutableMap;
 import com.hazelcast.config.InvalidConfigurationException;
 import com.hazelcast.spi.discovery.DiscoveryNode;
 import com.hazelcast.spi.partitiongroup.PartitionGroupMetaData;
@@ -35,12 +34,11 @@ import java.util.Optional;
 
 import static com.hazelcast.spi.partitiongroup.PartitionGroupMetaData.PARTITION_GROUP_ZONE;
 import static java.util.Collections.emptyList;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.collection.IsCollectionWithSize.hasSize;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.mockito.BDDMockito.given;
 
-@RunWith(MockitoJUnitRunner.class)
+@RunWith(MockitoJUnitRunner.Silent.class)
 public class AwsDiscoveryStrategyTest {
     private static final int PORT1 = 5701;
     private static final int PORT2 = 5702;
@@ -188,7 +186,30 @@ public class AwsDiscoveryStrategyTest {
         // given
         String privateIp = "192.168.1.15";
         String publicIp = "38.146.24.2";
-        given(awsClient.getAddresses()).willReturn(ImmutableMap.of(privateIp, publicIp));
+        given(awsClient.getAddresses()).willReturn(Map.of(privateIp, publicIp));
+
+        // when
+        Iterable<DiscoveryNode> nodes = awsDiscoveryStrategy.discoverNodes();
+
+        // then
+        List<DiscoveryNode> nodeList = toList(nodes);
+        DiscoveryNode node1 = nodeList.get(0);
+        assertEquals(privateIp, node1.getPrivateAddress().getHost());
+        assertEquals(PORT1, node1.getPrivateAddress().getPort());
+        assertEquals(publicIp, node1.getPublicAddress().getHost());
+
+        DiscoveryNode node2 = nodeList.get(1);
+        assertEquals(privateIp, node2.getPrivateAddress().getHost());
+        assertEquals(PORT2, node2.getPrivateAddress().getPort());
+        assertEquals(publicIp, node2.getPublicAddress().getHost());
+    }
+
+    @Test
+    public void discoverNodesIPv6() {
+        // given
+        String privateIp = "192.168.1.15";
+        String publicIp = "2001:0DB8:C21A::1";
+        given(awsClient.getAddresses()).willReturn(Map.of(privateIp, publicIp));
 
         // when
         Iterable<DiscoveryNode> nodes = awsDiscoveryStrategy.discoverNodes();
@@ -215,9 +236,9 @@ public class AwsDiscoveryStrategyTest {
         awsDiscoveryStrategy = new AwsDiscoveryStrategy(properties, awsClient);
 
         // 2 instances found
-        given(awsClient.getAddresses()).willReturn(ImmutableMap.of(
-            "192.168.1.15", "38.146.24.2",
-            "192.168.1.16", "38.146.28.15"
+        given(awsClient.getAddresses()).willReturn(Map.of(
+                "192.168.1.15", "38.146.24.2",
+                "192.168.1.16", "38.146.28.15"
         ));
 
         // when
@@ -225,7 +246,7 @@ public class AwsDiscoveryStrategyTest {
 
         // then
         // 2 * 8 = 16 addresses found
-        assertThat(toList(nodes), hasSize(16));
+        assertThat(toList(nodes)).hasSize(16);
     }
 
     @Test

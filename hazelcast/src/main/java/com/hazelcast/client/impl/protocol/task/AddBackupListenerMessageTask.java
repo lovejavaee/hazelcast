@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,13 +25,13 @@ import com.hazelcast.internal.nio.Connection;
 import java.security.Permission;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Consumer;
+import java.util.function.LongConsumer;
 
 import static com.hazelcast.spi.impl.InternalCompletableFuture.newCompletedFuture;
 
 public class AddBackupListenerMessageTask
         extends AbstractAddListenerMessageTask<Void>
-        implements Consumer<Long> {
+        implements LongConsumer {
 
     public AddBackupListenerMessageTask(ClientMessage clientMessage, Node node, Connection connection) {
         super(clientMessage, node, connection);
@@ -46,7 +46,7 @@ public class AddBackupListenerMessageTask
     protected CompletableFuture<UUID> processInternal() {
         UUID uuid = endpoint.getUuid();
         if (logger.isFinestEnabled()) {
-            logger.finest("Client is adding backup listener. client uuid " + uuid);
+            logger.finest("Client is adding backup listener. client uuid %s", uuid);
         }
         clientEngine.addBackupListener(uuid, this);
 
@@ -59,7 +59,7 @@ public class AddBackupListenerMessageTask
     }
 
     @Override
-    public void accept(Long backupCorrelationId) {
+    public void accept(long backupCorrelationId) {
         ClientMessage eventMessage = ClientLocalBackupListenerCodec.encodeBackupEvent(backupCorrelationId);
         eventMessage.getStartFrame().flags |= ClientMessage.BACKUP_EVENT_FLAG;
         sendClientMessage(eventMessage);
@@ -95,8 +95,14 @@ public class AddBackupListenerMessageTask
         return null;
     }
 
+    @Override
     public Permission getRequiredPermission() {
         return null;
     }
 
+    @Override
+    protected String getUserCodeNamespace() {
+        // Default Namespace
+        return null;
+    }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,17 +16,18 @@
 
 package com.hazelcast.spi.impl.operationservice.impl;
 
+import com.hazelcast.cluster.Address;
 import com.hazelcast.cluster.Member;
 import com.hazelcast.core.IndeterminateOperationState;
 import com.hazelcast.core.LocalMemberResetException;
 import com.hazelcast.core.MemberLeftException;
 import com.hazelcast.cp.CPGroupId;
 import com.hazelcast.cp.CPMember;
+import com.hazelcast.cp.exception.CPLeaderSteppingDownException;
 import com.hazelcast.cp.exception.LeaderDemotedException;
 import com.hazelcast.cp.exception.NotLeaderException;
 import com.hazelcast.cp.exception.StaleAppendRequestException;
 import com.hazelcast.cp.internal.IndeterminateOperationStateAware;
-import com.hazelcast.cluster.Address;
 import com.hazelcast.spi.exception.CallerNotMemberException;
 import com.hazelcast.spi.exception.TargetNotMemberException;
 import com.hazelcast.spi.impl.operationservice.ExceptionAction;
@@ -89,14 +90,12 @@ public class RaftInvocation extends Invocation<CPMember> {
         assert !(value instanceof Throwable) : "Throwable value " + value + " not allowed";
 
         super.notifyNormalResponse(value, expectedBackups);
-        // TODO [basri] maybe we should update known leader only if the result is not an exception?
-        raftInvocationContext.setKnownLeader(groupId, lastInvocationEndpoint);
     }
 
     @Override
     void notifyError(Object error) {
-        if (error instanceof Throwable
-                && ((Throwable) error).getCause() instanceof LocalMemberResetException) {
+        if (error instanceof Throwable throwable
+                && throwable.getCause() instanceof LocalMemberResetException) {
             // Raft does not care about split-brain merge.
             return;
         }
@@ -138,7 +137,8 @@ public class RaftInvocation extends Invocation<CPMember> {
                 || cause instanceof StaleAppendRequestException
                 || cause instanceof MemberLeftException
                 || cause instanceof CallerNotMemberException
-                || cause instanceof TargetNotMemberException;
+                || cause instanceof TargetNotMemberException
+                || cause instanceof CPLeaderSteppingDownException;
     }
 
     @Override
@@ -164,8 +164,8 @@ public class RaftInvocation extends Invocation<CPMember> {
     }
 
     private boolean isRetryableOnIndeterminateOperationState() {
-        if (op instanceof IndeterminateOperationStateAware) {
-            return ((IndeterminateOperationStateAware) op).isRetryableOnIndeterminateOperationState();
+        if (op instanceof IndeterminateOperationStateAware aware) {
+            return aware.isRetryableOnIndeterminateOperationState();
         }
 
         return false;

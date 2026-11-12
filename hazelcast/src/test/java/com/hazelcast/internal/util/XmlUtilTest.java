@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package com.hazelcast.internal.util;
 import static com.hazelcast.internal.util.XmlUtil.SYSTEM_PROPERTY_IGNORE_XXE_PROTECTION_FAILURES;
 import static com.hazelcast.internal.util.XmlUtil.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThrows;
@@ -43,7 +42,6 @@ import javax.xml.stream.XMLStreamException;
 import javax.xml.transform.TransformerFactory;
 import javax.xml.validation.SchemaFactory;
 
-import org.hamcrest.Matchers;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -56,6 +54,7 @@ import org.xml.sax.SAXException;
 import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.OverridePropertyRule;
 import com.hazelcast.test.annotation.QuickTest;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @RunWith(HazelcastSerialClassRunner.class)
 @Category({ QuickTest.class })
@@ -86,11 +85,11 @@ public class XmlUtilTest {
         } catch (Exception e) {
             // not important if it fails
         }
-        assertThat(server.getHits(), Matchers.greaterThan(0));
+        assertThat(server.getHits()).isPositive();
     }
 
     @Test
-    public void testFormat() throws Exception {
+    public void testFormat() {
         assertEquals("<a> <b>c</b></a>", format("<a><b>c</b></a>", 1).replaceAll("[\r\n]", ""));
         assertEquals("<a>   <b>c</b></a>", format("<a><b>c</b></a>", 3).replaceAll("[\r\n]", ""));
         assertEquals("<a><b>c</b></a>", format("<a><b>c</b></a>", -21));
@@ -118,7 +117,7 @@ public class XmlUtilTest {
     }
 
     @Test
-    public void testGetTransformerFactory() throws Exception {
+    public void testGetTransformerFactory() {
         TransformerFactory transformerFactory = XmlUtil.getTransformerFactory();
         assertNotNull(transformerFactory);
         assertThrows(IllegalArgumentException.class, () -> XmlUtil.setAttribute(transformerFactory, "test://no-such-property"));
@@ -158,7 +157,7 @@ public class XmlUtilTest {
     }
 
     @Test
-    public void testGetXmlInputFactory() throws Exception {
+    public void testGetXmlInputFactory() {
         XMLInputFactory xmlInputFactory = XmlUtil.getXMLInputFactory();
         assertNotNull(xmlInputFactory);
         // check if the XXE protection is enabled
@@ -186,8 +185,11 @@ public class XmlUtilTest {
     }
 
     static class DummyServer implements Runnable {
-        private static final String XXE_TEST_STR_TEMPLATE = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
-                + "  <!DOCTYPE test [\n" + "    <!ENTITY xxe SYSTEM \"%s\">\n" + "  ]>" + "<a><b>&xxe;</b></a>";
+        private static final String XXE_TEST_STR_TEMPLATE = """
+                <?xml version="1.0" encoding="utf-8"?>
+                  <!DOCTYPE test [
+                    <!ENTITY xxe SYSTEM "%s">
+                  ]><a><b>&xxe;</b></a>""";
 
         private final ServerSocket serverSocket;
         private final AtomicInteger counter = new AtomicInteger();

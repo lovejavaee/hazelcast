@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.hazelcast.internal.server.ServerConnectionManager;
 import com.hazelcast.internal.partition.InternalPartition;
 import com.hazelcast.cluster.Address;
 import com.hazelcast.internal.serialization.Data;
+import com.hazelcast.spi.impl.operationservice.impl.Invocation;
 import com.hazelcast.spi.impl.operationservice.impl.InvocationFuture;
 
 import static com.hazelcast.internal.util.Preconditions.checkFalse;
@@ -117,7 +118,7 @@ public abstract class InvocationBuilder {
      * <p>
      * Defaults to true.
      *
-     * @return true if the the result is automatically deserialized, false otherwise.
+     * @return true if the result is automatically deserialized, false otherwise.
      */
     public boolean isResultDeserialized() {
         return resultDeserialized;
@@ -270,7 +271,7 @@ public abstract class InvocationBuilder {
      * Sets a callback that will respond to the "task done" event for the invocation this builder is about to create.
      * It occurs upon the release of computational and other resources used by the task underlying the invocation.
      * The user loses interest in the computation as soon as the invocation's future is canceled, but our
-     * internal concern is keeping track of resource usage. Therefore we need a lifecycle event independent
+     * internal concern is keeping track of resource usage. Therefore, we need a lifecycle event independent
      * of the regular future completion/cancellation.
      */
     public InvocationBuilder setDoneCallback(Runnable doneCallback) {
@@ -279,4 +280,6 @@ public abstract class InvocationBuilder {
     }
 
     public abstract <E> InvocationFuture<E> invoke();
+
+    public abstract <E> Invocation<E> build();
 }

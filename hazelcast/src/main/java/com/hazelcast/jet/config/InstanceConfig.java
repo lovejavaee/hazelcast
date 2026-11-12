@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,8 +32,9 @@ import static java.util.concurrent.TimeUnit.SECONDS;
  * General configuration options pertaining to a Jet instance.
  *
  * @since Jet 3.0
- * @deprecated since 5.0, use {@link JetConfig} instead.
+ * @deprecated use {@link JetConfig} instead.
  */
+@Deprecated(since = "5.0", forRemoval = true)
 public class InstanceConfig {
 
     /**
@@ -165,23 +166,13 @@ public class InstanceConfig {
      * Sets whether lossless job restart is enabled for the node. With lossless
      * restart you can restart the whole cluster without losing the jobs and
      * their state. The feature is implemented on top of the Hot Restart
-     * feature of Hazelcast IMDG which persists the data to disk.
-     * <p>
-     * If enabled, you have to also configure Hot Restart:
-     * <pre>{@code
-     *    JetConfig jetConfig = new JetConfig();
-     *    jetConfig.getInstanceConfig().setLosslessRestartEnabled(true);
-     *    jetConfig.getHazelcastConfig().getHotRestartPersistenceConfig()
-     *        .setEnabled(true)
-     *        .setBaseDir(new File("/mnt/hot-restart"))
-     *        .setParallelism(2);
-     * }</pre>
+     * feature of Hazelcast Platform which persists the data to disk.
      * <p>
      * Note: the snapshots exported using {@link Job#exportSnapshot}
      * will also have Hot Restart storage enabled.
      * <p>
      * Feature is disabled by default. If you enable this option in open-source
-     * Hazelcast Jet, the member will fail to start, you need Jet Enterprise to
+     * Hazelcast, the member will fail to start, you need Hazelcast Enterprise to
      * run it and obtain a license from Hazelcast.
      */
     public InstanceConfig setLosslessRestartEnabled(boolean enabled) {
@@ -241,11 +232,9 @@ public class InstanceConfig {
         if (this == o) {
             return true;
         }
-        if (!(o instanceof InstanceConfig)) {
+        if (!(o instanceof InstanceConfig that)) {
             return false;
         }
-
-        InstanceConfig that = (InstanceConfig) o;
 
         if (cooperativeThreadCount != that.cooperativeThreadCount) {
             return false;

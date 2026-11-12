@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.hazelcast.map.impl;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.internal.diagnostics.StoreLatencyPlugin;
 import com.hazelcast.map.MapLoader;
+import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
@@ -45,17 +46,17 @@ public class LatencyTrackingMapLoaderTest extends HazelcastTestSupport {
 
     private static final String NAME = "somemap";
 
-    private HazelcastInstance hz;
     private StoreLatencyPlugin plugin;
     private MapLoader<String, String> delegate;
     private LatencyTrackingMapLoader<String, String> cacheLoader;
 
     @Before
     public void setup() {
-        hz = createHazelcastInstance();
-        plugin = new StoreLatencyPlugin(getNodeEngineImpl(hz));
+        HazelcastInstance hz = createHazelcastInstance();
+        NodeEngineImpl nodeEngine = getNodeEngineImpl(hz);
+        plugin = new StoreLatencyPlugin(nodeEngine.getLogger(StoreLatencyPlugin.class), nodeEngine.getProperties());
         delegate = mock(MapLoader.class);
-        cacheLoader = new LatencyTrackingMapLoader<String, String>(delegate, plugin, NAME);
+        cacheLoader = new LatencyTrackingMapLoader<>(delegate, plugin, NAME);
     }
 
     @Test
@@ -74,7 +75,7 @@ public class LatencyTrackingMapLoaderTest extends HazelcastTestSupport {
     @Test
     public void loadAll() {
         Collection<String> keys = asList("key1", "key2");
-        Map<String, String> values = new HashMap<String, String>();
+        Map<String, String> values = new HashMap<>();
         values.put("key1", "value1");
         values.put("key2", "value2");
 

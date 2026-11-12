@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,34 +24,44 @@ import com.mongodb.client.MongoClient;
 import com.mongodb.client.model.changestream.ChangeStreamDocument;
 import org.bson.BsonTimestamp;
 import org.bson.Document;
-import org.bson.conversions.Bson;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.io.Serial;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 
+import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 import static com.hazelcast.internal.util.Preconditions.checkState;
 import static com.hazelcast.jet.impl.util.Util.checkNonNullAndSerializable;
-import static com.hazelcast.jet.mongodb.impl.Mappers.bsonToDocument;
+import static com.hazelcast.jet.mongodb.impl.Mappers.streamToClass;
+import static com.hazelcast.jet.mongodb.impl.Mappers.toClass;
 import static com.hazelcast.jet.pipeline.DataConnectionRef.dataConnectionRef;
 
 @SuppressWarnings({"UnusedReturnValue", "unused"})
 public class ReadMongoParams<I> implements Serializable {
+    @Serial
+    private static final long serialVersionUID = 1L;
+
     final boolean stream;
     SupplierEx<? extends MongoClient> clientSupplier;
     DataConnectionRef dataConnectionRef;
     String databaseName;
     String collectionName;
-    FunctionEx<Document, I> mapItemFn;
+    // itemClass is used only if explicit mapItemFn/mapStreamFn are not specified
+    // mapItemFn/mapStreamFn should usually be only supplied by the user
+    private Class<I> itemClass;
+    private FunctionEx<Document, I> mapItemFn;
 
-    Long startAtTimestamp;
-    EventTimePolicy<? super I> eventTimePolicy;
-    BiFunctionEx<ChangeStreamDocument<Document>, Long, I> mapStreamFn;
-    boolean nonDistributed;
-    boolean throwOnNonExisting = true;
-    private List<Document> aggregates = new ArrayList<>();
+    private Long startAtTimestamp;
+    private EventTimePolicy<? super I> eventTimePolicy;
+    private BiFunctionEx<ChangeStreamDocument<Document>, Long, I> mapStreamFn;
+    private boolean nonDistributed;
+    private boolean checkExistenceOnEachConnect;
+    private Aggregates aggregates = new Aggregates();
 
     public ReadMongoParams(boolean stream) {
         this.stream = stream;
@@ -97,16 +107,28 @@ public class ReadMongoParams<I> implements Serializable {
     }
 
     @Nonnull
-    public List<Document> getAggregates() {
+    public Aggregates getAggregates() {
         return aggregates;
     }
 
-    public ReadMongoParams<I> setAggregates(@Nonnull List<Bson> aggregates) {
-        List<Document> aggregateDocs = new ArrayList<>();
-        for (Bson aggregate : aggregates) {
-            aggregateDocs.add(bsonToDocument(aggregate));
-        }
-        this.aggregates = aggregateDocs;
+    @Nonnull
+    public ReadMongoParams<I> setAggregates(Aggregates aggregates) {
+        this.aggregates = aggregates;
+        return this;
+    }
+
+    public ReadMongoParams<I> setFilter(Document filter) {
+        this.aggregates.filter = filter;
+        return this;
+    }
+
+    public ReadMongoParams<I> setProjection(Document projection) {
+        this.aggregates.projection = projection;
+        return this;
+    }
+
+    public ReadMongoParams<I> setSort(Document sort) {
+        this.aggregates.sort = sort;
         return this;
     }
 
@@ -131,8 +153,15 @@ public class ReadMongoParams<I> implements Serializable {
         return this;
     }
 
-    public FunctionEx<Document, I> getMapItemFn() {
-        return mapItemFn;
+    public Function<Document, I> getMapItemFn() {
+        return mapItemFn != null
+                ? mapItemFn
+                : (itemClass != null ? toClass(itemClass) : null);
+    }
+
+    public ReadMongoParams<I> setItemClass(@Nonnull Class itemClass) {
+        this.itemClass = checkNotNull(itemClass);
+        return this;
     }
 
     public ReadMongoParams<I> setMapItemFn(@Nonnull FunctionEx<Document, I> mapItemFn) {
@@ -159,26 +188,14 @@ public class ReadMongoParams<I> implements Serializable {
         return this;
     }
 
-    public BiFunctionEx<ChangeStreamDocument<Document>, Long, I> getMapStreamFn() {
-        return mapStreamFn;
+    public BiFunction<ChangeStreamDocument<Document>, Long, I> getMapStreamFn() {
+        return mapStreamFn != null
+                ? mapStreamFn
+                : (itemClass != null ? streamToClass(itemClass) : null);
     }
 
     public ReadMongoParams<I> setMapStreamFn(BiFunctionEx<ChangeStreamDocument<Document>, Long, I> mapStreamFn) {
         this.mapStreamFn = mapStreamFn;
-        return this;
-    }
-
-    public ReadMongoParams<I> addAggregate(@Nonnull Bson doc) {
-        this.aggregates.add(bsonToDocument(doc));
-        return this;
-    }
-
-    public boolean isThrowOnNonExisting() {
-        return throwOnNonExisting;
-    }
-
-    public ReadMongoParams<I> setThrowOnNonExisting(boolean throwOnNonExisting) {
-        this.throwOnNonExisting = throwOnNonExisting;
         return this;
     }
 
@@ -189,5 +206,65 @@ public class ReadMongoParams<I> implements Serializable {
 
     public boolean isNonDistributed() {
         return nonDistributed;
+    }
+
+    public boolean isCheckExistenceOnEachConnect() {
+        return checkExistenceOnEachConnect;
+    }
+
+    /**
+     * If true, the database and collection existence checks will be performed on every reconnection.
+     */
+    public ReadMongoParams<I> setCheckExistenceOnEachConnect(boolean checkExistenceOnEachConnect) {
+        this.checkExistenceOnEachConnect = checkExistenceOnEachConnect;
+        return this;
+    }
+
+    public static final class Aggregates implements Serializable {
+        private Document filter;
+        private Document projection;
+        private Document sort;
+
+        public List<Document> nonNulls() {
+            var list = new ArrayList<Document>();
+            if (filter != null) {
+                list.add(filter);
+            }
+            if (projection != null) {
+                list.add(projection);
+            }
+            if (sort != null) {
+                list.add(sort);
+            }
+            return list;
+        }
+
+        public int indexAfterFilter() {
+            return filter == null ? 0 : 1;
+        }
+
+        public void setFilter(Document filter) {
+            this.filter = filter;
+        }
+
+        public void setProjection(Document projection) {
+            this.projection = projection;
+        }
+
+        public void setSort(Document sort) {
+            this.sort = sort;
+        }
+
+        public Document getFilter() {
+            return filter;
+        }
+
+        public Document getProjection() {
+            return projection;
+        }
+
+        public Document getSort() {
+            return sort;
+        }
     }
 }

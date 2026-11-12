@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,14 +16,13 @@
 
 package com.hazelcast.client.cp.internal.datastructures.semaphore;
 
-import com.hazelcast.client.cp.internal.session.ClientProxySessionManager;
 import com.hazelcast.client.impl.clientside.HazelcastClientProxy;
 import com.hazelcast.client.test.TestHazelcastFactory;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.cp.ISemaphore;
 import com.hazelcast.cp.internal.RaftGroupId;
 import com.hazelcast.cp.internal.datastructures.semaphore.SessionAwareSemaphoreBasicTest;
-import com.hazelcast.cp.internal.session.AbstractProxySessionManager;
+import com.hazelcast.cp.internal.session.ProxySessionManager;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
 import com.hazelcast.test.annotation.ParallelJVMTest;
@@ -60,7 +59,7 @@ public class SessionAwareSemaphoreClientBasicTest extends SessionAwareSemaphoreB
     }
 
     @Override
-    protected AbstractProxySessionManager getSessionManager(HazelcastInstance instance) {
+    protected ProxySessionManager getSessionManager(HazelcastInstance instance) {
         return (((HazelcastClientProxy) instance).client).getProxySessionManager();
     }
 
@@ -71,14 +70,14 @@ public class SessionAwareSemaphoreClientBasicTest extends SessionAwareSemaphoreB
 
 
     @Test
-    public void testDrain_ReleasesSessionProperly() throws InterruptedException {
+    public void testDrain_ReleasesSessionProperly() {
         int permits = 20;
 
         assertTrue(semaphore.init(permits));
         final int drainPermits = semaphore.drainPermits();
 
         HazelcastClientProxy clientProxy = (HazelcastClientProxy) client;
-        ClientProxySessionManager proxySessionManager = clientProxy.client.getProxySessionManager();
+        ProxySessionManager proxySessionManager = clientProxy.client.getProxySessionManager();
         SessionAwareSemaphoreProxy proxy = (SessionAwareSemaphoreProxy) semaphore;
         RaftGroupId groupId = (RaftGroupId) proxy.getGroupId();
         final long session = proxySessionManager.getSession(groupId);

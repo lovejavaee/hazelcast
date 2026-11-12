@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,9 @@ import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.cp.CPGroupId;
 import com.hazelcast.cp.internal.HazelcastRaftTestSupport;
 import com.hazelcast.cp.internal.RaftGroupId;
-import com.hazelcast.cp.internal.RaftService;
+import com.hazelcast.cp.internal.RaftInvocationManager;
 import com.hazelcast.cp.internal.datastructures.lock.proxy.AbstractFencedLockProxy;
-import com.hazelcast.cp.internal.session.AbstractProxySessionManager;
+import com.hazelcast.cp.internal.session.ProxySessionManager;
 import com.hazelcast.cp.internal.session.ProxySessionManagerService;
 import com.hazelcast.cp.internal.session.operation.CloseSessionOp;
 import com.hazelcast.cp.lock.FencedLock;
@@ -32,14 +32,12 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static com.hazelcast.cp.internal.session.AbstractProxySessionManager.NO_SESSION_ID;
+import static com.hazelcast.cp.internal.session.ProxySessionManager.NO_SESSION_ID;
 import static com.hazelcast.cp.lock.FencedLock.INVALID_FENCE;
 import static com.hazelcast.internal.util.ThreadUtil.getThreadId;
-import static com.hazelcast.test.Accessors.getNodeEngineImpl;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
@@ -326,11 +324,11 @@ public abstract class AbstractFencedLockBasicTest extends HazelcastRaftTestSuppo
     }
 
     @Test
-    public void testReentrantLockFails_whenSessionClosed() throws ExecutionException, InterruptedException {
+    public void testReentrantLockFails_whenSessionClosed() {
         long fence = lock.lockAndGetFence();
         assertValidFence(fence);
 
-        AbstractProxySessionManager sessionManager = getSessionManager(proxyInstance);
+        ProxySessionManager sessionManager = getSessionManager(proxyInstance);
         RaftGroupId groupId = (RaftGroupId) lock.getGroupId();
         long sessionId = sessionManager.getSession(groupId);
         assertNotEquals(NO_SESSION_ID, sessionId);
@@ -346,11 +344,11 @@ public abstract class AbstractFencedLockBasicTest extends HazelcastRaftTestSuppo
     }
 
     @Test
-    public void testReentrantTryLockFails_whenSessionClosed() throws ExecutionException, InterruptedException {
+    public void testReentrantTryLockFails_whenSessionClosed() {
         long fence = lock.lockAndGetFence();
         assertValidFence(fence);
 
-        AbstractProxySessionManager sessionManager = getSessionManager(proxyInstance);
+        ProxySessionManager sessionManager = getSessionManager(proxyInstance);
         RaftGroupId groupId = (RaftGroupId) lock.getGroupId();
         long sessionId = sessionManager.getSession(groupId);
         assertNotEquals(NO_SESSION_ID, sessionId);
@@ -366,11 +364,11 @@ public abstract class AbstractFencedLockBasicTest extends HazelcastRaftTestSuppo
     }
 
     @Test
-    public void testReentrantTryLockWithTimeoutFails_whenSessionClosed() throws ExecutionException, InterruptedException {
+    public void testReentrantTryLockWithTimeoutFails_whenSessionClosed() {
         long fence = lock.lockAndGetFence();
         assertValidFence(fence);
 
-        AbstractProxySessionManager sessionManager = getSessionManager(proxyInstance);
+        ProxySessionManager sessionManager = getSessionManager(proxyInstance);
         RaftGroupId groupId = (RaftGroupId) lock.getGroupId();
         long sessionId = sessionManager.getSession(groupId);
         assertNotEquals(NO_SESSION_ID, sessionId);
@@ -386,11 +384,11 @@ public abstract class AbstractFencedLockBasicTest extends HazelcastRaftTestSuppo
     }
 
     @Test
-    public void testUnlockFails_whenSessionClosed() throws ExecutionException, InterruptedException {
+    public void testUnlockFails_whenSessionClosed() {
         long fence = lock.lockAndGetFence();
         assertValidFence(fence);
 
-        AbstractProxySessionManager sessionManager = getSessionManager(proxyInstance);
+        ProxySessionManager sessionManager = getSessionManager(proxyInstance);
         RaftGroupId groupId = (RaftGroupId) lock.getGroupId();
         long sessionId = sessionManager.getSession(groupId);
         assertNotEquals(NO_SESSION_ID, sessionId);
@@ -410,11 +408,11 @@ public abstract class AbstractFencedLockBasicTest extends HazelcastRaftTestSuppo
     }
 
     @Test
-    public void testUnlockFails_whenNewSessionCreated() throws ExecutionException, InterruptedException {
+    public void testUnlockFails_whenNewSessionCreated() {
         long fence = lock.lockAndGetFence();
         assertValidFence(fence);
 
-        AbstractProxySessionManager sessionManager = getSessionManager(proxyInstance);
+        ProxySessionManager sessionManager = getSessionManager(proxyInstance);
         RaftGroupId groupId = (RaftGroupId) lock.getGroupId();
         long sessionId = sessionManager.getSession(groupId);
         assertNotEquals(NO_SESSION_ID, sessionId);
@@ -436,11 +434,11 @@ public abstract class AbstractFencedLockBasicTest extends HazelcastRaftTestSuppo
     }
 
     @Test
-    public void testGetFenceFails_whenNewSessionCreated() throws ExecutionException, InterruptedException {
+    public void testGetFenceFails_whenNewSessionCreated() {
         long fence = lock.lockAndGetFence();
         assertValidFence(fence);
 
-        AbstractProxySessionManager sessionManager = getSessionManager(proxyInstance);
+        ProxySessionManager sessionManager = getSessionManager(proxyInstance);
         RaftGroupId groupId = (RaftGroupId) lock.getGroupId();
         long sessionId = sessionManager.getSession(groupId);
         assertNotEquals(NO_SESSION_ID, sessionId);
@@ -465,7 +463,7 @@ public abstract class AbstractFencedLockBasicTest extends HazelcastRaftTestSuppo
     public void testFailedTryLock_doesNotAcquireSession() {
         lockByOtherThread(lock);
 
-        AbstractProxySessionManager sessionManager = getSessionManager(proxyInstance);
+        ProxySessionManager sessionManager = getSessionManager(proxyInstance);
         RaftGroupId groupId = (RaftGroupId) lock.getGroupId();
         long sessionId = sessionManager.getSession(groupId);
         assertNotEquals(NO_SESSION_ID, sessionId);
@@ -485,19 +483,19 @@ public abstract class AbstractFencedLockBasicTest extends HazelcastRaftTestSuppo
         lock.lock();
     }
 
-    protected AbstractProxySessionManager getSessionManager(HazelcastInstance instance) {
+    protected ProxySessionManager getSessionManager(HazelcastInstance instance) {
         return getNodeEngineImpl(instance).getService(ProxySessionManagerService.SERVICE_NAME);
     }
 
     private void assertNoLockedSessionId() {
-        if (lock instanceof AbstractFencedLockProxy) {
-            assertNull(((AbstractFencedLockProxy) lock).getLockedSessionId(getThreadId()));
+        if (lock instanceof AbstractFencedLockProxy proxy) {
+            assertNull(proxy.getLockedSessionId(getThreadId()));
         }
     }
 
     private void closeSession(HazelcastInstance instance, CPGroupId groupId, long sessionId) {
-        RaftService service = getNodeEngineImpl(instance).getService(RaftService.SERVICE_NAME);
-        service.getInvocationManager().invoke(groupId, new CloseSessionOp(sessionId)).joinInternal();
+        RaftInvocationManager raftInvocationManager = getRaftInvocationManager(instance);
+        raftInvocationManager.invoke(groupId, new CloseSessionOp(sessionId)).joinInternal();
     }
 
     static void assertValidFence(long fence) {

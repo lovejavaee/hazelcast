@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,10 +27,8 @@ import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized.Parameter;
 import org.junit.runners.Parameterized.Parameters;
@@ -40,6 +38,7 @@ import javax.cache.processor.EntryProcessor;
 import javax.cache.processor.EntryProcessorException;
 import javax.cache.processor.EntryProcessorResult;
 import javax.cache.processor.MutableEntry;
+import java.io.Serial;
 import java.io.Serializable;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -64,8 +63,6 @@ public class CacheSplitBrainProtectionWriteTest extends AbstractSplitBrainProtec
     @Parameter
     public static SplitBrainProtectionOn splitBrainProtectionOn;
 
-    @Rule
-    public ExpectedException expectedException = ExpectedException.none();
 
     @BeforeClass
     public static void setUp() {
@@ -139,14 +136,14 @@ public class CacheSplitBrainProtectionWriteTest extends AbstractSplitBrainProtec
 
     @Test
     public void putAll_splitBrainProtection() {
-        HashMap<Integer, String> hashMap = new HashMap<Integer, String>();
+        HashMap<Integer, String> hashMap = new HashMap<>();
         hashMap.put(123, "");
         cache(0).putAll(hashMap);
     }
 
     @Test(expected = SplitBrainProtectionException.class)
     public void putAll_noSplitBrainProtection() {
-        HashMap<Integer, String> hashMap = new HashMap<Integer, String>();
+        HashMap<Integer, String> hashMap = new HashMap<>();
         hashMap.put(123, "");
         cache(3).putAll(hashMap);
     }
@@ -213,27 +210,27 @@ public class CacheSplitBrainProtectionWriteTest extends AbstractSplitBrainProtec
 
     @Test
     public void invoke_splitBrainProtection() {
-        cache(0).invoke(123, new SimpleEntryProcessor());
+        cache(0).invoke(123, new SimpleEntryProcessor<>());
     }
 
     @Test(expected = EntryProcessorException.class)
     public void invoke_noSplitBrainProtection() {
-        cache(3).invoke(123, new SimpleEntryProcessor());
+        cache(3).invoke(123, new SimpleEntryProcessor<>());
     }
 
     @Test
     public void invokeAll_splitBrainProtection() {
-        HashSet<Integer> hashSet = new HashSet<Integer>();
+        HashSet<Integer> hashSet = new HashSet<>();
         hashSet.add(123);
-        EntryProcessorResult epr = cache(0).invokeAll(hashSet, new SimpleEntryProcessor()).get(123);
+        EntryProcessorResult<?> epr = cache(0).invokeAll(hashSet, new SimpleEntryProcessor<>()).get(123);
         assertNull(epr);
     }
 
     @Test(expected = EntryProcessorException.class)
     public void invokeAll_noSplitBrainProtection() {
-        HashSet<Integer> hashSet = new HashSet<Integer>();
+        HashSet<Integer> hashSet = new HashSet<>();
         hashSet.add(123);
-        cache(3).invokeAll(hashSet, new SimpleEntryProcessor()).get(123).get();
+        cache(3).invokeAll(hashSet, new SimpleEntryProcessor<>()).get(123).get();
     }
 
     @Test
@@ -289,11 +286,12 @@ public class CacheSplitBrainProtectionWriteTest extends AbstractSplitBrainProtec
         assertNull(cache(1).get(123));
     }
 
-    public static class SimpleEntryProcessor implements EntryProcessor<Integer, String, Void>, Serializable {
+    public static class SimpleEntryProcessor<T> implements EntryProcessor<T, String, Void>, Serializable {
+        @Serial
         private static final long serialVersionUID = -396575576353368113L;
 
         @Override
-        public Void process(MutableEntry<Integer, String> entry, Object... arguments) throws EntryProcessorException {
+        public Void process(MutableEntry<T, String> entry, Object... arguments) throws EntryProcessorException {
             entry.setValue("Foo");
             return null;
         }

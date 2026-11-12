@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,15 @@
 
 package com.hazelcast.client.impl.spi.impl;
 
+import static com.hazelcast.internal.util.EmptyStatement.ignore;
+
 import com.hazelcast.client.config.ClientUserCodeDeploymentConfig;
 import com.hazelcast.client.impl.clientside.HazelcastClientInstanceImpl;
 import com.hazelcast.client.impl.protocol.ClientMessage;
 import com.hazelcast.client.impl.protocol.codec.ClientDeployClassesCodec;
+import com.hazelcast.internal.namespace.UserCodeNamespaceService;
+import com.hazelcast.internal.nio.ClassLoaderUtil;
+import com.hazelcast.jet.impl.util.ReflectionUtils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -28,6 +33,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.MalformedURLException;
+import java.net.URI;
 import java.net.URL;
 import java.util.AbstractMap;
 import java.util.ArrayList;
@@ -36,16 +42,13 @@ import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.jar.JarEntry;
 import java.util.jar.JarInputStream;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
-import static com.hazelcast.internal.nio.IOUtil.closeResource;
-import static com.hazelcast.internal.nio.IOUtil.toByteArray;
-import static com.hazelcast.internal.util.EmptyStatement.ignore;
-
+/**
+ * @deprecated "User Code Deployment" is replaced by the "User Code Namespaces" feature
+ * @see UserCodeNamespaceService
+ */
+@Deprecated(since = "5.4", forRemoval = true)
 public class ClientUserCodeDeploymentService {
-
-    private static final Pattern CLASS_PATTERN = Pattern.compile("(.*)\\.class$");
     private final ClientUserCodeDeploymentConfig clientUserCodeDeploymentConfig;
     private final ClassLoader configClassLoader;
     //List<Map.Entry> is used instead of Map to comply with generated code of client protocol
@@ -67,38 +70,29 @@ public class ClientUserCodeDeploymentService {
 
     private void loadClasses() throws ClassNotFoundException {
         for (String className : clientUserCodeDeploymentConfig.getClassNames()) {
-            String resource = className.replace('.', '/').concat(".class");
-            InputStream is = null;
-            try {
-                is = configClassLoader.getResourceAsStream(resource);
+            String resource = ReflectionUtils.toClassResourceId(className);
+            try (InputStream is = configClassLoader.getResourceAsStream(resource)) {
                 if (is == null) {
                     throw new ClassNotFoundException(resource);
                 }
-                byte[] bytes = toByteArray(is);
+                byte[] bytes = is.readAllBytes();
                 classDefinitionList.add(new AbstractMap.SimpleEntry<>(className, bytes));
             } catch (IOException e) {
                 ignore(e);
-            } finally {
-                closeResource(is);
             }
         }
     }
 
     private void loadClassesFromJars() throws IOException {
-        ByteArrayOutputStream os = new ByteArrayOutputStream();
-        try {
+        try (ByteArrayOutputStream os = new ByteArrayOutputStream()) {
             for (String jarPath : clientUserCodeDeploymentConfig.getJarPaths()) {
                 loadClassesFromJar(os, jarPath);
             }
-        } finally {
-            closeResource(os);
         }
     }
 
     private void loadClassesFromJar(ByteArrayOutputStream os, String jarPath) throws IOException {
-        JarInputStream inputStream = null;
-        try {
-            inputStream = getJarInputStream(jarPath);
+        try (JarInputStream inputStream = getJarInputStream(jarPath)) {
             JarEntry entry;
             do {
                 entry = inputStream.getNextJarEntry();
@@ -106,7 +100,7 @@ public class ClientUserCodeDeploymentService {
                     break;
                 }
 
-                String className = extractClassName(entry);
+                String className = ClassLoaderUtil.extractClassName(entry.getName());
                 if (className == null) {
                     continue;
                 }
@@ -114,8 +108,6 @@ public class ClientUserCodeDeploymentService {
                 inputStream.closeEntry();
                 classDefinitionList.add(new AbstractMap.SimpleEntry<>(className, classDefinition));
             } while (true);
-        } finally {
-            closeResource(inputStream);
         }
     }
 
@@ -126,9 +118,9 @@ public class ClientUserCodeDeploymentService {
         }
 
         try {
-            URL url = new URL(jarPath);
+            URL url = URI.create(jarPath).toURL();
             return new JarInputStream(url.openStream());
-        } catch (MalformedURLException e) {
+        } catch (IllegalArgumentException | MalformedURLException e) {
             ignore(e);
         }
 
@@ -149,15 +141,6 @@ public class ClientUserCodeDeploymentService {
             os.write(v);
         }
         return os.toByteArray();
-    }
-
-    private String extractClassName(JarEntry entry) {
-        String entryName = entry.getName();
-        Matcher matcher = CLASS_PATTERN.matcher(entryName.replace('/', '.'));
-        if (matcher.matches()) {
-            return matcher.group(1);
-        }
-        return null;
     }
 
     public void deploy(HazelcastClientInstanceImpl client) throws ExecutionException, InterruptedException {

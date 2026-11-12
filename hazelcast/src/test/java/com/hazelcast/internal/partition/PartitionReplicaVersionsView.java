@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,15 +53,13 @@ public class PartitionReplicaVersionsView {
         if (this == o) {
             return true;
         }
-        if (!(o instanceof PartitionReplicaVersionsView)) {
+        if (!(o instanceof PartitionReplicaVersionsView that)) {
             return false;
         }
 
-        PartitionReplicaVersionsView that = (PartitionReplicaVersionsView) o;
-
         long[] emptyVersions = new long[InternalPartition.MAX_BACKUP_COUNT];
 
-        Collection<ServiceNamespace> namespaces = new HashSet<ServiceNamespace>(versions.keySet());
+        Collection<ServiceNamespace> namespaces = new HashSet<>(versions.keySet());
         namespaces.addAll(that.versions.keySet());
 
         for (ServiceNamespace ns : namespaces) {

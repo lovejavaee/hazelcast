@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,16 +23,21 @@ import com.hazelcast.core.EntryEventType;
 import com.hazelcast.function.FunctionEx;
 import com.hazelcast.function.PredicateEx;
 import com.hazelcast.internal.util.StringUtil;
+import com.hazelcast.jet.pipeline.JournalInitialPosition;
+import com.hazelcast.jet.pipeline.JournalSourceEntry;
 import com.hazelcast.jet.pipeline.Sources;
 import com.hazelcast.map.EventJournalMapEvent;
 import com.hazelcast.map.impl.journal.MapEventJournalFunctions;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import java.io.Serializable;
 import java.net.URL;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.Arrays;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.regex.Pattern;
@@ -54,10 +59,12 @@ public final class Util {
     }
 
     /**
-     * Returns a {@code Map.Entry} with the given key and value.
+     * Returns a {@link Serializable} {@code Map.Entry} with nullable key and
+     * value. If nullability and serializability are not required, consider
+     * using {@link Map#entry(Object, Object)}.
      */
-    public static <K, V> Entry<K, V> entry(K k, V v) {
-        return new SimpleImmutableEntry<>(k, v);
+    public static <K, V> Entry<K, V> entry(@Nullable K key, @Nullable V value) {
+        return new SimpleImmutableEntry<>(key, value);
     }
 
     /**
@@ -92,6 +99,18 @@ public final class Util {
     }
 
     /**
+     * Returns a projection that converts the {@link EventJournalMapEvent} to a
+     * {@link JournalSourceEntry} using the event's new value as a value.
+     *
+     * @see Sources#mapJournalEntries(String, JournalInitialPosition)
+     * @since 5.7
+     */
+    public static <K, V> FunctionEx<EventJournalMapEvent<K, V>, JournalSourceEntry<K, V>> mapEventToJournalEntry() {
+        return wrapImdgFunction(MapEventJournalFunctions.mapEventToJournalEntry());
+    }
+
+
+    /**
      * Returns a projection that extracts the new value from an {@link
      * EventJournalMapEvent}.
      *
@@ -114,6 +133,17 @@ public final class Util {
     }
 
     /**
+     * Returns a projection that converts the {@link EventJournalCacheEvent} to a
+     * {@link JournalSourceEntry} using the event's new value as a value.
+     *
+     * @see Sources#cacheJournalEntries(String, JournalInitialPosition)
+     * @since 5.7
+     */
+    public static <K, V> FunctionEx<EventJournalCacheEvent<K, V>, JournalSourceEntry<K, V>> cacheEventToJournalEntry() {
+        return wrapImdgFunction(CacheEventJournalFunctions.cacheEventToJournalEntry());
+    }
+
+    /**
      * Returns a projection that extracts the new value from an {@link
      * EventJournalCacheEvent}.
      *
@@ -126,7 +156,7 @@ public final class Util {
 
     /**
      * Converts a {@code long} job or execution ID to a string representation.
-     * Currently it is an unsigned 16-digit hex number.
+     * Currently, it is an unsigned 16-digit hex number.
      */
     @SuppressWarnings("checkstyle:magicnumber")
     @Nonnull

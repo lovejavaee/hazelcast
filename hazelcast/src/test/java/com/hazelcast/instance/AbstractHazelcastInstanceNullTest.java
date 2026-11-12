@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ public abstract class AbstractHazelcastInstanceNullTest extends HazelcastTestSup
         assertThrowsNPE(c -> c.getSet(null));
         assertThrowsNPE(c -> c.getList(null));
         assertThrowsNPE(c -> c.getMap(null));
+        assertThrowsNPE(c -> c.getVectorCollection(null));
         assertThrowsNPE(c -> c.getReplicatedMap(null));
         assertThrowsNPE(c -> c.getMultiMap(null));
         assertThrowsNPE(c -> c.getRingbuffer(null));

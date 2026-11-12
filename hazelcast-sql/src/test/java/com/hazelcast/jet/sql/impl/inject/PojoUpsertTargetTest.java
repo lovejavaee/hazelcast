@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,11 @@
 
 package com.hazelcast.jet.sql.impl.inject;
 
-import com.google.common.collect.ImmutableMap;
+import com.hazelcast.config.JavaSerializationFilterConfig;
+import com.hazelcast.internal.serialization.ReflectionClassNameFilter;
 import com.hazelcast.sql.impl.QueryException;
+import com.hazelcast.sql.impl.expression.RowValue;
+import com.hazelcast.sql.impl.schema.type.TypeKind;
 import com.hazelcast.sql.impl.type.QueryDataType;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
@@ -26,10 +29,17 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
@@ -39,11 +49,12 @@ public class PojoUpsertTargetTest {
     public void test_set() {
         UpsertTarget target = new PojoUpsertTarget(
                 Pojo.class.getName(),
-                ImmutableMap.of(
+                Map.of(
                         "intField", int.class.getName(),
                         "longField", long.class.getName(),
                         "stringField", String.class.getName()
-                )
+                ),
+                null
         );
         UpsertInjector intFieldInjector = target.createInjector("intField", QueryDataType.INT);
         UpsertInjector longFieldInjector = target.createInjector("longField", QueryDataType.BIGINT);
@@ -62,7 +73,8 @@ public class PojoUpsertTargetTest {
     public void when_injectNullValueWithPrimitiveField_then_throws() {
         UpsertTarget target = new PojoUpsertTarget(
                 Pojo.class.getName(),
-                ImmutableMap.of("intField", int.class.getName())
+                Map.of("intField", int.class.getName()),
+                null
         );
         UpsertInjector injector = target.createInjector("intField", QueryDataType.INT);
 
@@ -76,7 +88,8 @@ public class PojoUpsertTargetTest {
     public void when_injectNullValueWithPrimitiveSetter_then_throws() {
         UpsertTarget target = new PojoUpsertTarget(
                 Pojo.class.getName(),
-                ImmutableMap.of("longField", long.class.getName())
+                Map.of("longField", long.class.getName()),
+                null
         );
         UpsertInjector injector = target.createInjector("longField", QueryDataType.BIGINT);
 
@@ -90,7 +103,8 @@ public class PojoUpsertTargetTest {
     public void when_injectNonExistingPropertyValue_then_throws() {
         UpsertTarget target = new PojoUpsertTarget(
                 Object.class.getName(),
-                ImmutableMap.of("field", int.class.getName())
+                Map.of("field", int.class.getName()),
+                null
         );
         UpsertInjector injector = target.createInjector("field", QueryDataType.INT);
 
@@ -105,7 +119,8 @@ public class PojoUpsertTargetTest {
     public void when_injectNonExistingPropertyNullValue_then_succeeds() {
         UpsertTarget target = new PojoUpsertTarget(
                 Object.class.getName(),
-                ImmutableMap.of("field", int.class.getName())
+                Map.of("field", int.class.getName()),
+                null
         );
         UpsertInjector injector = target.createInjector("field", QueryDataType.INT);
 
@@ -116,17 +131,108 @@ public class PojoUpsertTargetTest {
         assertThat(pojo).isNotNull();
     }
 
+    @Test
+    public void when_filterThrowsException_then_initFails() {
+        var expected = new SecurityException("failed");
+        var filter = mock(ReflectionClassNameFilter.class);
+        doThrow(expected)
+                .when(filter)
+                .filter(anyString());
+
+        assertThatThrownBy(
+                () -> new PojoUpsertTarget(
+                        Object.class.getName(),
+                        Map.of("field", int.class.getName()),
+                        filter
+                )
+        ).isEqualTo(expected);
+    }
+
+    @Test
+    public void when_noFilterForNested_then_sets() {
+        when_filterDoesNotRejectNested_then_sets(null);
+    }
+
+    @Test
+    public void when_defaultFilterDoesNotRejectNested_then_sets() {
+        when_filterDoesNotRejectNested_then_sets(new ReflectionClassNameFilter(new JavaSerializationFilterConfig()));
+    }
+
+    private void when_filterDoesNotRejectNested_then_sets(ReflectionClassNameFilter filter) {
+        var target = new PojoUpsertTarget(
+                Pojo.class.getName(),
+                Map.of("nestedField", NestedPojo.class.getName()),
+                filter
+        );
+        target.init();
+        var injector = target.createInjector("nestedField", getNestedType());
+
+        injector.set(new RowValue(List.of("value")));
+
+        Pojo expected = new Pojo();
+        expected.setNestedField(new NestedPojo("value"));
+        assertThat(target.conclude()).isEqualTo(expected);
+    }
+
+    @Test
+    public void when_filterRejectsNested_then_setFails() {
+        var filter = new ReflectionClassNameFilter(new JavaSerializationFilterConfig());
+        var target = new PojoUpsertTarget(
+                Pojo.class.getName(),
+                Map.of("nestedField", NestedPojo.class.getName()),
+                filter
+        );
+        target.init();
+        var injector = target.createInjector("nestedField", new QueryDataType("com.forbidden.UdtClass", TypeKind.JAVA, "com.forbidden.UdtClass"));
+
+        assertThatThrownBy(() -> injector.set(new RowValue(List.of("value"))))
+                .isInstanceOf(SecurityException.class)
+                // we expect filter check before attempting to load the class
+                .hasMessage("Creation of class com.forbidden.UdtClass is not allowed.");
+    }
+
+    @Test
+    public void when_filterPassed_then_initSuccessful() {
+        var filter = mock(ReflectionClassNameFilter.class);
+
+        UpsertTarget target = new PojoUpsertTarget(
+                Object.class.getName(),
+                Map.of("field", int.class.getName()),
+                filter
+        );
+        target.init();
+
+        verify(filter).filter(eq(Object.class.getName()));
+    }
+
+    static QueryDataType pojoType() {
+        QueryDataType type = new QueryDataType(Pojo.class.getName(),
+                TypeKind.JAVA, Pojo.class.getName());
+        type.addField("nestedField", getNestedType());
+        type.finalizeFields();
+        return type;
+    }
+
+    static QueryDataType getNestedType() {
+        QueryDataType nestedType = new QueryDataType(NestedPojo.class.getName(),
+                TypeKind.JAVA, NestedPojo.class.getName());
+        nestedType.addField("value", QueryDataType.VARCHAR);
+        nestedType.finalizeFields();
+        return nestedType;
+    }
+
     @SuppressWarnings("unused")
-    private static final class Pojo {
+    public static final class Pojo {
 
         public int intField;
         private long longField;
         private String stringField;
+        private NestedPojo nestedField;
 
         Pojo() {
         }
 
-        private Pojo(int intField, long longField, String stringField) {
+        public Pojo(int intField, long longField, String stringField) {
             this.intField = intField;
             this.longField = longField;
             this.stringField = stringField;
@@ -148,6 +254,14 @@ public class PojoUpsertTargetTest {
             this.stringField = stringField;
         }
 
+        public NestedPojo getNestedField() {
+            return nestedField;
+        }
+
+        public void setNestedField(NestedPojo nestedField) {
+            this.nestedField = nestedField;
+        }
+
         @Override
         public boolean equals(Object o) {
             if (this == o) {
@@ -159,12 +273,62 @@ public class PojoUpsertTargetTest {
             Pojo pojo = (Pojo) o;
             return intField == pojo.intField &&
                     longField == pojo.longField &&
-                    Objects.equals(stringField, pojo.stringField);
+                    Objects.equals(stringField, pojo.stringField) &&
+                    Objects.equals(nestedField, pojo.nestedField);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(intField, longField, stringField);
+            return Objects.hash(intField, longField, stringField, nestedField);
+        }
+
+        @Override
+        public String toString() {
+            return "Pojo{" +
+                    "intField=" + intField +
+                    ", longField=" + longField +
+                    ", stringField='" + stringField + '\'' +
+                    ", nestedField=" + nestedField +
+                    '}';
+        }
+    }
+
+    public static final class NestedPojo {
+        private String value;
+
+        NestedPojo() {
+        }
+
+        public NestedPojo(String value) {
+            this.value = value;
+        }
+
+        public String getValue() {
+            return value;
+        }
+
+        public void setValue(String value) {
+            this.value = value;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (!(o instanceof NestedPojo that)) {
+                return false;
+            }
+            return Objects.equals(value, that.value);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hashCode(value);
+        }
+
+        @Override
+        public String toString() {
+            return "NestedPojo{" +
+                    "value='" + value + '\'' +
+                    '}';
         }
     }
 }

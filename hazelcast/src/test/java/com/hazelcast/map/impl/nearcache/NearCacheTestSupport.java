@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,7 +37,6 @@ import com.hazelcast.map.impl.proxy.NearCachedMapProxyImpl;
 import com.hazelcast.map.listener.EntryExpiredListener;
 import com.hazelcast.nearcache.NearCacheStats;
 import com.hazelcast.spi.impl.NodeEngineImpl;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastTestSupport;
 
 import java.util.Map;
@@ -150,12 +149,9 @@ public class NearCacheTestSupport extends HazelcastTestSupport {
         populateMap(map, MAX_CACHE_SIZE);
 
         final CountDownLatch countDownLatch = new CountDownLatch(threadCount);
-        Runnable task = new Runnable() {
-            @Override
-            public void run() {
-                populateNearCache(map, MAX_CACHE_SIZE);
-                countDownLatch.countDown();
-            }
+        Runnable task = () -> {
+            populateNearCache(map, MAX_CACHE_SIZE);
+            countDownLatch.countDown();
         };
 
         ExecutorService executorService = newFixedThreadPool(threadCount);
@@ -181,6 +177,7 @@ public class NearCacheTestSupport extends HazelcastTestSupport {
                 0, getNearCacheStats(map).getOwnedEntryMemoryCost());
         // this assert will work in all scenarios, since the default value should be 0 if no costs are calculated
         assertEquals("The Near Cache is empty, there should be no heap costs", 0, map.getLocalMapStats().getHeapCost());
+        executorService.shutdownNow();
     }
 
     protected NearCacheConfig newNearCacheConfigWithEntryCountEviction(EvictionPolicy evictionPolicy, int size) {
@@ -213,13 +210,11 @@ public class NearCacheTestSupport extends HazelcastTestSupport {
     }
 
     protected void waitForNearCacheEvictions(final IMap map, final int evictionCount) {
-        assertTrueEventually(new AssertTask() {
-            public void run() {
-                long evictions = getNearCacheStats(map).getEvictions();
-                assertTrue(
-                        format("Near Cache eviction count didn't reach the desired value (%d vs. %d)", evictions, evictionCount),
-                        evictions >= evictionCount);
-            }
+        assertTrueEventually(() -> {
+            long evictions = getNearCacheStats(map).getEvictions();
+            assertTrue(
+                    format("Near Cache eviction count didn't reach the desired value (%d vs. %d)", evictions, evictionCount),
+                    evictions >= evictionCount);
         });
     }
 
@@ -311,7 +306,7 @@ public class NearCacheTestSupport extends HazelcastTestSupport {
 
     public static class SimpleMapStore<K, V> extends MapStoreAdapter<K, V> {
 
-        private final Map<K, V> store = new ConcurrentHashMap<K, V>();
+        private final Map<K, V> store = new ConcurrentHashMap<>();
 
         private boolean loadAllKeys = true;
 

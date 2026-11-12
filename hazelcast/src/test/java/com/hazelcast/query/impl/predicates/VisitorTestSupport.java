@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,17 +17,17 @@
 package com.hazelcast.query.impl.predicates;
 
 import com.hazelcast.query.Predicate;
-import com.hazelcast.query.impl.Indexes;
-import com.hazelcast.test.ObjectTestUtils;
+import com.hazelcast.query.impl.IndexRegistry;
 
 import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Objects;
 
-import static com.hazelcast.query.impl.predicates.PredicateUtils.isNull;
 import static com.hazelcast.internal.util.collection.ArrayUtils.createCopy;
-import static junit.framework.TestCase.assertTrue;
-import static junit.framework.TestCase.fail;
+import static com.hazelcast.query.impl.predicates.PredicateUtils.isNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertSame;
@@ -46,7 +46,7 @@ public abstract class VisitorTestSupport {
     /**
      * @return the indexes available to the visitor being tested.
      */
-    protected abstract Indexes getIndexes();
+    protected abstract IndexRegistry getIndexes();
 
     protected static void assertEqualPredicate(EqualPredicate expected, Predicate actual) {
         assertTrue(actual instanceof EqualPredicate);
@@ -101,16 +101,16 @@ public abstract class VisitorTestSupport {
     }
 
     private static void assertPredicate(Predicate expected, AndPredicate original, Predicate actual) {
-        if (expected instanceof AndPredicate) {
-            assertAnd((AndPredicate) expected, original, actual);
-        } else if (expected instanceof ReferencePredicate) {
-            assertSame(((ReferencePredicate) expected).resolve(original), actual);
-        } else if (expected instanceof RangePredicate) {
-            assertRangePredicate((RangePredicate) expected, actual);
-        } else if (expected instanceof CompositeRangePredicate) {
-            assertCompositeRangePredicate((CompositeRangePredicate) expected, actual);
-        } else if (expected instanceof CompositeEqualPredicate) {
-            assertCompositeEqualPredicate((CompositeEqualPredicate) expected, actual);
+        if (expected instanceof AndPredicate andPrecicate) {
+            assertAnd(andPrecicate, original, actual);
+        } else if (expected instanceof ReferencePredicate referencePredicate) {
+            assertSame(referencePredicate.resolve(original), actual);
+        } else if (expected instanceof RangePredicate rangePredicate) {
+            assertRangePredicate(rangePredicate, actual);
+        } else if (expected instanceof CompositeRangePredicate compositeRangePredicate) {
+            assertCompositeRangePredicate(compositeRangePredicate, actual);
+        } else if (expected instanceof CompositeEqualPredicate compositeEqualPredicate) {
+            assertCompositeEqualPredicate(compositeEqualPredicate, actual);
         } else if (expected instanceof FalsePredicate) {
             assertTrue("expected FalsePredicate got " + actual, actual instanceof FalsePredicate);
         } else {
@@ -171,7 +171,7 @@ public abstract class VisitorTestSupport {
         outer:
         for (Predicate predicate : expected.predicates) {
             Predicate expectedPredicate =
-                    predicate instanceof ReferencePredicate ? ((ReferencePredicate) predicate).resolve(original) : predicate;
+                    predicate instanceof ReferencePredicate rp ? rp.resolve(original) : predicate;
 
             Integer count = unmatched.get(expectedPredicate);
             if (count != null) {
@@ -181,33 +181,33 @@ public abstract class VisitorTestSupport {
                 } else {
                     unmatched.put(expectedPredicate, count);
                 }
-            } else if (expectedPredicate instanceof RangePredicate) {
+            } else if (expectedPredicate instanceof RangePredicate expectedRangePredicate) {
                 for (Iterator<Predicate> i = unmatched.keySet().iterator(); i.hasNext(); ) {
                     Predicate unmatchedPredicate = i.next();
-                    if (unmatchedPredicate instanceof RangePredicate && rangePredicatesAreEqual(
-                            (RangePredicate) expectedPredicate, (RangePredicate) unmatchedPredicate)) {
+                    if (unmatchedPredicate instanceof RangePredicate unmatchedRangePredicate && rangePredicatesAreEqual(
+                            expectedRangePredicate, unmatchedRangePredicate)) {
                         i.remove();
                         continue outer;
                     }
                 }
 
                 fail("unmatched predicate: " + expectedPredicate);
-            } else if (expectedPredicate instanceof CompositeRangePredicate) {
+            } else if (expectedPredicate instanceof CompositeRangePredicate compositeRangePredicate) {
                 for (Iterator<Predicate> i = unmatched.keySet().iterator(); i.hasNext(); ) {
                     Predicate unmatchedPredicate = i.next();
-                    if (unmatchedPredicate instanceof CompositeRangePredicate && compositeRangePredicatesAreEqual(
-                            (CompositeRangePredicate) expectedPredicate, (CompositeRangePredicate) unmatchedPredicate)) {
+                    if (unmatchedPredicate instanceof CompositeRangePredicate rangePredicate && compositeRangePredicatesAreEqual(
+                            compositeRangePredicate, rangePredicate)) {
                         i.remove();
                         continue outer;
                     }
                 }
 
                 fail("unmatched predicate: " + expectedPredicate);
-            } else if (expectedPredicate instanceof CompositeEqualPredicate) {
+            } else if (expectedPredicate instanceof CompositeEqualPredicate compositeEqualPredicate) {
                 for (Iterator<Predicate> i = unmatched.keySet().iterator(); i.hasNext(); ) {
                     Predicate unmatchedPredicate = i.next();
-                    if (unmatchedPredicate instanceof CompositeEqualPredicate && compositeEqualPredicatesAreEqual(
-                            (CompositeEqualPredicate) expectedPredicate, (CompositeEqualPredicate) unmatchedPredicate)) {
+                    if (unmatchedPredicate instanceof CompositeEqualPredicate equalPredicate && compositeEqualPredicatesAreEqual(
+                            compositeEqualPredicate, equalPredicate)) {
                         i.remove();
                         continue outer;
                     }
@@ -238,15 +238,15 @@ public abstract class VisitorTestSupport {
     }
 
     private static boolean compositeRangePredicatesAreEqual(CompositeRangePredicate lhs, CompositeRangePredicate rhs) {
-        return ObjectTestUtils.equals(lhs.indexName, rhs.indexName)
-            && ObjectTestUtils.equals(lhs.components, rhs.components)
+        return Objects.equals(lhs.indexName, rhs.indexName)
+            && Objects.equals(lhs.components, rhs.components)
             && lhs.from.equals(rhs.from) && lhs.fromInclusive == rhs.fromInclusive && lhs.to.equals(rhs.to)
             && lhs.toInclusive == rhs.toInclusive;
     }
 
     private static boolean compositeEqualPredicatesAreEqual(CompositeEqualPredicate lhs, CompositeEqualPredicate rhs) {
-        return ObjectTestUtils.equals(lhs.indexName, rhs.indexName)
-            && ObjectTestUtils.equals(lhs.components, rhs.components) && lhs.value.equals(rhs.value);
+        return Objects.equals(lhs.indexName, rhs.indexName)
+            && Objects.equals(lhs.components, rhs.components) && lhs.value.equals(rhs.value);
     }
 
     private static class ReferencePredicate implements Predicate {

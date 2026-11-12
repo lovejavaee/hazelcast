@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -86,6 +86,10 @@ public final class AuditlogTypeIds {
      * Event type ID: Clusters merged.
      */
     public static final String CLUSTER_MERGE = "HZ-0606";
+    /**
+     * Event type ID: Data member demoted.
+     */
+    public static final String CLUSTER_DEMOTE_MEMBER = "HZ-0607";
 
     // Member events
     /**
@@ -96,6 +100,18 @@ public final class AuditlogTypeIds {
      * Event type ID: Member logging level reset.
      */
     public static final String MEMBER_LOGGING_LEVEL_RESET = "HZ-0702";
+    /**
+     * Event type ID: Diagnostics logging started.
+     */
+    public static final String DIAGNOSTICS_LOGGING_START = "HZ-0801";
+    /**
+     * Event type ID: Diagnostics logging disabled.
+     */
+    public static final String DIAGNOSTICS_LOGGING_DISABLE = "HZ-0802";
+    /**
+     * Event type ID: Diagnostics logging is going to restart.
+     */
+    public static final String DIAGNOSTICS_LOGGING_RESTART = "HZ-0803";
 
 
     private AuditlogTypeIds() {

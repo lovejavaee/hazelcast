@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import com.hazelcast.config.Config;
 import com.hazelcast.core.EntryEvent;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.map.impl.MapListenerAdapter;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
@@ -34,7 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.hazelcast.map.impl.event.MapEventPublisherImpl.PROP_LISTENER_WITH_PREDICATE_PRODUCES_NATURAL_EVENT_TYPES;
 import static com.hazelcast.query.Predicates.greaterEqual;
-import static junit.framework.TestCase.assertEquals;
+import static org.junit.Assert.assertEquals;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
@@ -88,12 +87,9 @@ public class MapQueryEventFilterTest extends HazelcastTestSupport {
         map.set(key, new Employee(3));
         map.set(key, new Employee(4));
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertEquals(numOfAddEventExpected, addedEntryCount.get());
-                assertEquals(numOfUpdateEventExpected, updatedEntryCount.get());
-            }
+        assertTrueEventually(() -> {
+            assertEquals(numOfAddEventExpected, addedEntryCount.get());
+            assertEquals(numOfUpdateEventExpected, updatedEntryCount.get());
         });
     }
 

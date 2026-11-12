@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,14 @@
 package com.hazelcast.internal.serialization.impl.compact;
 
 import com.hazelcast.config.CompactSerializationConfig;
+import com.hazelcast.config.JavaSerializationFilterConfig;
 import com.hazelcast.config.SerializationConfig;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.internal.serialization.Data;
+import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.internal.serialization.SerializationService;
 import com.hazelcast.internal.serialization.impl.DefaultSerializationServiceBuilder;
+import com.hazelcast.internal.serialization.impl.ExtraReflectiveCompactSerializationRestrictions;
 import com.hazelcast.nio.serialization.compact.CompactSerializer;
 import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import com.hazelcast.nio.serialization.genericrecord.GenericRecordBuilder;
@@ -33,6 +36,7 @@ import example.serialization.MainDTO;
 import example.serialization.NamedDTO;
 import example.serialization.AllFieldsDTO;
 import example.serialization.SerializableEmployeeDTO;
+import org.assertj.core.api.Assertions;
 
 import javax.annotation.Nonnull;
 import java.math.BigDecimal;
@@ -41,7 +45,6 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
@@ -49,18 +52,13 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 import static com.hazelcast.internal.util.phonehome.TestUtil.getNode;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 public final class CompactTestUtil {
 
@@ -74,50 +72,50 @@ public final class CompactTestUtil {
         int i = 0;
         for (NamedDTO named : inner.nn) {
             GenericRecord namedRecord = GenericRecordBuilder.compact("named")
-                    .setString("name", named.name)
-                    .setInt32("myint", named.myint).build();
+                                                            .setString("name", named.name)
+                                                            .setInt32("myint", named.myint).build();
             namedRecords[i++] = namedRecord;
         }
 
         GenericRecord innerRecord = GenericRecordBuilder.compact("inner")
-                .setArrayOfInt8("b", inner.bytes)
-                .setArrayOfInt16("s", inner.shorts)
-                .setArrayOfInt32("i", inner.ints)
-                .setArrayOfInt64("l", inner.longs)
-                .setArrayOfFloat32("f", inner.floats)
-                .setArrayOfFloat64("d", inner.doubles)
-                .setArrayOfString("strings", inner.strings)
-                .setArrayOfGenericRecord("nn", namedRecords)
-                .setArrayOfDecimal("bigDecimals", inner.bigDecimals)
-                .setArrayOfTime("localTimes", inner.localTimes)
-                .setArrayOfDate("localDates", inner.localDates)
-                .setArrayOfTimestamp("localDateTimes", inner.localDateTimes)
-                .setArrayOfTimestampWithTimezone("offsetDateTimes", inner.offsetDateTimes)
-                .build();
+                                                        .setArrayOfInt8("b", inner.bytes)
+                                                        .setArrayOfInt16("s", inner.shorts)
+                                                        .setArrayOfInt32("i", inner.ints)
+                                                        .setArrayOfInt64("l", inner.longs)
+                                                        .setArrayOfFloat32("f", inner.floats)
+                                                        .setArrayOfFloat64("d", inner.doubles)
+                                                        .setArrayOfString("strings", inner.strings)
+                                                        .setArrayOfGenericRecord("nn", namedRecords)
+                                                        .setArrayOfDecimal("bigDecimals", inner.bigDecimals)
+                                                        .setArrayOfTime("localTimes", inner.localTimes)
+                                                        .setArrayOfDate("localDates", inner.localDates)
+                                                        .setArrayOfTimestamp("localDateTimes", inner.localDateTimes)
+                                                        .setArrayOfTimestampWithTimezone("offsetDateTimes", inner.offsetDateTimes)
+                                                        .build();
 
         return GenericRecordBuilder.compact("main")
-                .setInt8("b", mainDTO.b)
-                .setBoolean("bool", mainDTO.bool)
-                .setInt16("s", mainDTO.s)
-                .setInt32("i", mainDTO.i)
-                .setInt64("l", mainDTO.l)
-                .setFloat32("f", mainDTO.f)
-                .setFloat64("d", mainDTO.d)
-                .setString("str", mainDTO.str)
-                .setDecimal("bigDecimal", mainDTO.bigDecimal)
-                .setGenericRecord("p", innerRecord)
-                .setTime("localTime", mainDTO.localTime)
-                .setDate("localDate", mainDTO.localDate)
-                .setTimestamp("localDateTime", mainDTO.localDateTime)
-                .setTimestampWithTimezone("offsetDateTime", mainDTO.offsetDateTime)
-                .setNullableInt8("nullable_b", mainDTO.b)
-                .setNullableBoolean("nullable_bool", mainDTO.bool)
-                .setNullableInt16("nullable_s", mainDTO.s)
-                .setNullableInt32("nullable_i", mainDTO.i)
-                .setNullableInt64("nullable_l", mainDTO.l)
-                .setNullableFloat32("nullable_f", mainDTO.f)
-                .setNullableFloat64("nullable_d", mainDTO.d)
-                .build();
+                                   .setInt8("b", mainDTO.b)
+                                   .setBoolean("bool", mainDTO.bool)
+                                   .setInt16("s", mainDTO.s)
+                                   .setInt32("i", mainDTO.i)
+                                   .setInt64("l", mainDTO.l)
+                                   .setFloat32("f", mainDTO.f)
+                                   .setFloat64("d", mainDTO.d)
+                                   .setString("str", mainDTO.str)
+                                   .setDecimal("bigDecimal", mainDTO.bigDecimal)
+                                   .setGenericRecord("p", innerRecord)
+                                   .setTime("localTime", mainDTO.localTime)
+                                   .setDate("localDate", mainDTO.localDate)
+                                   .setTimestamp("localDateTime", mainDTO.localDateTime)
+                                   .setTimestampWithTimezone("offsetDateTime", mainDTO.offsetDateTime)
+                                   .setNullableInt8("nullable_b", mainDTO.b)
+                                   .setNullableBoolean("nullable_bool", mainDTO.bool)
+                                   .setNullableInt16("nullable_s", mainDTO.s)
+                                   .setNullableInt32("nullable_i", mainDTO.i)
+                                   .setNullableInt64("nullable_l", mainDTO.l)
+                                   .setNullableFloat32("nullable_f", mainDTO.f)
+                                   .setNullableFloat64("nullable_d", mainDTO.d)
+                                   .build();
     }
 
     @Nonnull
@@ -169,7 +167,7 @@ public final class CompactTestUtil {
                 OffsetDateTime.of(-999999999, 3, 31, 1, 2, 3, 999999999, ZoneOffset.UTC), true,
                 (byte) 113, (short) -500, 56789, -50992225L, 900.5678f, -897543.3678909d,
                 new boolean[]{true, false}, new byte[]{0, 1, 2}, new short[]{3, 4, 5},
-                 new int[]{9, 8, 7, 6}, new long[]{0, 1, 5, 7, 9, 11},
+                new int[]{9, 8, 7, 6}, new long[]{0, 1, 5, 7, 9, 11},
                 new float[]{0.6543f, -3.56f, 45.67f}, new double[]{456.456, 789.789, 321.321},
                 new String[]{"test", null}, new BigDecimal[]{new BigDecimal("12345"), new BigDecimal("123456")},
                 new LocalTime[]{LocalTime.of(22, 13, 15, 123123), null, LocalTime.of(1, 2, 3, 999_999_999)},
@@ -221,7 +219,7 @@ public final class CompactTestUtil {
         return new ArrayOfFixedSizeFieldsDTO(null, null, null, null, null, null, null);
     }
 
-    public static SerializationService createSerializationService() {
+    public static InternalSerializationService createSerializationService() {
         SchemaService schemaService = CompactTestUtil.createInMemorySchemaService();
         return new DefaultSerializationServiceBuilder()
                 .setSchemaService(schemaService)
@@ -229,14 +227,14 @@ public final class CompactTestUtil {
                 .build();
     }
 
-    public static SerializationService createSerializationService(SchemaService schemaService) {
+    public static InternalSerializationService createSerializationService(SchemaService schemaService) {
         return new DefaultSerializationServiceBuilder()
                 .setSchemaService(schemaService)
                 .setConfig(new SerializationConfig())
                 .build();
     }
 
-    public static SerializationService createSerializationService(SerializationConfig config) {
+    public static InternalSerializationService createSerializationService(SerializationConfig config) {
         SchemaService schemaService = CompactTestUtil.createInMemorySchemaService();
         return new DefaultSerializationServiceBuilder()
                 .setSchemaService(schemaService)
@@ -244,7 +242,7 @@ public final class CompactTestUtil {
                 .build();
     }
 
-    public static SerializationService createSerializationService(CompactSerializationConfig compactSerializationConfig) {
+    public static InternalSerializationService createSerializationService(CompactSerializationConfig compactSerializationConfig) {
         SerializationConfig config = new SerializationConfig();
         config.setCompactSerializationConfig(compactSerializationConfig);
         SchemaService schemaService = CompactTestUtil.createInMemorySchemaService();
@@ -254,7 +252,7 @@ public final class CompactTestUtil {
                 .build();
     }
 
-    public static <T> SerializationService createSerializationService(Supplier<CompactSerializer<T>> serializerSupplier) {
+    public static <T> InternalSerializationService createSerializationService(Supplier<CompactSerializer<T>> serializerSupplier) {
         SchemaService schemaService = CompactTestUtil.createInMemorySchemaService();
         CompactSerializationConfig compactSerializationConfig = new CompactSerializationConfig();
         compactSerializationConfig.addSerializer(serializerSupplier.get());
@@ -264,7 +262,7 @@ public final class CompactTestUtil {
                 .build();
     }
 
-    public static <T> SerializationService createSerializationService(
+    public static <T> InternalSerializationService createSerializationService(
             Supplier<CompactSerializer<T>> serializerSupplier, SchemaService schemaService
     ) {
         CompactSerializationConfig compactSerializationConfig = new CompactSerializationConfig();
@@ -275,31 +273,19 @@ public final class CompactTestUtil {
                 .build();
     }
 
+    public static InternalSerializationService createSerializationService(ClassLoader classLoader, SchemaService schemaService) {
+        return new DefaultSerializationServiceBuilder()
+                .setSchemaService(schemaService)
+                .setClassLoader(classLoader)
+                .build();
+    }
+
     public static SchemaService createInMemorySchemaService() {
-        return new SchemaService() {
-            private final Map<Long, Schema> schemas = new ConcurrentHashMap<>();
+        return new InMemorySchemaService();
+    }
 
-            @Override
-            public Schema get(long schemaId) {
-                return schemas.get(schemaId);
-            }
-
-            @Override
-            public void put(Schema schema) {
-                long schemaId = schema.getSchemaId();
-                Schema existingSchema = schemas.putIfAbsent(schemaId, schema);
-                if (existingSchema != null && !schema.equals(existingSchema)) {
-                    throw new IllegalStateException("Schema with schemaId " + schemaId + " already exists. "
-                            + "existing schema " + existingSchema
-                            + "new schema " + schema);
-                }
-            }
-
-            @Override
-            public void putLocal(Schema schema) {
-                put(schema);
-            }
-        };
+    public static SchemaService createInMemorySchemaService(Collection<Schema> schemas) {
+        return new InMemorySchemaService(schemas);
     }
 
     public static void verifyReflectiveSerializerIsUsed(SerializationConfig serializationConfig) {
@@ -330,10 +316,9 @@ public final class CompactTestUtil {
     }
 
     public static void assertSchemasAvailable(Collection<HazelcastInstance> instances, Class<?>... classes) {
-        Collection<Schema> expectedSchemas = getSchemasFor(classes);
         for (HazelcastInstance instance : instances) {
             Collection<Schema> schemas = getNode(instance).getSchemaService().getAllSchemas();
-            assertThat(schemas, containsInAnyOrder(expectedSchemas.toArray()));
+            assertThat(schemas).containsExactlyInAnyOrderElementsOf(getSchemasFor(classes));
         }
     }
 
@@ -341,20 +326,28 @@ public final class CompactTestUtil {
      * Can only return the schemas for classes that are serialized with
      * reflective serializer.
      */
-    public static Collection<Schema> getSchemasFor(Class<?>... classes) {
-        CompactStreamSerializer compactStreamSerializer = mock(CompactStreamSerializer.class);
-        when(compactStreamSerializer.canBeSerializedAsCompact(any())).thenReturn(true);
+    public static Iterable<Schema> getSchemasFor(Class<?>... classes) {
+        CompactStreamSerializer compactStreamSerializer = new CompactStreamSerializer(cls -> CompactStreamSerializerAdapter.class,
+                new CompactSerializationConfig(), null, null, null,
+                ExtraReflectiveCompactSerializationRestrictions.NO_RESTRICTIONS);
         ReflectiveCompactSerializer serializer = new ReflectiveCompactSerializer(compactStreamSerializer);
-        ArrayList<Schema> schemas = new ArrayList<>(classes.length);
-        for (Class<?> clazz : classes) {
-            SchemaWriter writer = new SchemaWriter(clazz.getName());
-            try {
-                serializer.write(writer, clazz.getDeclaredConstructor().newInstance());
-            } catch (Throwable t) {
-                throw new RuntimeException(t);
-            }
-            schemas.add(writer.build());
-        }
-        return schemas;
+
+        return Arrays.stream(classes)
+                     .map(clazz -> {
+                         SchemaWriter writer = new SchemaWriter(clazz.getName());
+
+                         try {
+                             serializer.write(writer, clazz.getDeclaredConstructor()
+                                                           .newInstance());
+                         } catch (Throwable t) {
+                             throw new RuntimeException(t);
+                         }
+
+                         return writer.build();
+                     })::iterator;
+    }
+
+    public static void assertZeroConfigFilter(SerializationConfig actual, JavaSerializationFilterConfig expected) {
+        Assertions.assertThat(actual.getCompactSerializationConfig().getZeroConfigFilter()).isEqualTo(expected);
     }
 }

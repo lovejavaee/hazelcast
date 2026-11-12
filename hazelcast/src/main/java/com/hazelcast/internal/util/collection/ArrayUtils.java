@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,8 +30,6 @@ public final class ArrayUtils {
     /**
      * Create copy of the src array.
      *
-     * @param src
-     * @param <T>
      * @return copy of the original array
      */
     public static <T> T[] createCopy(T[] src) {
@@ -40,8 +38,8 @@ public final class ArrayUtils {
 
     /**
      * Removes an item from the array.
-     *
-     * If the item has been found, a new array is returned where this item is removed. Otherwise the original array is returned.
+     * <p>
+     * If the item has been found, a new array is returned where this item is removed. Otherwise, the original array is returned.
      *
      * @param src    the src array
      * @param object the object to remove
@@ -72,21 +70,18 @@ public final class ArrayUtils {
      */
     public static <T> T[] append(T[] array1, T[] array2) {
         T[] dst = (T[]) Array.newInstance(array1.getClass().getComponentType(), array1.length + array2.length);
-        System.arraycopy(array1, 0, dst, 0, array1.length);
-        System.arraycopy(array2, 0, dst, array1.length, array2.length);
+        concat(array1, array2, dst);
         return dst;
     }
 
     /**
      * Replaces the first occurrence of the oldValue by the newValue.
+     * <p>
+     * If the item is found, a new array is returned. Otherwise, the original array is returned.
      *
-     * If the item is found, a new array is returned. Otherwise the original array is returned.
-     *
-     * @param src
      * @param oldValue  the value to look for
      * @param newValues the value that is inserted.
      * @param <T>       the type of the array
-     * @return
      */
     public static <T> T[] replaceFirst(T[] src, T oldValue, T[] newValues) {
         int index = indexOf(src, oldValue);
@@ -116,29 +111,6 @@ public final class ArrayUtils {
         return -1;
     }
 
-    /**
-     * Copy src array into destination and skip null values.
-     * Warning: It does not do any validation. It expect the dst[] is
-     * created with right capacity.
-     *
-     * You can calculate required capacity as <code>src.length - getNoOfNullItems(src)</code>
-     *
-     * @param src source array
-     * @param dst destination. It has to have the right capacity
-     * @param <T>
-     */
-    public static <T> void copyWithoutNulls(T[] src, T[] dst) {
-        int skipped = 0;
-        for (int i = 0; i < src.length; i++) {
-            T object = src[i];
-            if (object == null) {
-                skipped++;
-            } else {
-                dst[i - skipped] = object;
-            }
-        }
-    }
-
     public static <T> boolean contains(T[] array, T item) {
         for (T o : array) {
             if (o == null) {
@@ -154,8 +126,9 @@ public final class ArrayUtils {
         return false;
     }
 
+    /** Avoids the overhead of throwing {@link ArrayIndexOutOfBoundsException} */
     public static <T> T getItemAtPositionOrNull(T[] array, int position) {
-        if (array.length > position) {
+        if (position >= 0 && array.length > position) {
             return array[position];
         }
         return null;
@@ -163,11 +136,6 @@ public final class ArrayUtils {
 
     /**
      * Copies in order {@code sourceFirst} and {@code sourceSecond} into {@code dest}.
-     *
-     * @param sourceFirst
-     * @param sourceSecond
-     * @param dest
-     * @param <T>
      */
     public static <T> void concat(T[] sourceFirst, T[] sourceSecond, T[] dest) {
         System.arraycopy(sourceFirst, 0, dest, 0, sourceFirst.length);

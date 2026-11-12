@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -97,19 +97,19 @@ class MongoConnection implements Closeable {
                 if (codes.contains(new BsonString("NonResumableChangeStreamError"))) {
                     throw new JetException("NonResumableChangeStreamError thrown by Mongo", e);
                 }
-                logger.warning("Could not connect to MongoDB." + willRetryMessage(), e);
                 connectionRetryTracker.attemptFailed();
+                logger.warning("Could not connect to MongoDB." + willRetryMessage(), e);
                 lastException = e;
                 return false;
             } catch (MongoClientException | MongoSocketException e) {
                 lastException = e;
 
+                connectionRetryTracker.attemptFailed();
                 logger.warning("Could not connect to MongoDB due to client/socket error."
                         + willRetryMessage(), e);
-                connectionRetryTracker.attemptFailed();
                 return false;
             } catch (Exception e) {
-                throw new JetException("Cannot connect to MongoDB, seems to be non-transient error", e);
+                throw new JetException("Cannot connect to MongoDB, seems to be non-transient error: " + e.getMessage(), e);
             }
         } else {
             throw new JetException("cannot connect to MongoDB", lastException);

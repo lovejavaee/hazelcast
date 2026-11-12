@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import com.hazelcast.jet.JetException;
 import com.hazelcast.jet.JetService;
 import com.hazelcast.jet.Job;
 import com.hazelcast.jet.annotation.EvolvingApi;
+import com.hazelcast.jet.core.JobStatus;
 import com.hazelcast.jet.core.Processor;
 import com.hazelcast.jet.core.ProcessorSupplier;
 import com.hazelcast.jet.impl.util.ReflectionUtils;
@@ -56,7 +57,9 @@ import java.util.Objects;
 import static com.hazelcast.internal.util.Preconditions.checkNotNegative;
 import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 import static com.hazelcast.internal.util.Preconditions.checkTrue;
+import static com.hazelcast.jet.config.JobConfigArguments.REQUIRE_SNAPSHOT_BEFORE_PROCESSING;
 import static com.hazelcast.jet.config.ResourceType.CLASS;
+import static java.lang.Boolean.TRUE;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
 /**
@@ -288,7 +291,7 @@ public class JobConfig implements IdentifiedDataSerializable {
     }
 
     /**
-     * Adds the given classes and recursively all their nested (inner & anonymous)
+     * Adds the given classes and recursively all their nested (inner &amp; anonymous)
      * classes to the Jet job's classpath. They will be accessible to all the code
      * attached to the underlying pipeline or DAG, but not to any other code. (An
      * important example is the {@code IMap} data source, which can instantiate only
@@ -307,9 +310,10 @@ public class JobConfig implements IdentifiedDataSerializable {
      * @return {@code this} instance for fluent API
      */
     @Nonnull
-    @SuppressWarnings("rawtypes")
-    public JobConfig addClass(@Nonnull Class... classes) {
-        ReflectionUtils.nestedClassesOf(classes).forEach(this::addClass);
+    public JobConfig addClass(@Nonnull Class<?>... classes) {
+        throwIfLocked();
+        checkNotNull(classes, "Classes cannot be null");
+        ResourceConfig.fromClass(classes).forEach(cfg -> resourceConfigs.put(cfg.getId(), cfg));
         return this;
     }
 
@@ -350,7 +354,8 @@ public class JobConfig implements IdentifiedDataSerializable {
      * <p>
      * This variant identifies the JAR with a URL, which must contain at least one
      * path segment. The last path segment ("filename") will be used as the resource
-     * ID, so two JARs with the same filename will be in conflict.
+     * ID - if there's already a resource with that ID, it will <strong>not be
+     * replaced</strong>.
      * <p>
      * Cannot be used for {@linkplain JetService#newLightJob(Pipeline) light
      * jobs}.
@@ -365,7 +370,7 @@ public class JobConfig implements IdentifiedDataSerializable {
     @Nonnull
     public JobConfig addJar(@Nonnull URL url) {
         throwIfLocked();
-        return add(url, filenamePart(url), ResourceType.JAR);
+        return add(url, null, ResourceType.JAR);
     }
 
     /**
@@ -375,8 +380,8 @@ public class JobConfig implements IdentifiedDataSerializable {
      * the Jet instance's classpath.
      * <p>
      * This variant identifies the JAR with a {@code File}. The filename part of the
-     * path will be used as the resource ID, so two JARs with the same filename will
-     * be in conflict.
+     * path will be used as the resource ID - if there's already a resource with that
+     * ID, it will <strong>not be replaced</strong>.
      * <p>
      * Cannot be used for {@linkplain JetService#newLightJob(Pipeline) light
      * jobs}.
@@ -401,8 +406,8 @@ public class JobConfig implements IdentifiedDataSerializable {
      * the Jet instance's classpath.
      * <p>
      * This variant identifies the JAR with a path string. The filename part will be
-     * used as the resource ID, so two JARs with the same filename will be in
-     * conflict.
+     * used as the resource ID - if there's already a resource with that ID, it will
+     * <strong>not be replaced</strong>.
      * <p>
      * Cannot be used for {@linkplain JetService#newLightJob(Pipeline) light
      * jobs}.
@@ -444,7 +449,7 @@ public class JobConfig implements IdentifiedDataSerializable {
      */
     @Nonnull
     public JobConfig addJarsInZip(@Nonnull URL url) {
-        return add(url, filenamePart(url), ResourceType.JARS_IN_ZIP);
+        return add(url, null, ResourceType.JARS_IN_ZIP);
     }
 
     /**
@@ -524,7 +529,7 @@ public class JobConfig implements IdentifiedDataSerializable {
      */
     @Nonnull
     public JobConfig addClasspathResource(@Nonnull URL url) {
-        return addClasspathResource(url, filenamePart(url));
+        return add(url, null, ResourceType.CLASSPATH_RESOURCE);
     }
 
     /**
@@ -590,6 +595,7 @@ public class JobConfig implements IdentifiedDataSerializable {
     @Nonnull
     public JobConfig addClasspathResource(@Nonnull File file, @Nonnull String id) {
         ensureIsFile(file);
+        Preconditions.checkHasText(id, "id cannot be null or empty");
         return add(fileToUrl(file), id, ResourceType.CLASSPATH_RESOURCE);
     }
 
@@ -709,7 +715,7 @@ public class JobConfig implements IdentifiedDataSerializable {
      */
     @Nonnull
     public JobConfig attachFile(@Nonnull URL url) {
-        return attachFile(url, filenamePart(url));
+        return add(url, null, ResourceType.FILE);
     }
 
     /**
@@ -738,6 +744,7 @@ public class JobConfig implements IdentifiedDataSerializable {
     @Nonnull
     public JobConfig attachFile(@Nonnull URL url, @Nonnull String id) {
         ensureHasPath(url);
+        Preconditions.checkHasText(id, "id cannot be null or empty");
         return add(url, id, ResourceType.FILE);
     }
 
@@ -911,8 +918,10 @@ public class JobConfig implements IdentifiedDataSerializable {
      */
     @Nonnull
     public JobConfig attachDirectory(@Nonnull URL url, @Nonnull String id) {
+        throwIfLocked();
         ensureHasPath(url);
         ensureIsDirectory(urlToFile(url));
+        Preconditions.checkHasText(id, "id cannot be null or empty");
         return add(url, id, ResourceType.DIRECTORY);
     }
 
@@ -1068,13 +1077,6 @@ public class JobConfig implements IdentifiedDataSerializable {
         return this;
     }
 
-    @Nonnull
-    private static String filenamePart(@Nonnull URL url) {
-        String filename = new File(url.getPath()).getName();
-        Preconditions.checkHasText(filename, "URL has no path: " + url);
-        return filename;
-    }
-
     private static void ensureHasPath(@Nonnull URL url) {
         if (url.getPath().isEmpty()) {
             throw new IllegalArgumentException("URL has no path part: " + url.toExternalForm());
@@ -1131,7 +1133,7 @@ public class JobConfig implements IdentifiedDataSerializable {
      * job. It will be accessible to all the code attached to the underlying
      * pipeline or DAG, but not to any other code. There are several serializer
      * types you can register, see the
-     * <a href="https://jet-start.sh/docs/api/serialization#serialization-of-data-types
+     * <a href="https://docs.hazelcast.com/hazelcast/latest/pipelines/serialization#serialization-of-data-types">
      * Programming Guide</a>.
      * <p>
      * A serializer registered on the job level has precedence over any
@@ -1169,18 +1171,11 @@ public class JobConfig implements IdentifiedDataSerializable {
         return serializerConfigs;
     }
 
-    private void addClass(@Nonnull Class<?> clazz) {
+    private JobConfig add(@Nonnull URL url, @Nullable String id, @Nonnull ResourceType resourceType) {
         throwIfLocked();
-        ResourceConfig cfg = new ResourceConfig(clazz);
-        resourceConfigs.put(cfg.getId(), cfg);
-    }
-
-    private JobConfig add(@Nonnull URL url, @Nonnull String id, @Nonnull ResourceType resourceType) {
-        throwIfLocked();
-        Preconditions.checkHasText(id, "Resource ID is blank");
         ResourceConfig cfg = new ResourceConfig(url, id, resourceType);
-        if (resourceConfigs.putIfAbsent(id, cfg) != null) {
-            throw new IllegalArgumentException("Resource with id:" + id + " already exists");
+        if (resourceConfigs.putIfAbsent(cfg.getId(), cfg) != null) {
+            throw new IllegalArgumentException("Resource with id:" + cfg.getId() + " already exists");
         }
         return this;
     }
@@ -1219,7 +1214,12 @@ public class JobConfig implements IdentifiedDataSerializable {
     /**
      * Sets a custom {@link JobClassLoaderFactory} that will be used to load
      * job classes and resources on Jet members. Not supported for {@linkplain
-     * JetService#newLightJob(Pipeline) light jobs}
+     * JetService#newLightJob(Pipeline) light jobs}.
+     * <p>
+     * <b>NOTE:</b> Defining a custom factory means that a User Code Namespace
+     * should not be defined using {@link #setUserCodeNamespace(String)}
+     * as these features are incompatible and will result in an exception being
+     * thrown at Job creation if both are defined.
      *
      * @return {@code this} instance for fluent API
      */
@@ -1270,6 +1270,48 @@ public class JobConfig implements IdentifiedDataSerializable {
         throwIfLocked();
         this.initialSnapshotName = initialSnapshotName;
         return this;
+    }
+
+    /**
+     * Configures whether the job must complete an initial snapshot before it
+     * begins normal execution.
+     * <p>
+     * When set to {@code true}, the job will:
+     * <ul>
+     *   <li>Trigger an initial snapshot before processing any entries,</li>
+     *   <li>Delay entry processing until the snapshot completes successfully,</li>
+     *   <li>The job will not transition to the {@link JobStatus#RUNNING} state until the
+     *       initial snapshot has completed successfully.
+     * </ul>
+     * If set to {@code false}, the job follows the default behavior and does
+     * not require an initial snapshot prior to execution.
+     * <p>
+     * Note: This flag is ignored if {@link #setInitialSnapshotName(String)} is
+     * configured. In that case, the job restores its state from the provided
+     * snapshot and proceeds with normal execution according to that snapshot.
+     * <p>
+     * To prevent data loss in case of a failure before the first snapshot completes,
+     * enable this option for jobs that use stateful sources such as mapJournal or Kafka.
+     *
+     * @param required {@code true} to require an initial snapshot before normal
+     *                 execution; {@code false} to use the default behavior
+     * @since 5.7
+     */
+    public void setRequireSnapshotBeforeProcessing(boolean required) {
+        setArgument(REQUIRE_SNAPSHOT_BEFORE_PROCESSING, required);
+    }
+
+    /**
+     * Returns whether the job is configured to require completion of an
+     * initial snapshot before starting normal execution.
+     *
+     * @return {@code true} if an initial snapshot is required; {@code false}
+     *         otherwise
+     * @see #setRequireSnapshotBeforeProcessing(boolean)
+     * @since 5.7
+     */
+    public boolean isRequireSnapshotBeforeProcessing() {
+        return TRUE.equals(getArgument(REQUIRE_SNAPSHOT_BEFORE_PROCESSING));
     }
 
     /**
@@ -1390,6 +1432,32 @@ public class JobConfig implements IdentifiedDataSerializable {
         checkNotNegative(timeoutMillis, "timeoutMillis can't be negative");
         this.timeoutMillis = timeoutMillis;
         return this;
+    }
+
+    /**
+     * Retrieves the User Code Namespace (UCN) to use with this job, if one has been set
+     * by calling {@link #setUserCodeNamespace(String)}. If a UCN is provided with a Jet
+     * job, then the job will have access to resources from the UCN during execution.
+     *
+     * @return the User Code Namespace associated with this job if it is configured, or
+     * {@code null} if one has not been set.
+     * @since 5.6
+     */
+    @Nullable
+    public String getUserCodeNamespace() {
+        return (String) this.arguments.get(JobConfigArguments.KEY_USER_CODE_NAMESPACE);
+    }
+
+    /**
+     * Sets the User Code Namespace (UCN) to use with this job. Setting this to {@code null}
+     * will clear the association of this job with a UCN. If a UCN is provided with a Jet
+     * job, then the job will have access to resources from the UCN during execution.
+     *
+     * @param namespace the User Code Namespace to use with this Jet job
+     * @since 5.6
+     */
+    public void setUserCodeNamespace(String namespace) {
+        this.arguments.put(JobConfigArguments.KEY_USER_CODE_NAMESPACE, namespace);
     }
 
     @Override

@@ -22,16 +22,20 @@ hazelcast:
     # You should specify the interface IP address in the socket-endpoint configuration sections
     # within the advanced-network configuration part of this file.
     # E.g. advanced-network/member-server-socket-endpoint-config/interfaces/interfaces
-    # See also https://docs.hazelcast.com/imdg/4.2/clusters/network-configuration.html#interfaces
+    # See also https://docs.hazelcast.com/hazelcast/latest/clusters/network-configuration#interfaces
     hazelcast.socket.bind.any: false
 
   management-center:
     # Explicitly disable the scripting operations and the console commands sent from the Management center.
     # The default value for both attributes is false already so this one is just to be sure and explicit.
     # Also disable access to the data for Management Center. The data access is enabled by default.
+    # Only allow management connections from the local network.
     scripting-enabled: false
     console-enabled: false
     data-access-enabled: false
+    # UPDATE THE INTERFACE VALUE TO FIT TO YOUR ENVIRONMENT!
+    trusted-interfaces:
+      - 192.168.1.*
 
   user-code-deployment:
     # Explicitly disable the user-code deployments. I.e. allow only code which already is on the classpath.

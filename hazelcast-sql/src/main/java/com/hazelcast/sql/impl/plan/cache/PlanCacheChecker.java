@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -61,7 +61,7 @@ public class PlanCacheChecker {
             for (Table table : tableMap.values()) {
                 PlanObjectKey objectKey = table.getObjectKey();
 
-                if (objectKey != null) {
+                if (objectKey != null && objectKey != PlanObjectKey.NON_CACHEABLE_OBJECT_KEY) {
                     objectKeys.add(objectKey);
                 }
             }

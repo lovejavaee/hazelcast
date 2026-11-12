@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,16 +21,14 @@ import com.hazelcast.internal.networking.HandlerStatus;
 import com.hazelcast.internal.networking.InboundHandler;
 import com.hazelcast.internal.nio.ConnectionType;
 import com.hazelcast.internal.server.ServerConnection;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 
 import static com.hazelcast.internal.networking.HandlerStatus.CLEAN;
 import static com.hazelcast.internal.nio.IOUtil.compactOrClear;
 import static com.hazelcast.internal.nio.Protocols.PROTOCOL_LENGTH;
 import static com.hazelcast.internal.nio.Protocols.UNEXPECTED_PROTOCOL;
-import static com.hazelcast.internal.util.JVMUtil.upcast;
-import static com.hazelcast.internal.util.StringUtil.bytesToString;
 
 /**
  * Checks if the correct protocol is received then swaps itself with the next
@@ -73,7 +71,6 @@ public class SingleProtocolDecoder
      *                                          non-matching protocol bytes have
      *                                          been received
      */
-    @SuppressFBWarnings("EI_EXPOSE_REP2")
     public SingleProtocolDecoder(ProtocolType supportedProtocol, InboundHandler[] next,
                                  SingleProtocolEncoder encoder) {
         this.supportedProtocol = supportedProtocol;
@@ -89,7 +86,7 @@ public class SingleProtocolDecoder
 
     @Override
     public HandlerStatus onRead() {
-        upcast(src).flip();
+        src.flip();
 
         try {
             if (src.remaining() < PROTOCOL_LENGTH) {
@@ -107,7 +104,7 @@ public class SingleProtocolDecoder
                     // previous handler may get stuck in a DIRTY loop even if the
                     // channel closes. We observed this behavior in TLSDecoder
                     // before.
-                    upcast(src).position(src.limit());
+                    src.position(src.limit());
                 }
                 return CLEAN;
             }
@@ -155,7 +152,7 @@ public class SingleProtocolDecoder
     private String loadProtocol() {
         byte[] protocolBytes = new byte[PROTOCOL_LENGTH];
         src.get(protocolBytes);
-        return bytesToString(protocolBytes);
+        return new String(protocolBytes, StandardCharsets.UTF_8);
     }
 
     private void initConnection() {

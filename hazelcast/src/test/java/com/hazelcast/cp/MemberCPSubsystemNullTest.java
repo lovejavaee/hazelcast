@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.hazelcast.cp;
 
+import com.hazelcast.config.Config;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
@@ -36,8 +37,10 @@ public class MemberCPSubsystemNullTest extends AbstractCPSubsystemNullTest {
 
     @Before
     public void setup() {
-        TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory();
-        instance = factory.newHazelcastInstance();
+        TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(3);
+        Config config = new Config();
+        config.getCPSubsystemConfig().setCPMemberCount(3);
+        instance = factory.newInstances(config, 3)[0];
     }
 
     @Override

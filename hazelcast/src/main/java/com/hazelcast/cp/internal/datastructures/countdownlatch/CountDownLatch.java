@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import com.hazelcast.internal.util.BiTuple;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.util.Collection;
@@ -85,8 +84,8 @@ public class CountDownLatch extends BlockingResource<AwaitInvocationKey> impleme
         return BiTuple.of(0, w);
     }
 
-    @SuppressFBWarnings(value = "VO_VOLATILE_INCREMENT", justification = "'round' field is updated only by a single thread.")
-    @SuppressWarnings("NonAtomicOperationOnVolatileField")
+    //@SuppressFBWarnings(value = "VO_VOLATILE_INCREMENT", justification = "'round' field is updated only by a single thread.")
+    @SuppressWarnings({"NonAtomicOperationOnVolatileField", "squid:S3078"})
     boolean trySetCount(int count) {
         checkTrue(count > 0, "cannot set non-positive count: " + count);
 

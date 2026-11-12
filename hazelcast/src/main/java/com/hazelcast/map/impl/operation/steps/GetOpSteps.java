@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,9 @@
 
 package com.hazelcast.map.impl.operation.steps;
 
+import com.hazelcast.internal.util.BiTuple;
 import com.hazelcast.map.impl.MapContainer;
 import com.hazelcast.map.impl.MapServiceContext;
-import com.hazelcast.map.impl.mapstore.MapDataStore;
-import com.hazelcast.map.impl.mapstore.MapDataStores;
 import com.hazelcast.map.impl.operation.steps.engine.State;
 import com.hazelcast.map.impl.operation.steps.engine.Step;
 import com.hazelcast.map.impl.record.Record;
@@ -32,9 +31,10 @@ public enum GetOpSteps implements IMapOpStep {
         @Override
         public void runStep(State state) {
             RecordStore recordStore = state.getRecordStore();
-            Record record = recordStore.getRecordOrNull(state.getKey());
+            Record record = recordStore.getRecordOrNull(state.getKey(), false);
             if (record != null) {
-                state.setOldValue(record.getValue());
+                Object oldValue = record.getValue();
+                state.setOldValue(oldValue);
                 state.setRecordExistsInMemory(true);
             }
         }
@@ -53,17 +53,18 @@ public enum GetOpSteps implements IMapOpStep {
 
         @Override
         public void runStep(State state) {
-            MapDataStore mapDataStore = state.getRecordStore().getMapDataStore();
-            if (mapDataStore == MapDataStores.EMPTY_MAP_DATA_STORE) {
-                return;
+            RecordStore recordStore = state.getRecordStore();
+            BiTuple<Object, Long> loadedValueWithTtl = ((DefaultRecordStore) recordStore)
+                    .loadValueWithTtl(state.getKey(), state.getNow());
+            state.setLoadedOldValueWithTtl(loadedValueWithTtl);
+            if (loadedValueWithTtl != null) {
+                state.setOldValue(loadedValueWithTtl.element1);
             }
-            Object load = mapDataStore.load(state.getKey());
-            state.setOldValue(load);
         }
 
         @Override
         public Step nextStep(State state) {
-            return state.getOldValue() == null ? GetOpSteps.RESPONSE : GetOpSteps.ON_LOAD;
+            return state.getLoadedOldValueWithTtl() == null ? GetOpSteps.RESPONSE : GetOpSteps.ON_LOAD;
         }
     },
 
@@ -72,7 +73,7 @@ public enum GetOpSteps implements IMapOpStep {
         public void runStep(State state) {
             RecordStore recordStore = state.getRecordStore();
             Record record = ((DefaultRecordStore) recordStore).onLoadRecord(state.getKey(),
-                    state.getOldValue(), false, state.getCallerAddress());
+                    state.getLoadedOldValueWithTtl(), false, state.getCallerAddress(), state.getNow());
             record = recordStore.evictIfExpired(state.getKey(), state.getNow(), false)
                     ? null : record;
             state.setOldValue(record == null ? null : record.getValue());
@@ -103,7 +104,7 @@ public enum GetOpSteps implements IMapOpStep {
 
         @Override
         public Step nextStep(State state) {
-            return UtilSteps.SEND_RESPONSE;
+            return UtilSteps.FINAL_STEP;
         }
     };
 

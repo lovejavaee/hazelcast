@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -66,6 +66,7 @@ public class WriteSocketTest extends JetTestSupport {
         verifyProcessor(writeSocketP("localhost", serverSocket.getLocalPort(), Object::toString, UTF_8))
                 .input(range(0, ITEM_COUNT).boxed().collect(toList()))
                 .executeBeforeEachRun(acceptConnection)
+                .hazelcastInstance(createHazelcastInstance())
                 .disableSnapshots()
                 .expectOutput(emptyList());
 

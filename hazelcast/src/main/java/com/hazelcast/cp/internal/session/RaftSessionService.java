@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,8 +22,6 @@ import com.hazelcast.cp.CPGroupId;
 import com.hazelcast.cp.internal.RaftNodeLifecycleAwareService;
 import com.hazelcast.cp.internal.RaftService;
 import com.hazelcast.cp.internal.TermChangeAwareService;
-import com.hazelcast.cp.internal.datastructures.spi.AbstractCPMigrationAwareService;
-import com.hazelcast.cp.internal.operation.unsafe.UnsafeRaftReplicateOp;
 import com.hazelcast.cp.internal.raft.SnapshotAwareService;
 import com.hazelcast.cp.internal.raft.impl.RaftNode;
 import com.hazelcast.cp.internal.session.operation.CloseInactiveSessionsOp;
@@ -46,7 +44,7 @@ import com.hazelcast.logging.ILogger;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
 import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.executionservice.ExecutionService;
-import com.hazelcast.spi.impl.operationservice.impl.OperationServiceImpl;
+import com.hazelcast.spi.impl.operationservice.OperationService;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -61,11 +59,11 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Semaphore;
-import java.util.stream.Collectors;
 
 import static com.hazelcast.cp.CPGroup.METADATA_CP_GROUP_NAME;
-import static com.hazelcast.cp.internal.RaftService.getCPGroupPartitionId;
 import static com.hazelcast.cp.internal.raft.QueryPolicy.LINEARIZABLE;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_METRIC_SESSION_COUNT;
+import static com.hazelcast.internal.metrics.CPMetricDescriptorConstants.CP_TAG_GROUP;
 import static com.hazelcast.internal.util.Preconditions.checkTrue;
 import static com.hazelcast.spi.impl.InternalCompletableFuture.completingCallback;
 import static com.hazelcast.spi.impl.executionservice.ExecutionService.SYSTEM_EXECUTOR;
@@ -88,9 +86,8 @@ import static java.util.concurrent.TimeUnit.SECONDS;
  * resources to sessions. On session termination, its attached resources will
  * be released automatically.
  */
-@SuppressWarnings({"checkstyle:methodcount"})
-public class RaftSessionService extends AbstractCPMigrationAwareService
-        implements ManagedService, SnapshotAwareService<RaftSessionRegistry>, SessionAccessor,
+@SuppressWarnings("checkstyle:methodcount")
+public class RaftSessionService implements ManagedService, SnapshotAwareService<RaftSessionRegistry>, SessionAccessor,
         TermChangeAwareService, RaftNodeLifecycleAwareService, CPSessionManagementService, DynamicMetricsProvider {
 
     public static final String SERVICE_NAME = "hz:core:raftSession";
@@ -104,11 +101,12 @@ public class RaftSessionService extends AbstractCPMigrationAwareService
 
     private final Map<CPGroupId, RaftSessionRegistry> registries = new ConcurrentHashMap<>();
     private final Executor internalAsyncExecutor;
+    private final NodeEngine nodeEngine;
 
     public RaftSessionService(NodeEngine nodeEngine) {
-        super(nodeEngine);
         this.logger = nodeEngine.getLogger(getClass());
         this.internalAsyncExecutor = nodeEngine.getExecutionService().getExecutor(ExecutionService.ASYNC_EXECUTOR);
+        this.nodeEngine = nodeEngine;
     }
 
     @Override
@@ -123,7 +121,7 @@ public class RaftSessionService extends AbstractCPMigrationAwareService
         executionService.scheduleWithRepetition(new CheckInactiveSessions(), CHECK_INACTIVE_SESSIONS_TASK_PERIOD_IN_MILLIS,
                 CHECK_INACTIVE_SESSIONS_TASK_PERIOD_IN_MILLIS, MILLISECONDS);
 
-        this.nodeEngine.getMetricsRegistry().registerDynamicMetricsProvider(this);
+        nodeEngine.getMetricsRegistry().registerDynamicMetricsProvider(this);
     }
 
     @Override
@@ -138,13 +136,17 @@ public class RaftSessionService extends AbstractCPMigrationAwareService
     @Override
     public RaftSessionRegistry takeSnapshot(CPGroupId groupId, long commitIndex) {
         RaftSessionRegistry registry = registries.get(groupId);
-        return registry != null ? registry.cloneForSnapshot() : null;
+        if (registry == null) {
+            return null;
+        }
+
+        return registry.cloneForSnapshot();
     }
 
     @Override
     public void restoreSnapshot(CPGroupId groupId, long commitIndex, RaftSessionRegistry registry) {
         if (registry != null) {
-            registries.put(groupId, registry);
+            registries.put(groupId, registry.cloneForSnapshot());
         }
     }
 
@@ -154,7 +156,7 @@ public class RaftSessionService extends AbstractCPMigrationAwareService
         if (registry != null) {
             registry.shiftExpirationTimes(getHeartbeatIntervalMillis());
             if (logger.isFineEnabled()) {
-                logger.fine("Session expiration times are shifted in " + groupId);
+                logger.fine("Session expiration times are shifted in %s", groupId);
             }
         }
     }
@@ -224,18 +226,22 @@ public class RaftSessionService extends AbstractCPMigrationAwareService
         return new SessionResponse(sessionId, sessionTTLMillis, getHeartbeatIntervalMillis());
     }
 
+    // squid:S3824 ConcurrentHashMap.computeIfAbsent(K, Function<? super K, ? extends V>) locks the map, which *may* have an
+    // effect on throughput such that it's not a direct replacement
+    @SuppressWarnings("squid:S3824")
     private RaftSessionRegistry getOrInitRegistry(CPGroupId groupId) {
         RaftSessionRegistry registry = registries.get(groupId);
         if (registry == null) {
             registry = new RaftSessionRegistry(groupId);
             registries.put(groupId, registry);
             if (logger.isFineEnabled()) {
-                logger.fine("Created new session registry for " + groupId);
+                logger.fine("Created new session registry for %s", groupId);
             }
         }
         return registry;
     }
 
+    @Override
     public void heartbeat(CPGroupId groupId, long sessionId) {
         RaftSessionRegistry registry = registries.get(groupId);
         if (registry == null) {
@@ -244,7 +250,7 @@ public class RaftSessionService extends AbstractCPMigrationAwareService
 
         registry.heartbeat(sessionId, getSessionTTLMillis());
         if (logger.isFineEnabled()) {
-            logger.fine("Session: " + sessionId + " heartbeat in " + groupId);
+            logger.fine("Session: %s heartbeat in %s", sessionId, groupId);
         }
     }
 
@@ -255,7 +261,7 @@ public class RaftSessionService extends AbstractCPMigrationAwareService
         }
 
         if (registry.closeSession(sessionId)) {
-            logger.info("Session: " + sessionId +  " is closed in " + groupId);
+            logger.info("Session: " + sessionId + " is closed in " + groupId);
             notifyServices(groupId, Collections.singleton(sessionId));
             return true;
         }
@@ -278,9 +284,9 @@ public class RaftSessionService extends AbstractCPMigrationAwareService
             }
         }
 
-        if (expired.size() > 0) {
+        if (!expired.isEmpty()) {
             if (logger.isFineEnabled()) {
-                logger.fine("Sessions: " + expired + " are expired in " + groupId);
+                logger.fine("Sessions: %s are expired in %s", expired, groupId);
             }
 
             notifyServices(groupId, expired);
@@ -302,9 +308,9 @@ public class RaftSessionService extends AbstractCPMigrationAwareService
             registry.closeSession(sessionId);
         }
 
-        if (closed.size() > 0) {
+        if (!closed.isEmpty()) {
             if (logger.isFineEnabled()) {
-                logger.fine("Inactive sessions: " + closed + " are closed in " + groupId);
+                logger.fine("Inactive sessions: %s are closed in %s", closed, groupId);
             }
             notifyServices(groupId, closed);
         }
@@ -372,7 +378,7 @@ public class RaftSessionService extends AbstractCPMigrationAwareService
         Map<CPGroupId, Collection<Long>> response = new ConcurrentHashMap<>();
         Semaphore semaphore = new Semaphore(0);
 
-        OperationServiceImpl operationService = nodeEngine.getOperationService();
+        OperationService operationService = nodeEngine.getOperationService();
         Collection<RaftSessionRegistry> registries = new ArrayList<>(this.registries.values());
 
         for (RaftSessionRegistry registry : registries) {
@@ -391,7 +397,7 @@ public class RaftSessionService extends AbstractCPMigrationAwareService
                     }
                 }
 
-                if (inactiveSessionIds.size() > 0) {
+                if (!inactiveSessionIds.isEmpty()) {
                     response.put(groupId, inactiveSessionIds);
                 }
 
@@ -408,26 +414,6 @@ public class RaftSessionService extends AbstractCPMigrationAwareService
         return response;
     }
 
-    @Override
-    protected int getBackupCount() {
-        return 1;
-    }
-
-    @Override
-    protected Map<CPGroupId, Object> getSnapshotMap(int partitionId) {
-        int partitionCount = nodeEngine.getPartitionService().getPartitionCount();
-        return registries.keySet().stream()
-                .filter(groupId -> getCPGroupPartitionId(groupId, partitionCount) == partitionId)
-                .distinct()
-                .map(groupId -> BiTuple.of(groupId, takeSnapshot(groupId, 0L)))
-                .collect(Collectors.toMap(tuple -> tuple.element1, tuple -> tuple.element2));
-    }
-
-    @Override
-    protected void clearPartitionReplica(int partitionId) {
-        registries.keySet().removeIf(groupId -> raftService.getCPGroupPartitionId(groupId) == partitionId);
-    }
-
     private class CheckSessionsToExpire implements Runnable {
         @Override
         public void run() {
@@ -435,11 +421,7 @@ public class RaftSessionService extends AbstractCPMigrationAwareService
             for (Entry<CPGroupId, Collection<BiTuple<Long, Long>>> entry : sessionsToExpire.entrySet()) {
                 CPGroupId groupId = entry.getKey();
                 Collection<BiTuple<Long, Long>> sessions = entry.getValue();
-                if (raftService.isCpSubsystemEnabled()) {
-                    expireOnRaftNode(groupId, sessions);
-                } else {
-                    expireOnPartitionOwner(groupId, sessions);
-                }
+                expireOnRaftNode(groupId, sessions);
             }
         }
 
@@ -456,18 +438,6 @@ public class RaftSessionService extends AbstractCPMigrationAwareService
                 }
             }
         }
-
-        private void expireOnPartitionOwner(CPGroupId groupId, Collection<BiTuple<Long, Long>> sessions) {
-            InternalCompletableFuture<Object> future = raftService.getInvocationManager()
-                    .invokeOnPartition(new UnsafeRaftReplicateOp(groupId, new ExpireSessionsOp(sessions)));
-            try {
-                future.join();
-            } catch (Exception e) {
-                if (logger.isFineEnabled()) {
-                    logger.fine("Could not invalidate sessions: " + sessions + " of " + groupId, e);
-                }
-            }
-        }
     }
 
     private class CheckInactiveSessions implements Runnable {
@@ -477,13 +447,8 @@ public class RaftSessionService extends AbstractCPMigrationAwareService
             for (Entry<CPGroupId, Collection<Long>> entry : inactiveSessions.entrySet()) {
                 CPGroupId groupId = entry.getKey();
                 Collection<Long> sessions = entry.getValue();
-                if (raftService.isCpSubsystemEnabled()) {
-                    closeOnRaft(groupId, sessions);
-                } else {
-                    closeOnPartitionOwner(groupId, sessions);
-                }
+                closeOnRaft(groupId, sessions);
             }
-
         }
 
         private void closeOnRaft(CPGroupId groupId, Collection<Long> sessions) {
@@ -499,42 +464,51 @@ public class RaftSessionService extends AbstractCPMigrationAwareService
                 }
             }
         }
-
-        private void closeOnPartitionOwner(CPGroupId groupId, Collection<Long> sessions) {
-            InternalCompletableFuture<Object> future = raftService.getInvocationManager()
-                    .invokeOnPartition(new UnsafeRaftReplicateOp(groupId, new CloseInactiveSessionsOp(sessions)));
-            try {
-                future.join();
-            } catch (Exception e) {
-                if (logger.isFineEnabled()) {
-                    logger.fine("Could not close inactive sessions: " + sessions + " of " + groupId, e);
-                }
-            }
-        }
     }
 
     @Override
     public void provideDynamicMetrics(MetricDescriptor descriptor, MetricsCollectionContext context) {
+        addSessionMetrics(descriptor, context, registries);
+    }
+
+    static void addSessionMetrics(MetricDescriptor descriptor, MetricsCollectionContext context,
+                                   Map<CPGroupId, RaftSessionRegistry> registries) {
+        // `descriptor` is a mutable, recycled instance: withPrefix() overwrites it in place rather than
+        // returning a new one, so `root` must be fully consumed before `descriptor` is repurposed below.
         MetricDescriptor root = descriptor.withPrefix("cp.session");
 
         for (RaftSessionRegistry registry : registries.values()) {
             CPGroupId groupId = registry.groupId();
-            for (CPSession session : registry.getSessions()) {
+            Collection<? extends CPSession> sessions = registry.getSessions();
+
+            for (CPSession session : sessions) {
+                // We want to provide a dedicated `qualifiedSessionId` tag for use in cross-referencing with Lock metrics, but
+                // also want to keep the `id` tag consistent with other CP related metrics (just happens to be the same here)
+                String qualifiedSessionId = session.id() + "@" + groupId.getName();
                 MetricDescriptor desc = root.copy()
-                        .withDiscriminator("id", session.id() + "@" + groupId.getName())
+                        .withDiscriminator("id", qualifiedSessionId)
+                        .withTag("qualifiedSessionId", qualifiedSessionId)
                         .withTag("sessionId", String.valueOf(session.id()))
-                        .withTag("group", groupId.getName());
+                        .withTag(CP_TAG_GROUP, groupId.getName());
 
                 context.collect(desc.copy().withTag("endpoint", session.endpoint().toString()).withMetric("endpoint"), 0);
                 context.collect(desc.copy().withTag("endpointType", session.endpointType().toString())
                         .withMetric("endpointType"), 0);
-                context.collect(desc.copy().withTag("endpointName", session.endpointName())
+                String endpointName = session.endpointName() != null ? session.endpointName() : session.endpoint().toString();
+                context.collect(desc.copy().withTag("endpointName", endpointName)
                         .withMetric("endpointName"), 0);
 
                 context.collect(desc.copy().withMetric("version"), session.version());
                 context.collect(desc.copy().withUnit(ProbeUnit.MS).withMetric("creationTime"), session.creationTime());
                 context.collect(desc.copy().withUnit(ProbeUnit.MS).withMetric("expirationTime"), session.expirationTime());
             }
+        }
+
+        MetricDescriptor summary = descriptor.withPrefix("cp.session.summary");
+        for (RaftSessionRegistry registry : registries.values()) {
+            context.collect(summary.copy()
+                    .withDiscriminator(CP_TAG_GROUP, registry.groupId().getName())
+                    .withMetric(CP_METRIC_SESSION_COUNT), registry.getSessions().size());
         }
     }
 }

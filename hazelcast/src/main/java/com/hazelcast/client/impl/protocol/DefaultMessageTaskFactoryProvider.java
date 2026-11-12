@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,12 +30,21 @@ import com.hazelcast.client.impl.protocol.codec.AtomicRefGetCodec;
 import com.hazelcast.client.impl.protocol.codec.AtomicRefSetCodec;
 import com.hazelcast.client.impl.protocol.codec.CPGroupCreateCPGroupCodec;
 import com.hazelcast.client.impl.protocol.codec.CPGroupDestroyCPObjectCodec;
+import com.hazelcast.client.impl.protocol.codec.CPMapCompareAndSetCodec;
+import com.hazelcast.client.impl.protocol.codec.CPMapDeleteCodec;
+import com.hazelcast.client.impl.protocol.codec.CPMapGetCodec;
+import com.hazelcast.client.impl.protocol.codec.CPMapPutCodec;
+import com.hazelcast.client.impl.protocol.codec.CPMapPutIfAbsentCodec;
+import com.hazelcast.client.impl.protocol.codec.CPMapRemoveCodec;
+import com.hazelcast.client.impl.protocol.codec.CPMapSetCodec;
 import com.hazelcast.client.impl.protocol.codec.CPSessionCloseSessionCodec;
 import com.hazelcast.client.impl.protocol.codec.CPSessionCreateSessionCodec;
 import com.hazelcast.client.impl.protocol.codec.CPSessionGenerateThreadIdCodec;
 import com.hazelcast.client.impl.protocol.codec.CPSessionHeartbeatSessionCodec;
 import com.hazelcast.client.impl.protocol.codec.CPSubsystemAddGroupAvailabilityListenerCodec;
 import com.hazelcast.client.impl.protocol.codec.CPSubsystemAddMembershipListenerCodec;
+import com.hazelcast.client.impl.protocol.codec.CPSubsystemGetCPGroupIdsCodec;
+import com.hazelcast.client.impl.protocol.codec.CPSubsystemGetCPObjectInfosCodec;
 import com.hazelcast.client.impl.protocol.codec.CPSubsystemRemoveGroupAvailabilityListenerCodec;
 import com.hazelcast.client.impl.protocol.codec.CPSubsystemRemoveMembershipListenerCodec;
 import com.hazelcast.client.impl.protocol.codec.CacheAddEntryListenerCodec;
@@ -93,6 +102,7 @@ import com.hazelcast.client.impl.protocol.codec.ClientRemovePartitionLostListene
 import com.hazelcast.client.impl.protocol.codec.ClientSendAllSchemasCodec;
 import com.hazelcast.client.impl.protocol.codec.ClientSendSchemaCodec;
 import com.hazelcast.client.impl.protocol.codec.ClientStatisticsCodec;
+import com.hazelcast.client.impl.protocol.codec.ClientTpcAuthenticationCodec;
 import com.hazelcast.client.impl.protocol.codec.ClientTriggerPartitionAssignmentCodec;
 import com.hazelcast.client.impl.protocol.codec.ContinuousQueryAddListenerCodec;
 import com.hazelcast.client.impl.protocol.codec.ContinuousQueryDestroyCacheCodec;
@@ -128,14 +138,14 @@ import com.hazelcast.client.impl.protocol.codec.DynamicConfigAddRingbufferConfig
 import com.hazelcast.client.impl.protocol.codec.DynamicConfigAddScheduledExecutorConfigCodec;
 import com.hazelcast.client.impl.protocol.codec.DynamicConfigAddSetConfigCodec;
 import com.hazelcast.client.impl.protocol.codec.DynamicConfigAddTopicConfigCodec;
+import com.hazelcast.client.impl.protocol.codec.DynamicConfigAddUserCodeNamespaceConfigCodec;
+import com.hazelcast.client.impl.protocol.codec.DynamicConfigAddWanReplicationConfigCodec;
 import com.hazelcast.client.impl.protocol.codec.ExecutorServiceCancelOnMemberCodec;
 import com.hazelcast.client.impl.protocol.codec.ExecutorServiceCancelOnPartitionCodec;
 import com.hazelcast.client.impl.protocol.codec.ExecutorServiceIsShutdownCodec;
 import com.hazelcast.client.impl.protocol.codec.ExecutorServiceShutdownCodec;
 import com.hazelcast.client.impl.protocol.codec.ExecutorServiceSubmitToMemberCodec;
 import com.hazelcast.client.impl.protocol.codec.ExecutorServiceSubmitToPartitionCodec;
-import com.hazelcast.client.impl.protocol.codec.ExperimentalAuthenticationCodec;
-import com.hazelcast.client.impl.protocol.codec.ExperimentalAuthenticationCustomCodec;
 import com.hazelcast.client.impl.protocol.codec.FencedLockGetLockOwnershipCodec;
 import com.hazelcast.client.impl.protocol.codec.FencedLockLockCodec;
 import com.hazelcast.client.impl.protocol.codec.FencedLockTryLockCodec;
@@ -167,8 +177,11 @@ import com.hazelcast.client.impl.protocol.codec.ListSubCodec;
 import com.hazelcast.client.impl.protocol.codec.MCApplyMCConfigCodec;
 import com.hazelcast.client.impl.protocol.codec.MCChangeClusterStateCodec;
 import com.hazelcast.client.impl.protocol.codec.MCChangeClusterVersionCodec;
+import com.hazelcast.client.impl.protocol.codec.MCDemoteDataMemberCodec;
+import com.hazelcast.client.impl.protocol.codec.MCForceCloseCPSessionCodec;
 import com.hazelcast.client.impl.protocol.codec.MCGetCPMembersCodec;
 import com.hazelcast.client.impl.protocol.codec.MCGetClusterMetadataCodec;
+import com.hazelcast.client.impl.protocol.codec.MCGetDiagnosticsConfigCodec;
 import com.hazelcast.client.impl.protocol.codec.MCGetMapConfigCodec;
 import com.hazelcast.client.impl.protocol.codec.MCGetMemberConfigCodec;
 import com.hazelcast.client.impl.protocol.codec.MCGetSystemPropertiesCodec;
@@ -187,6 +200,7 @@ import com.hazelcast.client.impl.protocol.codec.MCResetQueueAgeStatisticsCodec;
 import com.hazelcast.client.impl.protocol.codec.MCRunConsoleCommandCodec;
 import com.hazelcast.client.impl.protocol.codec.MCRunGcCodec;
 import com.hazelcast.client.impl.protocol.codec.MCRunScriptCodec;
+import com.hazelcast.client.impl.protocol.codec.MCSetDiagnosticsConfigCodec;
 import com.hazelcast.client.impl.protocol.codec.MCShutdownClusterCodec;
 import com.hazelcast.client.impl.protocol.codec.MCShutdownMemberCodec;
 import com.hazelcast.client.impl.protocol.codec.MCTriggerForceStartCodec;
@@ -239,6 +253,7 @@ import com.hazelcast.client.impl.protocol.codec.MapLockCodec;
 import com.hazelcast.client.impl.protocol.codec.MapProjectCodec;
 import com.hazelcast.client.impl.protocol.codec.MapProjectWithPredicateCodec;
 import com.hazelcast.client.impl.protocol.codec.MapPutAllCodec;
+import com.hazelcast.client.impl.protocol.codec.MapPutAllWithMetadataCodec;
 import com.hazelcast.client.impl.protocol.codec.MapPutCodec;
 import com.hazelcast.client.impl.protocol.codec.MapPutIfAbsentCodec;
 import com.hazelcast.client.impl.protocol.codec.MapPutIfAbsentWithMaxIdleCodec;
@@ -320,11 +335,14 @@ import com.hazelcast.client.impl.protocol.codec.ReplicatedMapAddNearCacheEntryLi
 import com.hazelcast.client.impl.protocol.codec.ReplicatedMapClearCodec;
 import com.hazelcast.client.impl.protocol.codec.ReplicatedMapContainsKeyCodec;
 import com.hazelcast.client.impl.protocol.codec.ReplicatedMapContainsValueCodec;
+import com.hazelcast.client.impl.protocol.codec.ReplicatedMapEndEntryViewIterationCodec;
 import com.hazelcast.client.impl.protocol.codec.ReplicatedMapEntrySetCodec;
+import com.hazelcast.client.impl.protocol.codec.ReplicatedMapFetchEntryViewsCodec;
 import com.hazelcast.client.impl.protocol.codec.ReplicatedMapGetCodec;
 import com.hazelcast.client.impl.protocol.codec.ReplicatedMapIsEmptyCodec;
 import com.hazelcast.client.impl.protocol.codec.ReplicatedMapKeySetCodec;
 import com.hazelcast.client.impl.protocol.codec.ReplicatedMapPutAllCodec;
+import com.hazelcast.client.impl.protocol.codec.ReplicatedMapPutAllWithMetadataCodec;
 import com.hazelcast.client.impl.protocol.codec.ReplicatedMapPutCodec;
 import com.hazelcast.client.impl.protocol.codec.ReplicatedMapRemoveCodec;
 import com.hazelcast.client.impl.protocol.codec.ReplicatedMapRemoveEntryListenerCodec;
@@ -437,12 +455,11 @@ import com.hazelcast.client.impl.protocol.task.AddPartitionLostListenerMessageTa
 import com.hazelcast.client.impl.protocol.task.AuthenticationCustomCredentialsMessageTask;
 import com.hazelcast.client.impl.protocol.task.AuthenticationMessageTask;
 import com.hazelcast.client.impl.protocol.task.ClientStatisticsMessageTask;
+import com.hazelcast.client.impl.protocol.task.ClientTpcAuthenticationMessageTask;
 import com.hazelcast.client.impl.protocol.task.CreateProxiesMessageTask;
 import com.hazelcast.client.impl.protocol.task.CreateProxyMessageTask;
 import com.hazelcast.client.impl.protocol.task.DeployClassesMessageTask;
 import com.hazelcast.client.impl.protocol.task.DestroyProxyMessageTask;
-import com.hazelcast.client.impl.protocol.task.ExperimentalAuthenticationCustomCredentialsMessageTask;
-import com.hazelcast.client.impl.protocol.task.ExperimentalAuthenticationMessageTask;
 import com.hazelcast.client.impl.protocol.task.GetDistributedObjectsMessageTask;
 import com.hazelcast.client.impl.protocol.task.PingMessageTask;
 import com.hazelcast.client.impl.protocol.task.RemoveDistributedObjectListenerMessageTask;
@@ -489,9 +506,16 @@ import com.hazelcast.client.impl.protocol.task.crdt.pncounter.PNCounterGetConfig
 import com.hazelcast.client.impl.protocol.task.crdt.pncounter.PNCounterGetMessageTask;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddCacheConfigMessageTask;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddCardinalityEstimatorConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddDataConnectionConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.management.ForceCloseCPSessionTask;
+import com.hazelcast.client.impl.protocol.task.management.GetCPMembersMessageTask;
+import com.hazelcast.client.impl.protocol.task.management.GetDiagnosticsConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.management.PromoteToCPMemberMessageTask;
+import com.hazelcast.client.impl.protocol.task.management.RemoveCPMemberMessageTask;
+import com.hazelcast.client.impl.protocol.task.management.ResetCPSubsystemMessageTask;
+import com.hazelcast.client.impl.protocol.task.management.SetDiagnosticsConfigMessageTask;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddDurableExecutorConfigMessageTask;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddExecutorConfigMessageTask;
-import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddDataConnectionConfigMessageTask;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddFlakeIdGeneratorConfigMessageTask;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddListConfigMessageTask;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddMapConfigMessageTask;
@@ -504,6 +528,8 @@ import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddRingbufferConfig
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddScheduledExecutorConfigMessageTask;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddSetConfigMessageTask;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddTopicConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddUserCodeNamespaceConfigMessageTask;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.AddWanReplicationConfigTask;
 import com.hazelcast.client.impl.protocol.task.executorservice.ExecutorServiceCancelOnAddressMessageTask;
 import com.hazelcast.client.impl.protocol.task.executorservice.ExecutorServiceCancelOnPartitionMessageTask;
 import com.hazelcast.client.impl.protocol.task.executorservice.ExecutorServiceIsShutdownMessageTask;
@@ -546,7 +572,7 @@ import com.hazelcast.client.impl.protocol.task.management.ChangeClusterVersionMe
 import com.hazelcast.client.impl.protocol.task.management.ChangeWanReplicationStateMessageTask;
 import com.hazelcast.client.impl.protocol.task.management.CheckWanConsistencyMessageTask;
 import com.hazelcast.client.impl.protocol.task.management.ClearWanQueuesMessageTask;
-import com.hazelcast.client.impl.protocol.task.management.GetCPMembersMessageTask;
+import com.hazelcast.client.impl.protocol.task.management.DemoteDataMemberMessageTask;
 import com.hazelcast.client.impl.protocol.task.management.GetClusterMetadataMessageTask;
 import com.hazelcast.client.impl.protocol.task.management.GetMapConfigMessageTask;
 import com.hazelcast.client.impl.protocol.task.management.GetMemberConfigMessageTask;
@@ -560,11 +586,8 @@ import com.hazelcast.client.impl.protocol.task.management.HotRestartTriggerParti
 import com.hazelcast.client.impl.protocol.task.management.MatchClientFilteringConfigMessageTask;
 import com.hazelcast.client.impl.protocol.task.management.PollMCEventsMessageTask;
 import com.hazelcast.client.impl.protocol.task.management.PromoteLiteMemberMessageTask;
-import com.hazelcast.client.impl.protocol.task.management.PromoteToCPMemberMessageTask;
 import com.hazelcast.client.impl.protocol.task.management.QueueResetAgeStatisticsMessageTask;
 import com.hazelcast.client.impl.protocol.task.management.ReloadConfigMessageTask;
-import com.hazelcast.client.impl.protocol.task.management.RemoveCPMemberMessageTask;
-import com.hazelcast.client.impl.protocol.task.management.ResetCPSubsystemMessageTask;
 import com.hazelcast.client.impl.protocol.task.management.RunConsoleCommandMessageTask;
 import com.hazelcast.client.impl.protocol.task.management.RunGcMessageTask;
 import com.hazelcast.client.impl.protocol.task.management.RunScriptMessageTask;
@@ -623,6 +646,7 @@ import com.hazelcast.client.impl.protocol.task.map.MapProjectionWithPredicateMes
 import com.hazelcast.client.impl.protocol.task.map.MapPublisherCreateMessageTask;
 import com.hazelcast.client.impl.protocol.task.map.MapPublisherCreateWithValueMessageTask;
 import com.hazelcast.client.impl.protocol.task.map.MapPutAllMessageTask;
+import com.hazelcast.client.impl.protocol.task.map.MapPutAllWithMetadataMessageTask;
 import com.hazelcast.client.impl.protocol.task.map.MapPutIfAbsentMessageTask;
 import com.hazelcast.client.impl.protocol.task.map.MapPutIfAbsentWithMaxIdleMessageTask;
 import com.hazelcast.client.impl.protocol.task.map.MapPutMessageTask;
@@ -703,11 +727,14 @@ import com.hazelcast.client.impl.protocol.task.replicatedmap.ReplicatedMapAddNea
 import com.hazelcast.client.impl.protocol.task.replicatedmap.ReplicatedMapClearMessageTask;
 import com.hazelcast.client.impl.protocol.task.replicatedmap.ReplicatedMapContainsKeyMessageTask;
 import com.hazelcast.client.impl.protocol.task.replicatedmap.ReplicatedMapContainsValueMessageTask;
+import com.hazelcast.client.impl.protocol.task.replicatedmap.ReplicatedMapEndEntryViewIterationMessageTask;
 import com.hazelcast.client.impl.protocol.task.replicatedmap.ReplicatedMapEntrySetMessageTask;
+import com.hazelcast.client.impl.protocol.task.replicatedmap.ReplicatedMapFetchEntryViewsMessageTask;
 import com.hazelcast.client.impl.protocol.task.replicatedmap.ReplicatedMapGetMessageTask;
 import com.hazelcast.client.impl.protocol.task.replicatedmap.ReplicatedMapIsEmptyMessageTask;
 import com.hazelcast.client.impl.protocol.task.replicatedmap.ReplicatedMapKeySetMessageTask;
 import com.hazelcast.client.impl.protocol.task.replicatedmap.ReplicatedMapPutAllMessageTask;
+import com.hazelcast.client.impl.protocol.task.replicatedmap.ReplicatedMapPutAllWithMetadataMessageTask;
 import com.hazelcast.client.impl.protocol.task.replicatedmap.ReplicatedMapPutMessageTask;
 import com.hazelcast.client.impl.protocol.task.replicatedmap.ReplicatedMapRemoveEntryListenerMessageTask;
 import com.hazelcast.client.impl.protocol.task.replicatedmap.ReplicatedMapRemoveMessageTask;
@@ -806,6 +833,8 @@ import com.hazelcast.client.impl.protocol.task.transactionalset.TransactionalSet
 import com.hazelcast.client.impl.protocol.task.transactionalset.TransactionalSetSizeMessageTask;
 import com.hazelcast.cp.internal.client.AddCPGroupAvailabilityListenerMessageTask;
 import com.hazelcast.cp.internal.client.AddCPMembershipListenerMessageTask;
+import com.hazelcast.cp.internal.client.CPSubsystemGetCPGroupIdsMessageTask;
+import com.hazelcast.cp.internal.client.CPSubsystemGetCPObjectInfosMessageTask;
 import com.hazelcast.cp.internal.client.RemoveCPGroupAvailabilityListenerMessageTask;
 import com.hazelcast.cp.internal.client.RemoveCPMembershipListenerMessageTask;
 import com.hazelcast.cp.internal.datastructures.atomiclong.client.AddAndGetMessageTask;
@@ -822,6 +851,10 @@ import com.hazelcast.cp.internal.datastructures.countdownlatch.client.CountDownM
 import com.hazelcast.cp.internal.datastructures.countdownlatch.client.GetCountMessageTask;
 import com.hazelcast.cp.internal.datastructures.countdownlatch.client.GetRoundMessageTask;
 import com.hazelcast.cp.internal.datastructures.countdownlatch.client.TrySetCountMessageTask;
+import com.hazelcast.cp.internal.datastructures.cpmap.client.DeleteMessageTask;
+import com.hazelcast.cp.internal.datastructures.cpmap.client.PutIfAbsentMessageTask;
+import com.hazelcast.cp.internal.datastructures.cpmap.client.PutMessageTask;
+import com.hazelcast.cp.internal.datastructures.cpmap.client.RemoveMessageTask;
 import com.hazelcast.cp.internal.datastructures.lock.client.GetLockOwnershipStateMessageTask;
 import com.hazelcast.cp.internal.datastructures.lock.client.LockMessageTask;
 import com.hazelcast.cp.internal.datastructures.lock.client.TryLockMessageTask;
@@ -859,15 +892,14 @@ import com.hazelcast.internal.longregister.client.task.LongRegisterIncrementAndG
 import com.hazelcast.internal.longregister.client.task.LongRegisterSetMessageTask;
 import com.hazelcast.internal.util.collection.Int2ObjectHashMap;
 import com.hazelcast.spi.impl.NodeEngine;
-import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.sql.impl.client.SqlCloseMessageTask;
 import com.hazelcast.sql.impl.client.SqlExecuteMessageTask;
 import com.hazelcast.sql.impl.client.SqlFetchMessageTask;
 import com.hazelcast.sql.impl.client.SqlMappingDdlTask;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import static com.hazelcast.internal.util.MapUtil.createInt2ObjectHashMap;
 
+@SuppressWarnings({"ClassDataAbstractionCoupling", "ClassFanOutComplexity"})
 public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProvider {
     private static final int MESSAGE_TASK_PROVIDER_INITIAL_CAPACITY = 500;
 
@@ -876,7 +908,7 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
     private final Node node;
 
     public DefaultMessageTaskFactoryProvider(NodeEngine nodeEngine) {
-        this.node = ((NodeEngineImpl) nodeEngine).getNode();
+        this.node = nodeEngine.getNode();
         this.factories = createInt2ObjectHashMap(MESSAGE_TASK_PROVIDER_INITIAL_CAPACITY);
         initFactories();
     }
@@ -908,12 +940,13 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
         initializeFlakeIdGeneratorTaskFactories();
         initializePnCounterTaskFactories();
         initializeCPGroupTaskFactories();
-        initializeCPListenerTaskFactories();
+        initializeCPSubsystemMessageTaskFactories();
         initializeAtomicLongTaskFactories();
         initializeAtomicReferenceTaskFactories();
         initializeCountDownLatchTaskFactories();
         initializeFencedLockTaskFactories();
         initializeSemaphoreTaskFactories();
+        initializeCPMapTaskFactories();
         initializeManagementCenterTaskFactories();
         initializeSqlTaskFactories();
         initializeSchemaFactories();
@@ -969,6 +1002,7 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
                 (cm, con) -> new RingbufferSizeMessageTask(cm, node, con));
     }
 
+    @SuppressWarnings("MethodLength")
     private void initializeCacheTaskFactories() {
         factories.put(CacheClearCodec.REQUEST_MESSAGE_TYPE,
                 (cm, con) -> new CacheClearMessageTask(cm, node, con));
@@ -1075,6 +1109,12 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
                 (cm, con) -> new ReplicatedMapAddEntryListenerMessageTask(cm, node, con));
         factories.put(ReplicatedMapKeySetCodec.REQUEST_MESSAGE_TYPE,
                 (cm, con) -> new ReplicatedMapKeySetMessageTask(cm, node, con));
+        factories.put(ReplicatedMapPutAllWithMetadataCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new ReplicatedMapPutAllWithMetadataMessageTask(cm, node, con));
+        factories.put(ReplicatedMapFetchEntryViewsCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new ReplicatedMapFetchEntryViewsMessageTask(cm, node, con));
+        factories.put(ReplicatedMapEndEntryViewIterationCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new ReplicatedMapEndEntryViewIterationMessageTask(cm, node, con));
     }
 
     private void initializeLongRegisterClientTaskFactories() {
@@ -1341,6 +1381,7 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
                 (cm, con) -> new TransactionalSetRemoveMessageTask(cm, node, con));
     }
 
+    @SuppressWarnings("MethodLength")
     private void initializeMapTaskFactories() {
         factories.put(MapEntriesWithPagingPredicateCodec.REQUEST_MESSAGE_TYPE,
                 (cm, con) -> new MapEntriesWithPagingPredicateMessageTask(cm, node, con));
@@ -1486,6 +1527,8 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
                 (cm, con) -> new MapPutIfAbsentWithMaxIdleMessageTask(cm, node, con));
         factories.put(MapPutTransientWithMaxIdleCodec.REQUEST_MESSAGE_TYPE,
                 (cm, con) -> new MapPutTransientWithMaxIdleMessageTask(cm, node, con));
+        factories.put(MapPutAllWithMetadataCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new MapPutAllWithMetadataMessageTask(cm, node, con));
     }
 
     private void initializeGeneralTaskFactories() {
@@ -1525,10 +1568,8 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
                 (cm, con) -> new AddBackupListenerMessageTask(cm, node, con));
         factories.put(ClientTriggerPartitionAssignmentCodec.REQUEST_MESSAGE_TYPE,
                 (cm, con) -> new TriggerPartitionAssignmentMessageTask(cm, node, con));
-        factories.put(ExperimentalAuthenticationCodec.REQUEST_MESSAGE_TYPE,
-                (cm, con) -> new ExperimentalAuthenticationMessageTask(cm, node, con));
-        factories.put(ExperimentalAuthenticationCustomCodec.REQUEST_MESSAGE_TYPE,
-                (cm, con) -> new ExperimentalAuthenticationCustomCredentialsMessageTask(cm, node, con));
+        factories.put(ClientTpcAuthenticationCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new ClientTpcAuthenticationMessageTask(cm, node, con));
     }
 
     private void initializeQueueTaskFactories() {
@@ -1670,6 +1711,10 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
                 (cm, con) -> new AddPNCounterConfigMessageTask(cm, node, con));
         factories.put(DynamicConfigAddDataConnectionConfigCodec.REQUEST_MESSAGE_TYPE,
                 (cm, con) -> new AddDataConnectionConfigMessageTask(cm, node, con));
+        factories.put(DynamicConfigAddWanReplicationConfigCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new AddWanReplicationConfigTask(cm, node, con));
+        factories.put(DynamicConfigAddUserCodeNamespaceConfigCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new AddUserCodeNamespaceConfigMessageTask(cm, node, con));
     }
 
     private void initializeFlakeIdGeneratorTaskFactories() {
@@ -1702,7 +1747,7 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
                 (cm, con) -> new GenerateThreadIdMessageTask(cm, node, con));
     }
 
-    private void initializeCPListenerTaskFactories() {
+    private void initializeCPSubsystemMessageTaskFactories() {
         factories.put(CPSubsystemAddMembershipListenerCodec.REQUEST_MESSAGE_TYPE,
                 (cm, con) -> new AddCPMembershipListenerMessageTask(cm, node, con));
         factories.put(CPSubsystemRemoveMembershipListenerCodec.REQUEST_MESSAGE_TYPE,
@@ -1711,6 +1756,10 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
                 (cm, con) -> new AddCPGroupAvailabilityListenerMessageTask(cm, node, con));
         factories.put(CPSubsystemRemoveGroupAvailabilityListenerCodec.REQUEST_MESSAGE_TYPE,
                 (cm, con) -> new RemoveCPGroupAvailabilityListenerMessageTask(cm, node, con));
+        factories.put(CPSubsystemGetCPGroupIdsCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new CPSubsystemGetCPGroupIdsMessageTask(cm, node, con));
+        factories.put(CPSubsystemGetCPObjectInfosCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new CPSubsystemGetCPObjectInfosMessageTask(cm, node, con));
     }
 
     private void initializeAtomicLongTaskFactories() {
@@ -1784,6 +1833,24 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
                 (cm, con) -> new ReleasePermitsMessageTask(cm, node, con));
     }
 
+    public void initializeCPMapTaskFactories() {
+        factories.put(CPMapGetCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new com.hazelcast.cp.internal.datastructures.cpmap.client.GetMessageTask(cm, node, con));
+        factories.put(CPMapPutCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new PutMessageTask(cm, node, con));
+        factories.put(CPMapSetCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new com.hazelcast.cp.internal.datastructures.cpmap.client.SetMessageTask(cm, node, con));
+        factories.put(CPMapRemoveCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new RemoveMessageTask(cm, node, con));
+        factories.put(CPMapDeleteCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new DeleteMessageTask(cm, node, con));
+        factories.put(CPMapCompareAndSetCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new com.hazelcast.cp.internal.datastructures.cpmap.client.CompareAndSetMessageTask(cm, node, con));
+        factories.put(CPMapPutIfAbsentCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new PutIfAbsentMessageTask(cm, node, con));
+    }
+
+
     private void initializeManagementCenterTaskFactories() {
         factories.put(MCReadMetricsCodec.REQUEST_MESSAGE_TYPE,
                 (cm, con) -> new ReadMetricsMessageTask(cm, node, con));
@@ -1855,6 +1922,14 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
                 (cm, con) -> new ReloadConfigMessageTask(cm, node, con));
         factories.put(MCUpdateConfigCodec.REQUEST_MESSAGE_TYPE,
                 (cm, con) -> new UpdateConfigMessageTask(cm, node, con));
+        factories.put(MCForceCloseCPSessionCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new ForceCloseCPSessionTask(cm, node, con));
+        factories.put(MCDemoteDataMemberCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new DemoteDataMemberMessageTask(cm, node, con));
+        factories.put(MCGetDiagnosticsConfigCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new GetDiagnosticsConfigMessageTask(cm, node, con));
+        factories.put(MCSetDiagnosticsConfigCodec.REQUEST_MESSAGE_TYPE,
+                (cm, con) -> new SetDiagnosticsConfigMessageTask(cm, node, con));
     }
 
     private void initializeSqlTaskFactories() {
@@ -1877,7 +1952,6 @@ public class DefaultMessageTaskFactoryProvider implements MessageTaskFactoryProv
                 (cm, con) -> new SendAllSchemasMessageTask(cm, node, con));
     }
 
-    @SuppressFBWarnings({"MS_EXPOSE_REP", "EI_EXPOSE_REP"})
     @Override
     public Int2ObjectHashMap<MessageTaskFactory> getFactories() {
         return factories;

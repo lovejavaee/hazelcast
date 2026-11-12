@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -72,6 +72,7 @@ import static org.mockito.Mockito.verify;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
+@SuppressWarnings({ "unused", "FieldCanBeLocal", "ClassCanBeRecord" })
 public class CompactSerializationTest {
 
     @Test
@@ -85,7 +86,7 @@ public class CompactSerializationTest {
     public void testSerializer_withDuplicateFieldNames() {
         SerializationConfig config = new SerializationConfig();
         config.getCompactSerializationConfig()
-                .addSerializer(new DuplicateWritingSerializer());
+              .addSerializer(new DuplicateWritingSerializer());
 
         SerializationService service = createSerializationService(config);
 
@@ -110,28 +111,29 @@ public class CompactSerializationTest {
                 .hasMessageContaining("Invalid field name");
     }
 
+    @Test
     public void testSerializerRegistration_withDuplicateClasses() {
         SerializationConfig config = new SerializationConfig();
-        assertThatThrownBy(() -> {
-            config.getCompactSerializationConfig()
-                    .addSerializer(new EmployeeDTOSerializer())
-                    .addSerializer(new SameClassEmployeeDTOSerializer());
-        }).isInstanceOf(InvalidConfigurationException.class)
-                .hasMessageContaining("Duplicate")
-                .hasMessageContaining("class");
+        assertThatThrownBy(() ->
+                config.getCompactSerializationConfig()
+                      .addSerializer(new EmployeeDTOSerializer())
+                      .addSerializer(new SameClassEmployeeDTOSerializer())
+        ).isInstanceOf(InvalidConfigurationException.class)
+         .hasMessageContaining("Duplicate")
+         .hasMessageContaining("class");
     }
 
     @Test
     public void testSerializerRegistration_withDuplicateTypeNames() {
         SerializationConfig config = new SerializationConfig();
 
-        assertThatThrownBy(() -> {
-            config.getCompactSerializationConfig()
-                    .addSerializer(new EmployeeDTOSerializer())
-                    .addSerializer(new SameTypeNameEmployeeDTOSerializer());
-        }).isInstanceOf(InvalidConfigurationException.class)
-                .hasMessageContaining("Duplicate")
-                .hasMessageContaining("type name");
+        assertThatThrownBy(() ->
+                config.getCompactSerializationConfig()
+                      .addSerializer(new EmployeeDTOSerializer())
+                      .addSerializer(new SameTypeNameEmployeeDTOSerializer())
+        ).isInstanceOf(InvalidConfigurationException.class)
+         .hasMessageContaining("Duplicate")
+         .hasMessageContaining("type name");
     }
 
     @Test
@@ -142,7 +144,7 @@ public class CompactSerializationTest {
         MainDTOSerializer mainDTOSerializer = spy(new MainDTOSerializer());
 
         config.getCompactSerializationConfig()
-                .setSerializers(innerDTOSerializer, mainDTOSerializer);
+              .setSerializers(innerDTOSerializer, mainDTOSerializer);
 
         SerializationService service = createSerializationService(config);
 
@@ -162,24 +164,24 @@ public class CompactSerializationTest {
     public void testSetSerializers_withDuplicateClasses() {
         SerializationConfig config = new SerializationConfig();
 
-        assertThatThrownBy(() -> {
-            config.getCompactSerializationConfig()
-                    .setSerializers(new EmployeeDTOSerializer(), new SameClassEmployeeDTOSerializer());
-        }).isInstanceOf(InvalidConfigurationException.class)
-                .hasMessageContaining("Duplicate")
-                .hasMessageContaining("class");
+        assertThatThrownBy(() ->
+                config.getCompactSerializationConfig()
+                      .setSerializers(new EmployeeDTOSerializer(), new SameClassEmployeeDTOSerializer())
+        ).isInstanceOf(InvalidConfigurationException.class)
+         .hasMessageContaining("Duplicate")
+         .hasMessageContaining("class");
     }
 
     @Test
     public void testSetSerializers_withDuplicateTypeNames() {
         SerializationConfig config = new SerializationConfig();
 
-        assertThatThrownBy(() -> {
-            config.getCompactSerializationConfig()
-                    .setSerializers(new EmployeeDTOSerializer(), new SameTypeNameEmployeeDTOSerializer());
-        }).isInstanceOf(InvalidConfigurationException.class)
-                .hasMessageContaining("Duplicate")
-                .hasMessageContaining("type name");
+        assertThatThrownBy(() ->
+                config.getCompactSerializationConfig()
+                      .setSerializers(new EmployeeDTOSerializer(), new SameTypeNameEmployeeDTOSerializer())
+        ).isInstanceOf(InvalidConfigurationException.class)
+         .hasMessageContaining("Duplicate")
+         .hasMessageContaining("type name");
     }
 
     @Test
@@ -188,8 +190,8 @@ public class CompactSerializationTest {
 
         EmployeeDTOSerializer serializer = spy(new EmployeeDTOSerializer());
         config.getCompactSerializationConfig()
-                .addSerializer(serializer)
-                .setSerializers(new InnerDTOSerializer(), new MainDTOSerializer());
+              .addSerializer(serializer)
+              .setSerializers(new InnerDTOSerializer(), new MainDTOSerializer());
 
         SerializationService service = createSerializationService(config);
         EmployeeDTO employeeDTO = new EmployeeDTO();
@@ -204,7 +206,7 @@ public class CompactSerializationTest {
     public void testSetClasses() {
         SerializationConfig config = new SerializationConfig();
         config.getCompactSerializationConfig()
-                .setClasses(ExternalizableEmployeeDTO.class, SerializableEmployeeDTO.class);
+              .setClasses(ExternalizableEmployeeDTO.class, SerializableEmployeeDTO.class);
 
         SerializationService service = createSerializationService(config);
 
@@ -221,20 +223,20 @@ public class CompactSerializationTest {
     public void testSetClasses_withDuplicateClasses() {
         SerializationConfig config = new SerializationConfig();
 
-        assertThatThrownBy(() -> {
-            config.getCompactSerializationConfig()
-                    .setClasses(ExternalizableEmployeeDTO.class, ExternalizableEmployeeDTO.class);
-        }).isInstanceOf(InvalidConfigurationException.class)
-                .hasMessageContaining("Duplicate")
-                .hasMessageContaining("type name");
+        assertThatThrownBy(() ->
+                config.getCompactSerializationConfig()
+                      .setClasses(ExternalizableEmployeeDTO.class, ExternalizableEmployeeDTO.class)
+        ).isInstanceOf(InvalidConfigurationException.class)
+         .hasMessageContaining("Duplicate")
+         .hasMessageContaining("type name");
     }
 
     @Test
     public void testSetSerializers_whenThereAreClassRegistrations() {
         SerializationConfig config = new SerializationConfig();
         config.getCompactSerializationConfig()
-                .setClasses(SerializableEmployeeDTO.class)
-                .setSerializers(new EmployeeDTOSerializer());
+              .setClasses(SerializableEmployeeDTO.class)
+              .setSerializers(new EmployeeDTOSerializer());
 
         SerializationService service = createSerializationService(config);
         Data data = service.toData(new SerializableEmployeeDTO("John Doe", 42));
@@ -246,8 +248,8 @@ public class CompactSerializationTest {
         SerializationConfig config = new SerializationConfig();
         EmployeeDTOSerializer serializer = spy(new EmployeeDTOSerializer());
         config.getCompactSerializationConfig()
-                .setSerializers(serializer)
-                .setClasses(SerializableEmployeeDTO.class);
+              .setSerializers(serializer)
+              .setClasses(SerializableEmployeeDTO.class);
 
         SerializationService service = createSerializationService(config);
         service.toObject(service.toData(new EmployeeDTO()));
@@ -263,21 +265,21 @@ public class CompactSerializationTest {
         // OptionalDouble is a class that does not implement the Serializable interface
         // from the java.util package, which is not allowed to be serialized
         // by zero-config serializer.
-        assertThatThrownBy(() -> {
-            service.toData(OptionalDouble.of(1));
-        }).isInstanceOf(HazelcastSerializationException.class)
-                .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
-                .hasStackTraceContaining("If you want to serialize this class");
+        assertThatThrownBy(() ->
+                service.toData(OptionalDouble.of(1))
+        ).isInstanceOf(HazelcastSerializationException.class)
+         .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
+         .hasStackTraceContaining("To override an existing serialization mechanism you can add");
     }
 
     @Test
     public void testSerializingClassReflectively_withUnsupportedFieldType() {
         SerializationService service = createSerializationService(new SerializationConfig());
-        assertThatThrownBy(() -> {
-            service.toData(new ClassWithUnsupportedField());
-        }).isInstanceOf(HazelcastSerializationException.class)
-                .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
-                .hasStackTraceContaining("which uses this class in its fields");
+        assertThatThrownBy(() ->
+                service.toData(new ClassWithUnsupportedField())
+        ).isInstanceOf(HazelcastSerializationException.class)
+         .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
+         .hasStackTraceContaining("because it has a field of type 'java.util.LinkedList'");
     }
 
     @Test
@@ -303,31 +305,31 @@ public class CompactSerializationTest {
     @Test
     public void testSerializingClassReflectively_withUnsupportedArrayItemType() {
         SerializationService service = createSerializationService(new SerializationConfig());
-        assertThatThrownBy(() -> {
-            service.toData(new ClassWithUnsupportedArrayField());
-        }).isInstanceOf(HazelcastSerializationException.class)
-                .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
-                .hasStackTraceContaining("which uses this class in its fields");
+        assertThatThrownBy(() ->
+                service.toData(new ClassWithUnsupportedArrayField())
+        ).isInstanceOf(HazelcastSerializationException.class)
+         .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
+         .hasStackTraceContaining("because it has a field of type 'java.util.LinkedList'");
     }
 
     @Test
     public void testSerializingClassReflectively_withArrayOfArrayField() {
         SerializationService service = createSerializationService(new SerializationConfig());
-        assertThatThrownBy(() -> {
-                service.toData(new ClassWithArrayOfArrayField());
-        }).isInstanceOf(HazelcastSerializationException.class)
-                .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
-                .hasStackTraceContaining("which uses this class in its fields");
+        assertThatThrownBy(() ->
+                service.toData(new ClassWithArrayOfArrayField())
+        ).isInstanceOf(HazelcastSerializationException.class)
+         .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
+         .hasStackTraceContaining("because it has a field of type '[I'");
     }
 
     @Test
     public void testSerializingClassReflectively_withVoidField() {
         SerializationService service = createSerializationService(new SerializationConfig());
-        assertThatThrownBy(() -> {
-            service.toData(new ClassWithVoidField());
-        }).isInstanceOf(HazelcastSerializationException.class)
-                .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
-                .hasStackTraceContaining("which uses this class in its fields");
+        assertThatThrownBy(() ->
+                service.toData(new ClassWithVoidField())
+        ).isInstanceOf(HazelcastSerializationException.class)
+         .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
+         .hasStackTraceContaining("because it has a field of type 'java.lang.Void'");
     }
 
     @Test
@@ -338,13 +340,13 @@ public class CompactSerializationTest {
         GenericRecord itemType2 = GenericRecordBuilder.compact("item-type-2").build();
 
         GenericRecord record = GenericRecordBuilder.compact("foo")
-                .setArrayOfGenericRecord("bar", new GenericRecord[]{itemType1, itemType2})
-                .build();
+                                                   .setArrayOfGenericRecord("bar", new GenericRecord[]{itemType1, itemType2})
+                                                   .build();
 
-        assertThatThrownBy(() -> {
-            service.toData(record);
-        }).isInstanceOf(HazelcastSerializationException.class)
-                .hasStackTraceContaining("array of Compact serializable GenericRecord objects containing different schemas");
+        assertThatThrownBy(() ->
+                service.toData(record)
+        ).isInstanceOf(HazelcastSerializationException.class)
+         .hasStackTraceContaining("array of Compact serializable GenericRecord objects containing different schemas");
     }
 
     @Test
@@ -357,10 +359,10 @@ public class CompactSerializationTest {
 
         WithCompactArrayField object = new WithCompactArrayField(objects);
 
-        assertThatThrownBy(() -> {
-            service.toData(object);
-        }).isInstanceOf(HazelcastSerializationException.class)
-                .hasStackTraceContaining("array of Compact serializable objects containing different item types");
+        assertThatThrownBy(() ->
+                service.toData(object)
+        ).isInstanceOf(HazelcastSerializationException.class)
+         .hasStackTraceContaining("array of Compact serializable objects containing different item types");
     }
 
     @Test
@@ -368,26 +370,22 @@ public class CompactSerializationTest {
         SerializationConfig config = new SerializationConfig();
         SerializationService service = createSerializationService(config);
 
-        assertThatThrownBy(() -> {
-            service.toData(new ClassWithUnsupportedArrayListField());
-        }).isInstanceOf(HazelcastSerializationException.class)
-                .hasStackTraceContaining("UUID")
-                .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
-                .hasStackTraceContaining("which uses this class in its fields");
+        assertThatThrownBy(() ->
+                service.toData(new ClassWithUnsupportedArrayListField())
+        ).isInstanceOf(HazelcastSerializationException.class)
+         .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
+         .hasStackTraceContaining("because it has a field of type 'java.util.UUID'");
 
-        assertThatThrownBy(() -> {
-            service.toData(new ClassWithUnsupportedHashSetField());
-        }).isInstanceOf(HazelcastSerializationException.class)
-                .hasStackTraceContaining("UUID")
-                .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
-                .hasStackTraceContaining("which uses this class in its fields");
+        assertThatThrownBy(() ->
+                service.toData(new ClassWithUnsupportedHashSetField())
+        ).isInstanceOf(HazelcastSerializationException.class)
+         .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
+         .hasStackTraceContaining("because it has a field of type 'java.util.UUID'");
 
-        assertThatThrownBy(() -> {
-            service.toData(new ClassWithUnsupportedHashMapField());
-        }).isInstanceOf(HazelcastSerializationException.class)
-                .hasStackTraceContaining("UUID")
+        assertThatThrownBy(() -> service.toData(new ClassWithUnsupportedHashMapField()))
+                .isInstanceOf(HazelcastSerializationException.class)
                 .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
-                .hasStackTraceContaining("which uses this class in its fields");
+                .hasStackTraceContaining("because it has a field of type 'java.util.UUID'");
     }
 
     @Test
@@ -399,12 +397,8 @@ public class CompactSerializationTest {
                 new ArrayList<>(Arrays.asList(1, 2, 3, null, -42)),
                 new HashSet<>(Arrays.asList(null, true, false)),
                 new HashSet<>(Arrays.asList(BigDecimal.ONE, BigDecimal.TEN, null)),
-                new HashMap<Long, Float>() {{
-                    put(1L, 42F);
-                }},
-                new HashMap<Byte, Double>() {{
-                    put((byte) 0, 42D);
-                }}
+                Map.of(1L, 42F),
+                new HashMap<>(Map.of((byte) 0, 42D))
         );
 
         Data data = service.toData(object);
@@ -435,11 +429,11 @@ public class CompactSerializationTest {
         SerializationConfig config = new SerializationConfig();
         SerializationService service = createSerializationService(config);
 
-        assertThatThrownBy(() -> {
-            service.toData(new UsesSerializableClassAsField(new SerializableEmployeeDTO("John Doe", 42)));
-        }).isInstanceOf(HazelcastSerializationException.class)
-                .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
-                .hasStackTraceContaining("can be serialized with another serialization mechanism.");
+        assertThatThrownBy(() ->
+                service.toData(new UsesSerializableClassAsField(new SerializableEmployeeDTO("John Doe", 42)))
+        ).isInstanceOf(HazelcastSerializationException.class)
+         .hasStackTraceContaining("cannot be serialized with zero configuration Compact serialization")
+         .hasStackTraceContaining("can be serialized with another serialization mechanism");
     }
 
     @Test
@@ -470,11 +464,11 @@ public class CompactSerializationTest {
             return null;
         }).when(serializer).write(any(), any());
         // This should throw because schema does not have a baz field.
-        assertThatThrownBy(() -> {
-            serializationService.toData(fooBar);
-        }).isInstanceOf(HazelcastSerializationException.class)
-          .hasCauseInstanceOf(HazelcastSerializationException.class)
-          .hasStackTraceContaining("Invalid field name");
+        assertThatThrownBy(() ->
+                serializationService.toData(fooBar)
+        ).isInstanceOf(HazelcastSerializationException.class)
+         .hasCauseInstanceOf(HazelcastSerializationException.class)
+         .hasStackTraceContaining("Invalid field name");
     }
 
     @Test
@@ -494,11 +488,11 @@ public class CompactSerializationTest {
             return null;
         }).when(serializer).write(any(), any());
         // This should throw because in the schema type of foo is not int32.
-        assertThatThrownBy(() -> {
-                serializationService.toData(fooBar);
-        }).isInstanceOf(HazelcastSerializationException.class)
-          .hasCauseInstanceOf(HazelcastSerializationException.class)
-          .hasStackTraceContaining("Invalid field type");
+        assertThatThrownBy(() ->
+                serializationService.toData(fooBar)
+        ).isInstanceOf(HazelcastSerializationException.class)
+         .hasCauseInstanceOf(HazelcastSerializationException.class)
+         .hasStackTraceContaining("Invalid field type");
     }
 
     private static class FooBar {
@@ -542,7 +536,7 @@ public class CompactSerializationTest {
 
         @Nonnull
         @Override
-        public Class getCompactClass() {
+        public Class<FooBar> getCompactClass() {
             return FooBar.class;
         }
     }
@@ -578,6 +572,7 @@ public class CompactSerializationTest {
 
     private static class ClassWithInstantField {
         private final Instant instant;
+
         ClassWithInstantField(Instant instant) {
             this.instant = instant;
         }
@@ -606,6 +601,7 @@ public class CompactSerializationTest {
 
     private static class ClassWithInstantArrayField {
         private final Instant[] instants;
+
         ClassWithInstantArrayField(Instant[] instants) {
             this.instants = instants;
         }
@@ -645,19 +641,19 @@ public class CompactSerializationTest {
     }
 
     private static class ClassWithCollectionFields {
-        private List<String> stringList;
-        private ArrayList<Integer> integerArrayList;
-        private Set<Boolean> booleanSet;
-        private HashSet<BigDecimal> decimalHashSet;
-        private Map<Long, Float> longFloatMap;
-        private HashMap<Byte, Double> byteDoubleHashMap;
+        private final List<String> stringList;
+        private final ArrayList<Integer> integerArrayList;
+        private final Set<Boolean> booleanSet;
+        private final HashSet<BigDecimal> decimalHashSet;
+        private final Map<Long, Float> longFloatMap;
+        private final HashMap<Byte, Double> byteDoubleHashMap;
 
         private ClassWithCollectionFields(List<String> stringList,
-                                         ArrayList<Integer> integerArrayList,
-                                         Set<Boolean> booleanSet,
-                                         HashSet<BigDecimal> decimalHashSet,
-                                         Map<Long, Float> longFloatMap,
-                                         HashMap<Byte, Double> byteDoubleHashMap) {
+                                          ArrayList<Integer> integerArrayList,
+                                          Set<Boolean> booleanSet,
+                                          HashSet<BigDecimal> decimalHashSet,
+                                          Map<Long, Float> longFloatMap,
+                                          HashMap<Byte, Double> byteDoubleHashMap) {
             this.stringList = stringList;
             this.integerArrayList = integerArrayList;
             this.booleanSet = booleanSet;
@@ -702,7 +698,7 @@ public class CompactSerializationTest {
         private HashMap<UUID, Long> map;
     }
 
-    private static class Foo {
+    private static final class Foo {
         private final int bar;
 
         private Foo(int bar) {
@@ -737,7 +733,7 @@ public class CompactSerializationTest {
     }
 
     private static class WithCompactArrayField {
-        private SomeCompactObject[] compactObjects;
+        private final SomeCompactObject[] compactObjects;
 
         private WithCompactArrayField(SomeCompactObject[] compactObjects) {
             this.compactObjects = compactObjects;
@@ -754,7 +750,7 @@ public class CompactSerializationTest {
     }
 
     private static class UsesSerializableClassAsField {
-        private SerializableEmployeeDTO serializableClass;
+        private final SerializableEmployeeDTO serializableClass;
 
         private UsesSerializableClassAsField(SerializableEmployeeDTO serializableClass) {
             this.serializableClass = serializableClass;

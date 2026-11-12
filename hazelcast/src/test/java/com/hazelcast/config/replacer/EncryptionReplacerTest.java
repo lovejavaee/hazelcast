@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 package com.hazelcast.config.replacer;
 
 import com.hazelcast.core.HazelcastException;
-import com.hazelcast.internal.nio.IOUtil;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
 import com.hazelcast.test.HazelcastSerialClassRunner;
@@ -35,12 +34,9 @@ import java.util.Enumeration;
 import java.util.Properties;
 
 import static com.hazelcast.config.replacer.EncryptionReplacer.encrypt;
-import static org.hamcrest.CoreMatchers.allOf;
-import static org.hamcrest.CoreMatchers.endsWith;
-import static org.hamcrest.CoreMatchers.startsWith;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThat;
 import static org.junit.Assume.assumeNotNull;
 
 /**
@@ -83,7 +79,7 @@ public class EncryptionReplacerTest extends AbstractPbeReplacerTest {
     }
 
     @Test(expected = IllegalArgumentException.class)
-    public void testNoPasswordInputProvided() throws Exception {
+    public void testNoPasswordInputProvided() {
         EncryptionReplacer replacer = new EncryptionReplacer();
         Properties properties = new Properties();
         properties.setProperty(EncryptionReplacer.PROPERTY_PASSWORD_USER_PROPERTIES, "false");
@@ -113,7 +109,7 @@ public class EncryptionReplacerTest extends AbstractPbeReplacerTest {
     }
 
     @Test
-    public void testUserChanged() throws Exception {
+    public void testUserChanged() {
         assumeDefaultAlgorithmsSupported();
         AbstractPbeReplacer replacer = createAndInitReplacer(new Properties());
         userNameProperty.setOrClearProperty("somebodyElse");
@@ -128,7 +124,9 @@ public class EncryptionReplacerTest extends AbstractPbeReplacerTest {
         File configFile = createFileWithString(xml);
         hazelcastConfigProperty.setOrClearProperty(configFile.getAbsolutePath());
         String encrypted = encrypt("test");
-        assertThat(encrypted, allOf(startsWith("$ENC{"), endsWith("}")));
+        assertThat(encrypted)
+                .startsWith("$ENC{")
+                .endsWith("}");
     }
 
     @Test
@@ -138,7 +136,9 @@ public class EncryptionReplacerTest extends AbstractPbeReplacerTest {
         File configFile = createFileWithString(xml);
         hazelcastConfigProperty.setOrClearProperty(configFile.getAbsolutePath());
         String encrypted = encrypt("test");
-        assertThat(encrypted, allOf(startsWith("$ENC{"), endsWith("}")));
+        assertThat(encrypted)
+                .startsWith("$ENC{")
+                .endsWith("}");
     }
 
     @Test
@@ -149,7 +149,9 @@ public class EncryptionReplacerTest extends AbstractPbeReplacerTest {
         File configFile = createFileWithString(xml);
         hazelcastConfigProperty.setOrClearProperty(configFile.getAbsolutePath());
         String encrypted = encrypt("test");
-        assertThat(encrypted, allOf(startsWith("$ENC{"), endsWith("}")));
+        assertThat(encrypted)
+                .startsWith("$ENC{")
+                .endsWith("}");
     }
 
     @Test
@@ -160,7 +162,9 @@ public class EncryptionReplacerTest extends AbstractPbeReplacerTest {
         File configFile = createFileWithString(xml);
         hazelcastConfigProperty.setOrClearProperty(configFile.getAbsolutePath());
         String encrypted = encrypt("test");
-        assertThat(encrypted, allOf(startsWith("$ENC{"), endsWith("}")));
+        assertThat(encrypted)
+                .startsWith("$ENC{")
+                .endsWith("}");
     }
 
     @Override
@@ -179,12 +183,9 @@ public class EncryptionReplacerTest extends AbstractPbeReplacerTest {
 
     private File createFileWithString(String string) throws IOException {
         File file = tempFolder.newFile();
-        if (string != null && string.length() > 0) {
-            PrintWriter out = new PrintWriter(file);
-            try {
+        if (string != null && !string.isEmpty()) {
+            try (PrintWriter out = new PrintWriter(file)) {
                 out.print(string);
-            } finally {
-                IOUtil.closeResource(out);
             }
         }
         return file;

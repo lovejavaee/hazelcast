@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +17,12 @@
 package com.hazelcast.client.properties;
 
 import com.hazelcast.client.config.ClientMetricsConfig;
+import com.hazelcast.client.config.RoutingMode;
+import com.hazelcast.client.impl.connection.tcp.TcpClientConnectionManager;
 import com.hazelcast.config.MetricsJmxConfig;
 import com.hazelcast.core.IndeterminateOperationStateException;
 import com.hazelcast.spi.properties.HazelcastProperty;
+import com.hazelcast.client.util.ClientConnectivityLogger;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -124,7 +127,10 @@ public final class ClientProperty {
     /**
      * Controls the number of IO input threads. Defaults to -1, so the system will decide.
      * <p>
-     * If client is a smart client and processor count larger than 8, it will default to 3 otherwise it will default to 1.
+     * If client uses non-{@link RoutingMode#SINGLE_MEMBER} routing and processor count larger than
+     * {@value TcpClientConnectionManager#SMALL_MACHINE_PROCESSOR_COUNT}, it will default to
+     * {@value TcpClientConnectionManager#DEFAULT_IO_THREAD_COUNT} otherwise it defaults to
+     * {@value TcpClientConnectionManager#DEFAULT_IO_THREAD_COUNT_SMALL_MACHINE}.
      */
     public static final HazelcastProperty IO_INPUT_THREAD_COUNT
             = new HazelcastProperty("hazelcast.client.io.input.thread.count", -1);
@@ -132,7 +138,10 @@ public final class ClientProperty {
     /**
      * Controls the number of IO output threads. Defaults to -1, so the system will decide.
      * <p>
-     * If client is a smart client and processor count larger than 8 , it will default to 3 otherwise it will default to 1.
+     * If client uses non-{@link RoutingMode#SINGLE_MEMBER} routing and processor count larger than
+     * {@value TcpClientConnectionManager#SMALL_MACHINE_PROCESSOR_COUNT}, it will default to
+     * {@value TcpClientConnectionManager#DEFAULT_IO_THREAD_COUNT} otherwise it defaults to
+     * {@value TcpClientConnectionManager#DEFAULT_IO_THREAD_COUNT_SMALL_MACHINE}.
      */
     public static final HazelcastProperty IO_OUTPUT_THREAD_COUNT
             = new HazelcastProperty("hazelcast.client.io.output.thread.count", -1);
@@ -183,7 +192,7 @@ public final class ClientProperty {
      * setting to 0 should be regarded an experimental feature.
      * <p>
      * If set to 0, the IO_OUTPUT_THREAD_COUNT is really going to matter because the
-     * inbound thread will have more work to do. By default when TLS isn't enable,
+     * inbound thread will have more work to do. By default, when TLS isn't enable,
      * there is just 1 inbound thread.
      */
     public static final HazelcastProperty RESPONSE_THREAD_COUNT
@@ -238,10 +247,10 @@ public final class ClientProperty {
      * {@link #METRICS_COLLECTION_FREQUENCY} (5 seconds) will be used instead
      * of {@link #STATISTICS_PERIOD_SECONDS} (3 seconds), when not set
      * explicitly.
-     * @deprecated since 4.0. Use {@link #METRICS_ENABLED}
+     * @deprecated Use {@link #METRICS_ENABLED}
      * ({@code "hazelcast.client.metrics.enabled"}) instead.
      */
-    @Deprecated
+    @Deprecated(since = "4.0", forRemoval = true)
     public static final HazelcastProperty STATISTICS_ENABLED = new HazelcastProperty("hazelcast.client.statistics.enabled",
             false);
 
@@ -251,10 +260,10 @@ public final class ClientProperty {
      * The values set here is used as {@link #METRICS_COLLECTION_FREQUENCY} as instead.
      * If both this and {@link #METRICS_COLLECTION_FREQUENCY} are configured,
      * this is ignored.
-     * @deprecated since 4.0. Use {@link #METRICS_COLLECTION_FREQUENCY}
+     * @deprecated Use {@link #METRICS_COLLECTION_FREQUENCY}
      * ({@code "hazelcast.client.metrics.collection.frequency"}) instead.
      */
-    @Deprecated
+    @Deprecated(since = "4.0", forRemoval = true)
     public static final HazelcastProperty STATISTICS_PERIOD_SECONDS = new HazelcastProperty(
             "hazelcast.client.statistics.period.seconds", 3, SECONDS);
 
@@ -327,6 +336,29 @@ public final class ClientProperty {
      */
     public static final HazelcastProperty PARTITION_ARGUMENT_CACHE_SIZE
             = new HazelcastProperty("hazelcast.client.sql.partition.argument.cache.size", 1024);
+
+    /**
+     * Class name implementing {@link com.hazelcast.partition.PartitioningStrategy}, which
+     * defines key to partition mapping. Client-side equivalent of member property
+     * {@link com.hazelcast.spi.properties.ClusterProperty#PARTITIONING_STRATEGY_CLASS}.
+     * <p>
+     * This property does not contain the "hazelcast.client" prefix as has been used on the client with
+     * this property name for over 8 years, so it is maintained for backwards compatibility.
+     */
+    public static final HazelcastProperty PARTITIONING_STRATEGY_CLASS
+            = new HazelcastProperty("hazelcast.partitioning.strategy.class", "");
+
+    /**
+     * Sets the client connectivity logging delay in seconds.
+     * This value dictates the delay between a connectivity
+     * stat of clients to cluster members.
+     * <p>
+     * The delay is intended to reduce noise from frequent connection updates that
+     * may occur in bursts. Note that the latest connectivity view will be
+     * logged when the task is run. For more, see {@link ClientConnectivityLogger}
+     */
+    public static final HazelcastProperty CLIENT_CONNECTIVITY_LOGGING_DELAY_SECONDS
+            = new HazelcastProperty("hazelcast.client.connectivity.logging.delay.seconds", 10);
 
     private ClientProperty() {
     }

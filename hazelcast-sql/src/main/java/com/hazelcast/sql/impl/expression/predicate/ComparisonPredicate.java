@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.hazelcast.sql.impl.expression.predicate;
 import com.hazelcast.jet.sql.impl.JetSqlSerializerHook;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
+import com.hazelcast.query.impl.Comparables;
 import com.hazelcast.sql.impl.QueryException;
 import com.hazelcast.sql.impl.expression.BiExpression;
 import com.hazelcast.sql.impl.expression.Expression;
@@ -26,7 +27,6 @@ import com.hazelcast.sql.impl.expression.ExpressionEvalContext;
 import com.hazelcast.sql.impl.row.Row;
 import com.hazelcast.sql.impl.type.QueryDataType;
 import com.hazelcast.sql.impl.type.QueryDataTypeFamily;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.util.Objects;
@@ -50,7 +50,7 @@ public final class ComparisonPredicate extends BiExpression<Boolean> {
     }
 
     public static ComparisonPredicate create(Expression<?> left, Expression<?> right, ComparisonMode comparisonMode) {
-        assert left.getType().equals(right.getType());
+        assert left.getType().getTypeFamily() == right.getType().getTypeFamily();
         return new ComparisonPredicate(left, right, comparisonMode);
     }
 
@@ -59,8 +59,8 @@ public final class ComparisonPredicate extends BiExpression<Boolean> {
         return JetSqlSerializerHook.EXPRESSION_COMPARISON;
     }
 
-    @SuppressWarnings({"rawtypes", "unchecked"})
-    @SuppressFBWarnings(value = "NP_BOOLEAN_RETURN_NULL", justification = "Any SQL expression may return null")
+    @SuppressWarnings("rawtypes")
+    //@SuppressFBWarnings(value = "NP_BOOLEAN_RETURN_NULL", justification = "Any SQL expression may return null")
     @Override
     public Boolean eval(Row row, ExpressionEvalContext context) {
         Object left = operand1.eval(row, context);
@@ -88,13 +88,12 @@ public final class ComparisonPredicate extends BiExpression<Boolean> {
                 throw QueryException.error(
                         "Cannot compare OBJECT value because " + leftClass + " doesn't implement Comparable interface");
             }
-
         }
 
         Comparable leftComparable = (Comparable) left;
         Comparable rightComparable = (Comparable) right;
 
-        int order = leftComparable.compareTo(rightComparable);
+        int order = Comparables.compare(leftComparable, rightComparable);
 
         switch (mode) {
             case EQUALS:

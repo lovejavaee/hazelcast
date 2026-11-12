@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,16 @@
 package com.hazelcast.client.impl.spi;
 
 import com.hazelcast.client.LoadBalancer;
+import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.client.impl.connection.ClientConnection;
+import com.hazelcast.client.config.RoutingMode;
 import com.hazelcast.client.impl.protocol.ClientMessage;
 import com.hazelcast.client.impl.spi.impl.ClientInvocation;
 import com.hazelcast.cluster.Member;
 import com.hazelcast.internal.nio.Connection;
 import com.hazelcast.internal.nio.ConnectionListener;
 
+import javax.annotation.Nonnull;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -47,19 +50,23 @@ public interface ClientInvocationService {
      * @param partitionId partition id that invocation should go to
      * @return true if successfully send to partition owner, false otherwise
      */
-    boolean invokeOnPartitionOwner(ClientInvocation invocation, int partitionId);
+    boolean invokeOnPartitionOwner(ClientInvocation invocation,
+                                   int partitionId);
 
     /**
      * @param invocation to be invoked
      * @param uuid       member uuid that invocation should go to
      * @return true if successfully send the member with given uuid, false otherwise
      */
-    boolean invokeOnTarget(ClientInvocation invocation, UUID uuid);
+    boolean invokeOnTarget(ClientInvocation invocation,
+                           UUID uuid);
 
     /**
-     * Behaviour of this method varies for unisocket and smart client
-     * Unisocket invokes on only available connection
-     * SmartClient randomly picks a connection to invoke on via {@link LoadBalancer}
+     * Behaviour of this method varies for {@link RoutingMode#SINGLE_MEMBER}, {@link RoutingMode#MULTI_MEMBER},
+     * and {@link RoutingMode#ALL_MEMBERS} routing clients.
+     * {@link RoutingMode#SINGLE_MEMBER} routing invokes on only available connection
+     * {@link RoutingMode#MULTI_MEMBER} and {@link RoutingMode#ALL_MEMBERS} routing randomly picks a connection
+     * to invoke on via {@link LoadBalancer}.
      *
      * @param invocation to be invoked
      * @return true if successfully send, false otherwise
@@ -68,14 +75,26 @@ public interface ClientInvocationService {
 
     boolean isRedoOperation();
 
+    /**
+     * @see ClientConfig#isBackupAckToClientEnabled()
+     */
+    boolean isBackupAckToClientEnabled();
+
     Consumer<ClientMessage> getResponseHandler();
 
     /**
      * This will be called on each connection close.
-     * Note that is different than {@link ConnectionListener#connectionRemoved(Connection)} where `connectionRemoved`
+     * Note that is different from {@link ConnectionListener#connectionRemoved(Connection)} where `connectionRemoved`
      * means an authenticated connection is disconnected
      *
      * @param connection closed connection
      */
     void onConnectionClose(ClientConnection connection);
+
+    /**
+     * @param connection provided connection to query if it has any associated invocation
+     * @return {@code true} if there is an ongoing invocation that
+     * still uses the provided connection, {@code false} otherwise
+     */
+    boolean isConnectionInUse(@Nonnull ClientConnection connection);
 }

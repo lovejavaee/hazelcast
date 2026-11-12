@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import com.hazelcast.collection.ISet;
 import com.hazelcast.config.Config;
 import com.hazelcast.cp.CPSubsystem;
 import com.hazelcast.crdt.pncounter.PNCounter;
+import com.hazelcast.dataconnection.DataConnectionService;
 import com.hazelcast.durableexecutor.DurableExecutorService;
 import com.hazelcast.flakeidgen.FlakeIdGenerator;
 import com.hazelcast.jet.JetService;
@@ -47,9 +48,12 @@ import com.hazelcast.transaction.TransactionContext;
 import com.hazelcast.transaction.TransactionException;
 import com.hazelcast.transaction.TransactionOptions;
 import com.hazelcast.transaction.TransactionalTask;
+import com.hazelcast.vector.VectorCollection;
+import com.hazelcast.vector.impl.spi.VectorCollectionLocator;
 
 import javax.annotation.Nonnull;
 import java.util.Collection;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentMap;
 
@@ -59,13 +63,14 @@ import java.util.concurrent.ConcurrentMap;
  * Multiple Hazelcast instances can be created on a single JVM.
  * <p>
  * Instances should be shut down explicitly. See the {@link #shutdown()} method.
- * If the instance is a client and you don't shut it down explicitly, it will continue to run and
+ * If the instance is a client, and you don't shut it down explicitly, it will continue to run and
  * even connect to another live member if the one it was connected to fails.
  * <p>
  * Each Hazelcast instance has its own socket and threads.
  *
  * @see Hazelcast#newHazelcastInstance(Config config)
  */
+@SuppressWarnings("checkstyle:methodcount")
 public interface HazelcastInstance {
 
     /**
@@ -127,6 +132,33 @@ public interface HazelcastInstance {
      */
     @Nonnull
     <K, V> IMap<K, V> getMap(@Nonnull String name);
+
+    /**
+     * Creates or returns the vector collection instance with the specified name.
+     *
+     * <p>Vector collections require the {@code hazelcast-vector} module
+     * to be present on the application classpath. The module is not included by
+     * default and must be added explicitly.</p>
+     * <p>
+     * The vector collection configuration must already exist before this method
+     * is invoked. Attempting to access a non-configured vector collection results
+     * in an {@link IllegalArgumentException}.</p>
+     * <p>
+     * @param name name of the vector collection
+     * @param <K> key type
+     * @param <V> value type
+     * @return vector collection instance with the specified name
+     * @throws UnsupportedOperationException if the {@code hazelcast-vector}
+     *         module is not present on the classpath
+     * @throws IllegalArgumentException if no configuration exists for the
+     *         specified vector collection name
+     * @since 6.0
+     */
+    @Nonnull
+    default <K, V> VectorCollection<K, V> getVectorCollection(@Nonnull String name) {
+        Objects.requireNonNull(name, "Retrieving a vector collection instance with a null name is not allowed!");
+        return VectorCollectionLocator.get().getVectorCollection(this, name);
+    }
 
     /**
      * Creates or returns the replicated map instance with the specified name.
@@ -331,7 +363,7 @@ public interface HazelcastInstance {
     /**
      * Returns the split brain protection service of this Hazelcast instance.
      * <p>
-     * Split brain protection service can be used to retrieve split brain protection callbacks which let you to notify
+     * Split brain protection service can be used to retrieve split brain protection callbacks which let you notify
      * split brain protection results of your own to the cluster split brain protection service.
      *
      * @return the split brain protection service of this Hazelcast instance
@@ -362,7 +394,7 @@ public interface HazelcastInstance {
     /**
      * Returns the lifecycle service for this instance.
      * <p>
-     * LifecycleService allows you to shutdown this HazelcastInstance and listen for the lifecycle events.
+     * LifecycleService allows you to shut down this HazelcastInstance and listen for the lifecycle events.
      *
      * @return the lifecycle service for this instance
      */
@@ -462,6 +494,17 @@ public interface HazelcastInstance {
      * @see SqlService
      */
     @Nonnull SqlService getSql();
+
+    /**
+     * Returns {@link DataConnectionService} that allows getting instances
+     * of configured data connections
+     *
+     * @return DataConnection service
+     * @throws UnsupportedOperationException when requested on the client side
+     * @since 5.6
+     */
+    @Nonnull
+    DataConnectionService getDataConnectionService();
 
     /**
      * Returns a Jet service to execute distributed batch and streaming jobs.

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package com.hazelcast.internal.metrics.metricsets;
 import com.hazelcast.internal.memory.GCStatsSupport;
 import com.hazelcast.internal.metrics.MetricsRegistry;
 import com.hazelcast.internal.metrics.Probe;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
@@ -61,7 +60,7 @@ public final class GarbageCollectionMetricSet {
     }
 
 
-    @SuppressFBWarnings(value = "URF_UNREAD_FIELD", justification = "used by instrumentation tools")
+    //@SuppressFBWarnings(value = "URF_UNREAD_FIELD", justification = "used by instrumentation tools")
     static class GcStats implements Runnable {
         @Probe(name = GC_METRIC_MINOR_COUNT, level = MANDATORY)
         volatile long minorCount;
@@ -91,10 +90,10 @@ public final class GarbageCollectionMetricSet {
                     continue;
                 }
 
-                if (GCStatsSupport.YOUNG_GC.contains(gc.getName())) {
+                if (GCStatsSupport.MINOR_GC.contains(gc.getName())) {
                     minorCount += count;
                     minorTime += gc.getCollectionTime();
-                } else if (GCStatsSupport.OLD_GC.contains(gc.getName())) {
+                } else if (GCStatsSupport.MAJOR_GC.contains(gc.getName())) {
                     majorCount += count;
                     majorTime += gc.getCollectionTime();
                 } else {

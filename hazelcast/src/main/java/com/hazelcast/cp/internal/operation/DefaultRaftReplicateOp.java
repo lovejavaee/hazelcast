@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,8 +49,8 @@ public class DefaultRaftReplicateOp extends RaftReplicateOp implements Indetermi
 
     @Override
     protected InternalCompletableFuture replicate(RaftNode raftNode) {
-        if (op instanceof CallerAware) {
-            ((CallerAware) op).setCaller(getCallerAddress(), getCallId());
+        if (op instanceof CallerAware aware) {
+            aware.setCaller(getCallerAddress(), getCallId());
         }
 
         return raftNode.replicate(op);
@@ -58,8 +58,8 @@ public class DefaultRaftReplicateOp extends RaftReplicateOp implements Indetermi
 
     @Override
     public boolean isRetryableOnIndeterminateOperationState() {
-        if (op instanceof IndeterminateOperationStateAware) {
-            return ((IndeterminateOperationStateAware) op).isRetryableOnIndeterminateOperationState();
+        if (op instanceof IndeterminateOperationStateAware aware) {
+            return aware.isRetryableOnIndeterminateOperationState();
         }
 
         return false;

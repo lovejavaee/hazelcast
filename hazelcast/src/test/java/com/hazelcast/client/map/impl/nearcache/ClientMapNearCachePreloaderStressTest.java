@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static com.hazelcast.internal.nearcache.impl.NearCacheTestUtils.getBaseConfig;
 import static java.util.concurrent.Executors.newFixedThreadPool;
-import static junit.framework.TestCase.assertNull;
+import static org.junit.Assert.assertNull;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category(NightlyTest.class)
@@ -47,7 +47,7 @@ public class ClientMapNearCachePreloaderStressTest extends HazelcastTestSupport 
     private final TestHazelcastFactory factory = new TestHazelcastFactory();
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         factory.shutdownAll();
     }
 
@@ -66,35 +66,29 @@ public class ClientMapNearCachePreloaderStressTest extends HazelcastTestSupport 
         ExecutorService pool = newFixedThreadPool(createPutGetThreadCount + destroyThreadCount);
 
         final AtomicBoolean isRunning = new AtomicBoolean(true);
-        final AtomicReference<Exception> exception = new AtomicReference<Exception>();
+        final AtomicReference<Exception> exception = new AtomicReference<>();
         for (int i = 0; i < destroyThreadCount; i++) {
-            pool.execute(new Runnable() {
-                @Override
-                public void run() {
-                    while (isRunning.get()) {
-                        for (DistributedObject distributedObject : client.getDistributedObjects()) {
-                            distributedObject.destroy();
-                        }
+            pool.execute(() -> {
+                while (isRunning.get()) {
+                    for (DistributedObject distributedObject : client.getDistributedObjects()) {
+                        distributedObject.destroy();
                     }
                 }
             });
         }
 
         for (int i = 0; i < createPutGetThreadCount; i++) {
-            pool.execute(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        while (isRunning.get()) {
-                            IMap<Object, Object> map = client.getMap("test");
-                            map.put(1, 1);
-                            map.get(1);
-                        }
-                    } catch (Exception e) {
-                        isRunning.set(false);
-                        e.printStackTrace(System.out);
-                        exception.set(e);
+            pool.execute(() -> {
+                try {
+                    while (isRunning.get()) {
+                        IMap<Object, Object> map = client.getMap("test");
+                        map.put(1, 1);
+                        map.get(1);
                     }
+                } catch (Exception e) {
+                    isRunning.set(false);
+                    e.printStackTrace(System.out);
+                    exception.set(e);
                 }
             });
         }

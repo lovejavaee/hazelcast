@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import com.hazelcast.spi.annotation.PrivateApi;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
 import com.hazelcast.transaction.TransactionTimedOutException;
 
+import javax.annotation.Nonnull;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -47,25 +48,19 @@ public final class FutureUtil {
     /**
      * Just rethrows <b>all</b> exceptions
      */
-    public static final ExceptionHandler RETHROW_EVERYTHING = new ExceptionHandler() {
-        @Override
-        public void handleException(Throwable throwable) {
-            throw rethrow(throwable);
-        }
+    public static final ExceptionHandler RETHROW_EVERYTHING = throwable -> {
+        throw rethrow(throwable);
     };
 
     /**
      * Ignores <b>all</b> exceptions
      */
-    public static final ExceptionHandler IGNORE_ALL_EXCEPTIONS = new ExceptionHandler() {
-        @Override
-        public void handleException(Throwable throwable) {
-        }
+    public static final ExceptionHandler IGNORE_ALL_EXCEPTIONS = throwable -> {
     };
 
     /**
      * Ignores all exceptions but still logs {@link com.hazelcast.core.MemberLeftException} per future and just tries
-     * to finish all of the given ones. This is the default behavior if nothing else is given.
+     * to finish all the given ones. This is the default behavior if nothing else is given.
      */
     public static final ExceptionHandler IGNORE_ALL_EXCEPT_LOG_MEMBER_LEFT = new ExceptionHandler() {
         @Override
@@ -117,7 +112,7 @@ public final class FutureUtil {
         private List<Throwable> throwables;
 
         private CollectAllExceptionHandler(int count) {
-            this.throwables = Collections.synchronizedList(new ArrayList<Throwable>(count));
+            this.throwables = Collections.synchronizedList(new ArrayList<>(count));
         }
 
         @Override
@@ -133,14 +128,11 @@ public final class FutureUtil {
     /**
      * Handler for transaction specific rethrown of exceptions.
      */
-    public static final ExceptionHandler RETHROW_TRANSACTION_EXCEPTION = new ExceptionHandler() {
-        @Override
-        public void handleException(Throwable throwable) {
-            if (throwable instanceof TimeoutException) {
-                throw new TransactionTimedOutException(throwable);
-            }
-            throw rethrow(throwable);
+    public static final ExceptionHandler RETHROW_TRANSACTION_EXCEPTION = throwable -> {
+        if (throwable instanceof TimeoutException) {
+            throw new TransactionTimedOutException(throwable);
         }
+        throw rethrow(throwable);
     };
 
     private static final ILogger LOGGER = Logger.getLogger(FutureUtil.class);
@@ -159,12 +151,7 @@ public final class FutureUtil {
     @PrivateApi
     public static ExceptionHandler logAllExceptions(final ILogger logger, final String message, final Level level) {
         if (logger.isLoggable(level)) {
-            return new ExceptionHandler() {
-                @Override
-                public void handleException(Throwable throwable) {
-                    logger.log(level, message, throwable);
-                }
-            };
+            return throwable -> logger.log(level, message, throwable);
         }
         return IGNORE_ALL_EXCEPTIONS;
     }
@@ -179,12 +166,7 @@ public final class FutureUtil {
     @PrivateApi
     public static ExceptionHandler logAllExceptions(final String message, final Level level) {
         if (LOGGER.isLoggable(level)) {
-            return new ExceptionHandler() {
-                @Override
-                public void handleException(Throwable throwable) {
-                    LOGGER.log(level, message, throwable);
-                }
-            };
+            return throwable -> LOGGER.log(level, message, throwable);
         }
         return IGNORE_ALL_EXCEPTIONS;
     }
@@ -199,12 +181,7 @@ public final class FutureUtil {
     @PrivateApi
     public static ExceptionHandler logAllExceptions(final ILogger logger, final Level level) {
         if (logger.isLoggable(level)) {
-            return new ExceptionHandler() {
-                @Override
-                public void handleException(Throwable throwable) {
-                    logger.log(level, "Exception occurred", throwable);
-                }
-            };
+            return throwable -> logger.log(level, "Exception occurred", throwable);
         }
         return IGNORE_ALL_EXCEPTIONS;
     }
@@ -218,12 +195,7 @@ public final class FutureUtil {
     @PrivateApi
     public static ExceptionHandler logAllExceptions(final Level level) {
         if (LOGGER.isLoggable(level)) {
-            return new ExceptionHandler() {
-                @Override
-                public void handleException(Throwable throwable) {
-                    LOGGER.log(level, "Exception occurred", throwable);
-                }
-            };
+            return throwable -> LOGGER.log(level, "Exception occurred", throwable);
         }
         return IGNORE_ALL_EXCEPTIONS;
     }
@@ -263,7 +235,7 @@ public final class FutureUtil {
         // Common deadline for all futures
         long deadline = System.nanoTime() + overallTimeoutNanos;
 
-        List<V> results = new ArrayList<V>(futures.size());
+        List<V> results = new ArrayList<>(futures.size());
         for (Future<V> future : futures) {
             try {
                 long timeoutNanos = calculateFutureTimeout(perFutureTimeoutNanos, deadline);
@@ -308,7 +280,7 @@ public final class FutureUtil {
         CollectAllExceptionHandler collector = new CollectAllExceptionHandler(futures.size());
         waitWithDeadline(futures, timeout, timeUnit, collector);
         final List<Throwable> throwables = collector.getThrowables();
-        // synchronized list does not provide thread-safety guarantee for iteration so we handle it ourselves.
+        // synchronized list does not provide thread-safety guarantee for iteration, so we handle it ourselves.
         synchronized (throwables) {
             for (Throwable t : throwables) {
                 exceptionHandler.handleException(t);
@@ -422,8 +394,8 @@ public final class FutureUtil {
      * @param futures the list of futures
      * @return {@code true} if all futures are done
      */
-    public static boolean allDone(Collection<Future> futures) {
-        for (Future f : futures) {
+    public static boolean allDone(Collection<Future<?>> futures) {
+        for (Future<?> f : futures) {
             if (!f.isDone()) {
                 return false;
             }
@@ -434,11 +406,10 @@ public final class FutureUtil {
     /**
      * Rethrow exception of the fist future that completed with an exception
      *
-     * @param futures
      * @throws Exception
      */
-    public static void checkAllDone(Collection<Future> futures) throws Exception {
-        for (Future f : futures) {
+    public static void checkAllDone(Collection<Future<?>> futures) throws Exception {
+        for (Future<?> f : futures) {
             if (f.isDone()) {
                 f.get();
             }
@@ -448,12 +419,13 @@ public final class FutureUtil {
     /**
      * Get all futures that are done
      *
-     * @param futures
+     * @param futures collection of futures which we will check for done futures.
      * @return list of completed futures
      */
-    public static List<Future> getAllDone(Collection<Future> futures) {
-        List<Future> doneFutures = new ArrayList<Future>();
-        for (Future f : futures) {
+    @Nonnull
+    public static List<Future<?>> getAllDone(Collection<Future<?>> futures) {
+        List<Future<?>> doneFutures = new ArrayList<>();
+        for (Future<?> f : futures) {
             if (f.isDone()) {
                 doneFutures.add(f);
             }

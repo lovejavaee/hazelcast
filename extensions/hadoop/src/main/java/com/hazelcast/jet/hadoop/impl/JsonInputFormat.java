@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 package com.hazelcast.jet.hadoop.impl;
 
-import com.hazelcast.function.FunctionEx;
+import com.hazelcast.function.ThrowingFunction;
 import com.hazelcast.jet.impl.util.ReflectionUtils;
 import com.hazelcast.jet.json.JsonUtil;
 import org.apache.hadoop.conf.Configuration;
@@ -84,7 +84,7 @@ public class JsonInputFormat extends FileInputFormat<NullWritable, Object> {
             reader = new LineRecordReader();
         }
 
-        private static FunctionEx<? super String, Object> mapper(Class<?> clazz) {
+        private static ThrowingFunction<? super String, Object> mapper(Class<?> clazz) {
             return clazz == null
                     ? JsonUtil::mapFrom
                     : line -> JsonUtil.beanFrom(line, clazz);

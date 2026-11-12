@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,6 +49,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 
 import static com.hazelcast.jet.config.ProcessingGuarantee.EXACTLY_ONCE;
+import static com.hazelcast.test.Accessors.getAddress;
 import static java.util.Collections.singletonList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -387,7 +388,7 @@ public class CancellationTest extends JetTestSupport {
             long current = StuckSource.callCounter.get();
             long last = previous[0];
             previous[0] = current;
-            assertTrue("Call counter should eventually stop being incremented.", current == last);
+            assertEquals("Call counter should eventually stop being incremented.", current, last);
             sleepMillis(200);
         }, ASSERTION_TIMEOUT_SECONDS);
     }

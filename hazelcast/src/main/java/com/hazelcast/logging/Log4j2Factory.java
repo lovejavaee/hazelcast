@@ -23,7 +23,6 @@ import org.apache.logging.log4j.core.config.Configurator;
 import org.apache.logging.log4j.spi.ExtendedLogger;
 
 import java.util.logging.Level;
-import java.util.logging.LogRecord;
 
 /**
  * Logging to Log4j 2.x.
@@ -32,8 +31,14 @@ public class Log4j2Factory extends LoggerFactorySupport {
 
     private static final String FQCN = Log4j2Logger.class.getName();
 
+    @Override
     protected ILogger createLogger(String name) {
         return new Log4j2Logger(LogManager.getContext(false).getLogger(name));
+    }
+
+    @Override
+    public void shutdown() {
+        LogManager.shutdown();
     }
 
     @PrivateApi
@@ -48,15 +53,6 @@ public class Log4j2Factory extends LoggerFactorySupport {
         @Override
         public void setLevel(Level level) {
             Configurator.setLevel(logger.getName(), toLog4j2Level(level));
-        }
-
-        @Override
-        public void log(LogEvent logEvent) {
-            LogRecord logRecord = logEvent.getLogRecord();
-            Level level = logEvent.getLogRecord().getLevel();
-            String message = logRecord.getMessage();
-            Throwable thrown = logRecord.getThrown();
-            log(level, message, thrown);
         }
 
         @Override

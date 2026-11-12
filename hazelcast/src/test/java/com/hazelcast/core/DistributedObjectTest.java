@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@ import com.hazelcast.config.ConfigAccessor;
 import com.hazelcast.config.ServiceConfig;
 import com.hazelcast.instance.impl.Node;
 import com.hazelcast.internal.services.RemoteService;
-import com.hazelcast.internal.util.RootCauseMatcher;
 import com.hazelcast.spi.exception.DistributedObjectDestroyedException;
 import com.hazelcast.spi.impl.InitializingObject;
 import com.hazelcast.spi.impl.NodeEngine;
@@ -35,10 +34,8 @@ import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import java.util.ArrayList;
@@ -50,8 +47,10 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
 
+import static com.hazelcast.internal.util.RootCauseMatcher.rootCause;
 import static com.hazelcast.test.Accessors.getNode;
 import static com.hazelcast.test.Accessors.getNodeEngineImpl;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -60,9 +59,6 @@ import static org.junit.Assert.fail;
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class DistributedObjectTest extends HazelcastTestSupport {
-
-    @Rule
-    public ExpectedException expectedException = ExpectedException.none();
 
     @Test
     public void testMap() {
@@ -199,7 +195,7 @@ public class DistributedObjectTest extends HazelcastTestSupport {
 
     @Test
     public void testDistributedObjectDestroyed_whenDestroyDuringInitialization()
-            throws InterruptedException, ExecutionException {
+            throws InterruptedException {
         final CountDownLatch initializationStarted = new CountDownLatch(1);
         final CountDownLatch objectDestroyed = new CountDownLatch(1);
         Config config = new Config();
@@ -220,7 +216,7 @@ public class DistributedObjectTest extends HazelcastTestSupport {
         String objectName = "test-object";
 
         HazelcastInstance instance = createHazelcastInstance(config);
-        Future f = spawn(() -> {
+        Future<?> f = spawn(() -> {
             // must fail with DistributedObjectDestroyedException
             instance.getDistributedObject(serviceName, objectName);
         });
@@ -230,9 +226,9 @@ public class DistributedObjectTest extends HazelcastTestSupport {
         nodeEngine.getProxyService().destroyDistributedObject(serviceName, objectName, source);
         objectDestroyed.countDown();
 
-        expectedException.expect(ExecutionException.class);
-        expectedException.expectCause(new RootCauseMatcher(DistributedObjectDestroyedException.class));
-        f.get();
+        assertThatThrownBy(f::get)
+                .isInstanceOf(ExecutionException.class)
+                .cause().has(rootCause(DistributedObjectDestroyedException.class));
     }
 
     private static class TestInitializingObjectService implements RemoteService {
@@ -264,7 +260,7 @@ public class DistributedObjectTest extends HazelcastTestSupport {
 
     private static class TestInitializingObject implements DistributedObject, InitializingObject {
 
-        private final AtomicBoolean init = new AtomicBoolean(false);
+        private final AtomicBoolean init = new AtomicBoolean();
         private final String name;
         private volatile boolean error;
         private final Runnable initializer;
@@ -343,20 +339,18 @@ public class DistributedObjectTest extends HazelcastTestSupport {
         final CountDownLatch latch = new CountDownLatch(threads);
 
         for (int i = 0; i < threads; i++) {
-            new Thread() {
-                public void run() {
-                    for (int j = 0; j < 1000; j++) {
-                        try {
-                            hz.getDistributedObject(serviceName, objectName);
-                            fail("Proxy creation should fail!");
-                        } catch (HazelcastException expected) {
-                            ignore(expected);
-                        }
-                        LockSupport.parkNanos(1);
+            new Thread(() -> {
+                for (int j = 0; j < 1000; j++) {
+                    try {
+                        hz.getDistributedObject(serviceName, objectName);
+                        fail("Proxy creation should fail!");
+                    } catch (HazelcastException expected) {
+                        ignore(expected);
                     }
-                    latch.countDown();
+                    LockSupport.parkNanos(1);
                 }
-            }.start();
+                latch.countDown();
+            }).start();
         }
         assertOpenEventually(latch, 30);
     }

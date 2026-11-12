@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import static com.hazelcast.cp.internal.raft.impl.RaftRole.LEADER;
 /**
  * Handles {@link AppendFailureResponse} sent by
  * {@link AppendRequestHandlerTask} after an append-entries request
- * or {@link InstallSnapshotHandlerTask} after an install snapshot request.
+ * or {@link InstallSnapshotRequestHandlerTask} after an install snapshot request.
  * <p>
  * Decrements {@code nextIndex} of the follower by 1 if the response is valid.
  * <p>
@@ -68,7 +68,7 @@ public class AppendFailureResponseHandlerTask extends AbstractResponseHandlerTas
         }
 
         if (logger.isFineEnabled()) {
-            logger.fine("Received " + resp);
+            logger.fine("Received %s", resp);
         }
 
         if (updateNextIndex(state)) {
@@ -77,26 +77,35 @@ public class AppendFailureResponseHandlerTask extends AbstractResponseHandlerTas
     }
 
     private boolean updateNextIndex(RaftState state) {
+        RaftEndpoint follower = resp.follower();
         LeaderState leaderState = state.leaderState();
-        FollowerState followerState = leaderState.getFollowerState(resp.follower());
+        FollowerState followerState = leaderState.getFollowerState(follower);
 
         long nextIndex = followerState.nextIndex();
         long matchIndex = followerState.matchIndex();
 
-        if (resp.expectedNextIndex() == nextIndex) {
-            // Received a response for the last append request. Resetting the flag...
-            followerState.appendRequestAckReceived();
+        // Received a response for the append request.
+        // Check if the backoff state should be reset.
+        followerState.appendRequestAckReceived(resp.flowControlSequenceNumber());
 
+        if (resp.expectedNextIndex() == nextIndex) {
             // this is the response of the request I have sent for this nextIndex
-            nextIndex--;
+            if (resp.followerNextIndex() > 0) {
+                // This optimization is based on Section 5.3 (Log Replication) and aims
+                //  to reduce the number of rejected AppendEntries RPCs.
+                nextIndex = resp.followerNextIndex();
+            } else {
+                nextIndex--;
+            }
+
             if (nextIndex <= matchIndex) {
                 logger.severe("Cannot decrement next index: " + nextIndex + " below match index: " + matchIndex
-                        + " for follower: " + resp.follower());
+                        + " for follower: " + follower);
                 return false;
             }
 
             if (logger.isFineEnabled()) {
-                logger.fine("Updating next index: " + nextIndex + " for follower: " + resp.follower());
+                logger.fine("Updating next index: %s for follower: %s", nextIndex, follower);
             }
             followerState.nextIndex(nextIndex);
             return true;

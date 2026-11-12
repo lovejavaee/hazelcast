@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,13 +23,12 @@ import com.hazelcast.internal.nio.Connection;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.util.IterationType;
 import com.hazelcast.map.impl.MapService;
+import com.hazelcast.map.impl.MapServiceContext;
 import com.hazelcast.map.impl.query.QueryResultRow;
 import com.hazelcast.query.Predicate;
 import com.hazelcast.query.Predicates;
-import com.hazelcast.security.permission.ActionConstants;
-import com.hazelcast.security.permission.MapPermission;
+import com.hazelcast.security.SecurityInterceptorConstants;
 
-import java.security.Permission;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -47,7 +46,15 @@ public class MapEntrySetMessageTask
     @Override
     protected Object reduce(Collection<QueryResultRow> result) {
         List<Map.Entry<Data, Data>> entries = new ArrayList<>(result);
-        incrementOtherOperationsCount(getService(MapService.SERVICE_NAME), parameters);
+        MapService mapService = (MapService) getService(MapService.SERVICE_NAME);
+
+        incrementOtherOperationsCount(mapService, parameters);
+        incrementMapMetric(mapService, parameters);
+
+        if (result.size() >= mapService.getMapServiceContext().getExpensiveInvocationReportingThreshold()) {
+            logger.info("Client " + endpoint.getUuid() + " invoked entrySet() on map " + parameters
+                    + " with " + result.size() + " returned entries.");
+        }
         return entries;
     }
 
@@ -72,22 +79,26 @@ public class MapEntrySetMessageTask
     }
 
     @Override
-    public Permission getRequiredPermission() {
-        return new MapPermission(parameters, ActionConstants.ACTION_READ);
-    }
-
-    @Override
     public String getDistributedObjectName() {
         return parameters;
     }
 
     @Override
     public String getMethodName() {
-        return "entrySet";
+        return SecurityInterceptorConstants.ENTRY_SET;
     }
 
     @Override
     public Object[] getParameters() {
         return null;
+    }
+
+    private void incrementMapMetric(MapService service, String mapName) {
+        MapServiceContext mapServiceContext = service.getMapServiceContext();
+        if (mapServiceContext.getMapContainer(mapName).getMapConfig().isStatisticsEnabled()) {
+            mapServiceContext.getLocalMapStatsProvider()
+                    .getLocalMapStatsImpl(mapName)
+                    .incrementEntrySetCallCount();
+        }
     }
 }

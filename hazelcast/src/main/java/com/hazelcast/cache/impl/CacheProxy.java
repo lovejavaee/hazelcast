@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -253,9 +253,9 @@ public class CacheProxy<K, V> extends CacheProxySupport<K, V>
             CacheEntryProcessorResult<T> ceResult;
             try {
                 T result = invoke(key, entryProcessor, arguments);
-                ceResult = result != null ? new CacheEntryProcessorResult<T>(result) : null;
+                ceResult = result != null ? new CacheEntryProcessorResult<>(result) : null;
             } catch (Exception e) {
-                ceResult = new CacheEntryProcessorResult<T>(e);
+                ceResult = new CacheEntryProcessorResult<>(e);
             }
             if (ceResult != null) {
                 allResult.put(key, ceResult);
@@ -283,7 +283,7 @@ public class CacheProxy<K, V> extends CacheProxySupport<K, V>
         ensureOpen();
         checkNotNull(cacheEntryListenerConfiguration, "CacheEntryListenerConfiguration can't be null");
 
-        CacheEventListenerAdaptor<K, V> entryListener = new CacheEventListenerAdaptor<K, V>(this,
+        CacheEventListenerAdaptor<K, V> entryListener = new CacheEventListenerAdaptor<>(this,
                 cacheEntryListenerConfiguration,
                 getNodeEngine().getSerializationService());
         UUID regId = getService().registerListener(getDistributedObjectName(), entryListener, entryListener);

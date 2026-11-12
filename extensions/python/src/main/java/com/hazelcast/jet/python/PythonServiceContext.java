@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,7 +41,6 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 import static com.hazelcast.jet.impl.util.IOUtil.copyStream;
-import static com.hazelcast.jet.impl.util.IOUtil.readFully;
 import static com.hazelcast.jet.impl.util.Util.editPermissionsRecursively;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.nio.file.attribute.PosixFilePermission.GROUP_WRITE;
@@ -66,6 +65,7 @@ class PythonServiceContext {
     private static final String USER_INIT_SHELL_SCRIPT = "init.sh";
     private static final String USER_CLEANUP_SHELL_SCRIPT = "cleanup.sh";
     private static final String PYTHON_GRPC_SCRIPT = JET_TO_PYTHON_PREFIX + "grpc_server.py";
+    private static final int PYTHON_RUNTIME_COMPATIBILITY_CHECK_FAILED_EXIT_CODE = 86;
     private static final List<String> EXECUTABLE_SCRIPTS = asList(
             INIT_SHELL_SCRIPT, MAIN_SHELL_SCRIPT, CLEANUP_SHELL_SCRIPT);
     private static final List<String> USER_EXECUTABLE_SCRIPTS = asList(
@@ -95,17 +95,15 @@ class PythonServiceContext {
                         .start();
                 Thread stdoutLoggingThread = logStdOut(logger, initProcess, "python-init");
                 initProcess.waitFor();
+                stdoutLoggingThread.join();
                 if (initProcess.exitValue() != 0) {
                     try {
                         performCleanup();
                     } catch (Exception e) {
                         logger.warning("Cleanup failed with exception", e);
                     }
-                    throw new Exception(
-                            "Initialization script finished with non-zero exit code: " + initProcess.exitValue()
-                    );
+                    throw new Exception(initScriptFailureMessage(initProcess.exitValue()));
                 }
-                stdoutLoggingThread.join();
             }
             makeFilesReadOnly(runtimeBaseDir);
             context.logger().info(String.format("Initialization script took %,d ms",
@@ -115,12 +113,19 @@ class PythonServiceContext {
         }
     }
 
+    private static String initScriptFailureMessage(int exitValue) {
+        if (exitValue == PYTHON_RUNTIME_COMPATIBILITY_CHECK_FAILED_EXIT_CODE) {
+            return "Python runtime compatibility check failed - see python-init logs";
+        }
+        return "Initialization script finished with non-zero exit code: " + exitValue;
+    }
+
     private void checkIfPythonIsAvailable() {
         try {
             Process process = new ProcessBuilder("python3", "--version").redirectErrorStream(true).start();
             process.waitFor();
             try (InputStream inputStream = process.getInputStream()) {
-                String output = new String(readFully(inputStream), UTF_8);
+                String output = new String(inputStream.readAllBytes(), UTF_8);
                 if (process.exitValue() != 0) {
                     logger.severe("python3 version check returned non-zero exit value, output: " + output);
                     throw new IllegalStateException("python3 is not available");
@@ -130,8 +135,11 @@ class PythonServiceContext {
                     throw new IllegalStateException("python3 is not available");
                 }
             }
-        } catch (Exception e) {
+        } catch (IOException e) {
             throw new IllegalStateException("python3 is not available", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("python3 version check was interrupted", e);
         }
     }
 
@@ -246,8 +254,7 @@ class PythonServiceContext {
 
     static String processPid(Process process) {
         try {
-            // Process.pid() is @since 9
-            return Process.class.getMethod("pid").invoke(process).toString();
+            return String.valueOf(process.pid());
         } catch (Exception e) {
             return process.toString().replaceFirst("^.*pid=(\\d+).*$", "$1");
         }
@@ -266,7 +273,7 @@ class PythonServiceContext {
         }
     }
 
-    public BiFunctionEx<String, Integer, ? extends ManagedChannelBuilder<?>>    channelFn() {
+    public BiFunctionEx<String, Integer, ? extends ManagedChannelBuilder<?>> channelFn() {
         return channelFn;
     }
 }

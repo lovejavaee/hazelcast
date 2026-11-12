@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ import java.util.concurrent.ConcurrentMap;
 
 /**
  * Represents a 'connection' between two machines.
- *
+ * <p>
  * There are 2 important sub-interfaces:
  * <ol>
  *     <li>{@link com.hazelcast.internal.server.ServerConnection}</li>
@@ -36,7 +36,7 @@ import java.util.concurrent.ConcurrentMap;
  *
  * For client or server specific behavior it is best to add the logic to these interfaces instead of in
  * this common interface.
- *
+ * <p>
  * If you need to attach data to a connection, please consider using the attributeMap instead of adding
  * a lot of extra methods.
  */
@@ -69,6 +69,13 @@ public interface Connection {
      * @return the clock time of the most recent write.
      */
     long lastWriteTimeMillis();
+
+    /**
+     * Returns the clock time in milliseconds of the initialization of this connection.
+     *
+     * @return the clock time of the initialization of this connection.
+     */
+    long getStartTime();
 
     /**
      * Returns the address of the endpoint this Connection is connected to, or

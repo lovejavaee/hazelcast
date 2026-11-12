@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.jet.sql.impl.connector.jdbc.mysql;
 
 import com.hazelcast.jet.sql.impl.connector.jdbc.AbstractQueryBuilder;
 import com.hazelcast.jet.sql.impl.connector.jdbc.JdbcTable;
+import org.apache.calcite.sql.SqlDialect;
 
 import java.util.Iterator;
 
@@ -26,8 +27,8 @@ import java.util.Iterator;
  */
 public class MySQLUpsertQueryBuilder extends AbstractQueryBuilder {
 
-    public MySQLUpsertQueryBuilder(JdbcTable jdbcTable) {
-        super(jdbcTable);
+    public MySQLUpsertQueryBuilder(JdbcTable jdbcTable, SqlDialect dialect) {
+        super(jdbcTable, dialect);
 
         StringBuilder sb = new StringBuilder();
 

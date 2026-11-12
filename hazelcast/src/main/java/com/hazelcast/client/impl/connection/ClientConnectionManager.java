@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.client.impl.connection;
 
 import com.hazelcast.client.HazelcastClientOfflineException;
+import com.hazelcast.client.config.RoutingMode;
 import com.hazelcast.client.impl.management.ClientConnectionProcessListener;
 import com.hazelcast.internal.nio.ConnectionListenable;
 
@@ -42,7 +43,7 @@ public interface ClientConnectionManager extends ConnectionListenable<ClientConn
      * @param uuid UUID of the member to get connection of
      * @return connection if available, null otherwise
      */
-    ClientConnection getConnection(@Nonnull UUID uuid);
+    ClientConnection getActiveConnection(@Nonnull UUID uuid);
 
     /**
      * Check the connected state and user connection strategy configuration to see if an invocation is allowed at the moment
@@ -66,8 +67,9 @@ public interface ClientConnectionManager extends ConnectionListenable<ClientConn
     UUID getClientUuid();
 
     /**
-     * For a smart client a random ClientConnection is chosen via LoadBalancer.
-     * For a unisocket client the only ClientConnection will be returned.
+     * For an {@link RoutingMode#ALL_MEMBERS} or {@link RoutingMode#MULTI_MEMBER} routing client, a random
+     * ClientConnection is chosen via LoadBalancer.
+     * For a {@link RoutingMode#SINGLE_MEMBER} routing client the only ClientConnection will be returned.
      *
      * @return random ClientConnection if available, null otherwise
      */
@@ -75,11 +77,11 @@ public interface ClientConnectionManager extends ConnectionListenable<ClientConn
 
     /**
      * Return:<ol>
-     *     <li>a random connection to a data member from the larger same-version
-     *         group
-     *     <li>if there's no such connection, return connection to a random data
-     *         member
-     *     <li>if there's no such connection, return any random connection
+     * <li>a random connection to a data member from the larger same-version
+     * group
+     * <li>if there's no such connection, return connection to a random data
+     * member
+     * <li>if there's no such connection, return any random connection
      * </ol>
      */
     ClientConnection getConnectionForSql();
@@ -89,10 +91,11 @@ public interface ClientConnectionManager extends ConnectionListenable<ClientConn
     void addClientConnectionProcessListener(ClientConnectionProcessListener listener);
 
     /**
-     * Returns {@code true} if the client is unisocket, {@code false} otherwise.
-     * <p>
-     * The client operates on the unisocket mode only if the smart routing and
-     * the TPC config is disabled.
+     * <lu>
+     * <li>SINGLE_MEMBER: routing can only be done to the single connected member</li>
+     * <li>ALL_MEMBERS: routing can be done to all members by knowing where data is</li>
+     * <li>MULTI_MEMBER: routing can be done based on a defined grouping strategy</li>
+     * </lu>
      */
-    boolean isUnisocketClient();
+    RoutingMode getRoutingMode();
 }

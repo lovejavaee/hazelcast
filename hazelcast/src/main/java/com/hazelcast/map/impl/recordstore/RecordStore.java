@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import com.hazelcast.internal.iteration.IterationPointer;
 import com.hazelcast.internal.monitor.LocalRecordStoreStats;
 import com.hazelcast.internal.monitor.impl.LocalRecordStoreStatsImpl;
 import com.hazelcast.internal.nearcache.impl.invalidation.InvalidationQueue;
+import com.hazelcast.internal.nio.Disposable;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.util.comparators.ValueComparator;
 import com.hazelcast.map.IMap;
@@ -33,7 +34,6 @@ import com.hazelcast.map.impl.MapEntries;
 import com.hazelcast.map.impl.iterator.MapEntriesWithCursor;
 import com.hazelcast.map.impl.iterator.MapKeysWithCursor;
 import com.hazelcast.map.impl.mapstore.MapDataStore;
-import com.hazelcast.map.impl.operation.MapOperation;
 import com.hazelcast.map.impl.record.Record;
 import com.hazelcast.map.impl.record.RecordFactory;
 import com.hazelcast.map.impl.recordstore.expiry.ExpiryMetadata;
@@ -46,16 +46,18 @@ import com.hazelcast.wan.impl.CallerProvenance;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.Queue;
 import java.util.UUID;
 import java.util.function.BiConsumer;
 
 /**
  * Defines a record-store.
  */
+@SuppressWarnings("MethodCount")
 public interface RecordStore<R extends Record> {
 
     ExpirySystem getExpirySystem();
@@ -82,13 +84,15 @@ public interface RecordStore<R extends Record> {
     Object putIfAbsent(Data dataKey, Object value, long ttl, long maxIdle, Address callerAddress);
 
     /**
+     * Called only by backup {@link com.hazelcast.map.EntryProcessor}
+     *
      * @param key        the key
      * @param value      the value to put backup
      * @param provenance origin of call to this method.
      * @return current record after put.
      */
-    R putBackup(Data key, Object value, boolean changeExpiryOnUpdate,
-                long ttl, long maxIdle, long nowOrExpiryTime, CallerProvenance provenance);
+    R putBackupForEntryProcessor(Data key, Object value, boolean changeExpiryOnUpdate,
+                                 long ttl, long maxIdle, long nowOrExpiryTime, CallerProvenance provenance);
 
     /**
      * @return current record after put.
@@ -134,12 +138,14 @@ public interface RecordStore<R extends Record> {
 
     /**
      * Callback which is called when the record is being accessed from the record or index store.
+     * Implementations may suppress read-side bookkeeping while the store cannot
+     * safely be mutated, for example during partition migration.
      * <p>
      * An implementation is not supposed to be thread safe.
      *
-     * @param dataKey
-     * @param record  the accessed record
-     * @param now     the current time
+     * @param dataKey key of the accessed record
+     * @param record the accessed record
+     * @param now    the current time
      */
     void accessRecord(Data dataKey, Record record, long now);
 
@@ -180,7 +186,7 @@ public interface RecordStore<R extends Record> {
      * Returns corresponding value for key as {@link
      * Data}. This adds
      * an extra serialization step. For the reason of
-     * this behaviour please see issue 1292 on github.
+     * this behaviour please see issue 1292 on GitHub.
      *
      * @param key key to be accessed
      * @return value as {@link Data}
@@ -189,7 +195,13 @@ public interface RecordStore<R extends Record> {
     @SuppressWarnings("JavadocReference")
     Data readBackupData(Data key);
 
-    MapEntries getAll(Set<Data> keySet, Address callerAddress);
+    /**
+     * Gets all entries with specified keys, if needed loads them from MapStore.
+     *
+     * @param keySet Collection of keys to be read. If MapStore is defined, found keys will be removed from the set.
+     * @return found entries
+     */
+    MapEntries getAll(Collection<Data> keySet, Address callerAddress);
 
     /**
      * Checks if the key exist in memory without
@@ -241,7 +253,7 @@ public interface RecordStore<R extends Record> {
      * <tt>null</tt> if there was no mapping for <tt>key</tt>.
      * @see com.hazelcast.map.impl.operation.PutFromLoadAllOperation
      */
-    Object putFromLoad(Data key, Object value, long expirationTime, Address callerAddress);
+    Object putFromLoad(Data key, Object value, long expirationTime, Address callerAddress, long now);
 
     /**
      * Puts key-value pair to map which is the result of a load from map store operation on backup.
@@ -266,7 +278,7 @@ public interface RecordStore<R extends Record> {
      * <tt>null</tt> if there was no mapping for <tt>key</tt>.
      * @see com.hazelcast.map.impl.operation.PutFromLoadAllBackupOperation
      */
-    Object putFromLoadBackup(Data key, Object value, long expirationTime);
+    Object putFromLoadBackup(Data key, Object value, long expirationTime, long now);
 
     /**
      * Merges the given {@link MapMergeTypes} via the given {@link SplitBrainMergePolicy}.
@@ -274,11 +286,11 @@ public interface RecordStore<R extends Record> {
      * @param mergingEntry the {@link MapMergeTypes} instance to merge
      * @param mergePolicy  the {@link SplitBrainMergePolicy} instance to apply
      * @param provenance   origin of call to this method.
-     * @return {@code true} if merge is applied, otherwise {@code false}
+     * @return the {@link MapMergeResponse} indicating the result of the merge
      */
-    boolean merge(MapMergeTypes<Object, Object> mergingEntry,
-                  SplitBrainMergePolicy<Object, MapMergeTypes<Object, Object>, Object> mergePolicy,
-                  CallerProvenance provenance);
+    MapMergeResponse merge(MapMergeTypes<Object, Object> mergingEntry,
+                           SplitBrainMergePolicy<Object, MapMergeTypes<Object, Object>, Object> mergePolicy,
+                           CallerProvenance provenance);
 
     R getRecord(Data key);
 
@@ -311,13 +323,16 @@ public interface RecordStore<R extends Record> {
      * does not intercept.
      *
      * @param dataKey key to remove
-     * @param backup {@code true} if a backup partition, otherwise {@code false}.
+     * @param backup  {@code true} if a backup partition, otherwise {@code false}.
      */
     void removeReplicatedRecord(Data dataKey, boolean backup);
 
     void forEach(BiConsumer<Data, R> consumer, boolean backup);
 
     void forEach(BiConsumer<Data, Record> consumer, boolean backup, boolean includeExpiredRecords);
+
+    void forEach(BiConsumer<Data, Record> consumer, boolean backup, boolean includeExpiredRecords,
+                 boolean noCaching);
 
     Iterator<Map.Entry<Data, Record>> iterator();
 
@@ -335,7 +350,7 @@ public interface RecordStore<R extends Record> {
     /**
      * Fetch minimally {@code size} keys from the {@code pointers} position.
      * The key is fetched on-heap.
-     * The method may return less keys if iteration has completed.
+     * The method may return fewer keys if iteration has completed.
      * <p>
      * NOTE: The implementation is free to return more than {@code size} items.
      * This can happen if we cannot easily resume from the last returned item
@@ -405,6 +420,19 @@ public interface RecordStore<R extends Record> {
     MapContainer getMapContainer();
 
     /**
+     * Checks the serialized size of an entry stored in this record store and
+     * records it if oversized, for values that were not in serialized form
+     * when stored. Does nothing when entry size tracking is disabled.
+     * <p>
+     * Must be called on the partition thread.
+     *
+     * @param key    the key of the stored entry
+     * @param value  the stored value, serialized
+     * @param backup {@code true} if this record store is a backup replica
+     */
+    void recordEntrySize(Data key, Data value, boolean backup);
+
+    /**
      * @see MapDataStore#softFlush()
      */
     long softFlush();
@@ -445,8 +473,7 @@ public interface RecordStore<R extends Record> {
     /**
      * Does post eviction operations like sending events
      *
-     * @param dataValue    record to process
-     * @param expiryReason
+     * @param dataValue record to process
      */
     void doPostEvictionOperations(@Nonnull Data dataKey, @Nonnull Object dataValue,
                                   @Nonnull ExpiryReason expiryReason);
@@ -465,20 +492,32 @@ public interface RecordStore<R extends Record> {
     /**
      * Returns live record or null if record is already expired. Does not load missing keys from a map store.
      *
-     * @param key key to be accessed
+     * @param key    key to be accessed
+     * @param backup true if partition is a backup-partition otherwise set false
      * @return live record or null
      * @see #get
      */
-    R getRecordOrNull(Data key);
+    R getRecordOrNull(Data key, boolean backup);
 
     /**
-     * Check if record is reachable according to TTL or idle times.
+     * Checks if the record for the given key has expired according to its
+     * TTL or max-idle time and, if so, evicts it and publishes an expiry
+     * event.
+     * <p>
+     * If mutations from read paths are currently not allowed (e.g. the partition
+     * is migrating or the cluster is in {@code PASSIVE} state), the expired entry is
+     * <em>not</em> physically removed, but this method still returns
+     * {@code true} so callers treat it as expired. The entry is left in
+     * place to avoid mutating the record store and its expiry metadata
+     * (e.g. while a live migration iterator is in use); it will be cleaned
+     * up later by the background expiry task or a subsequent operation.
      *
+     * @param key    key of the record to check
      * @param now    current time in millis
-     * @param backup <code>true</code> if a backup
-     *               partition, otherwise <code>false</code>.
-     * @return {@code true} if record has been evicted
-     * due to the expiry, otherwise return {@code false}.
+     * @param backup {@code true} if this is a backup partition,
+     *               otherwise {@code false}
+     * @return {@code true} if the record has expired (whether or not it
+     * was physically evicted), otherwise {@code false}
      */
     boolean evictIfExpired(Data key, long now, boolean backup);
 
@@ -502,7 +541,7 @@ public interface RecordStore<R extends Record> {
 
     R createRecord(Data key, Object value, long now);
 
-    R loadRecordOrNull(Data key, boolean backup, Address callerAddress);
+    R loadAndCreateRecordOrNull(Data key, boolean backup, Address callerAddress, long now);
 
     /**
      * This can be used to release unused resources.
@@ -545,7 +584,7 @@ public interface RecordStore<R extends Record> {
      * otherwise has no effect.
      * <p>
      * This method should be deleted when the map's lifecycle has been
-     * cleaned-up. Currently it's impossible to pass additional state when
+     * cleaned-up. Currently, it's impossible to pass additional state when
      * the record store is created, thus this state has to be passed in
      * post-creation setters which is cumbersome and error-prone.
      */
@@ -599,7 +638,7 @@ public interface RecordStore<R extends Record> {
      * loading future result if the {@code lastBatch} is {@code true}.
      * <p>
      * If there was an exception during key loading, you may pass it as the
-     * {@code exception} paramter and it will be set as the result of the future.
+     * {@code exception} parameter and it will be set as the result of the future.
      *
      * @param lastBatch if the last key batch was sent
      * @param exception an exception that occurred during key loading
@@ -622,17 +661,19 @@ public interface RecordStore<R extends Record> {
      *                             MapService shutdown, false otherwise.
      * @param onRecordStoreDestroy true if record-store will be destroyed,
      *                             otherwise false.
+     * @param disposables          disposable like freeing
+     *                             memory can be added this queue to make actual disposal later
      */
     @SuppressWarnings("JavadocReference")
-    void clearPartition(boolean onShutdown,
-                        boolean onRecordStoreDestroy);
+    void clearPartition(boolean onShutdown, boolean onRecordStoreDestroy,
+                        @Nullable Queue<Disposable> disposables);
 
     /**
      * Called by {@link IMap#clear()}.
      * <p>
      * Clears data in this record store.
      *
-     * @param backup  {@code true} if a backup partition, otherwise {@code false}.
+     * @param backup {@code true} if a backup partition, otherwise {@code false}.
      * @return number of cleared entries.
      */
     int clear(boolean backup);
@@ -642,7 +683,7 @@ public interface RecordStore<R extends Record> {
      * <p>
      * Used in replication operations.
      *
-     * @see #putReplicatedRecord
+     * @see #putOrUpdateReplicatedRecord
      */
     void reset();
 
@@ -661,19 +702,30 @@ public interface RecordStore<R extends Record> {
 
     void setLocalRecordStoreStats(LocalRecordStoreStats stats);
 
-    default void beforeOperation() {
-        // no-op
+    default int beforeOperation() {
+        return -1;
     }
 
     default void afterOperation() {
         // no-op
     }
 
-    Set<MapOperation> getOffloadedOperations();
+    default void afterOperation(int threadIndex) {
+        // no-op
+    }
 
-    void incMapStoreOffloadedOperationsCount();
-
-    void decMapStoreOffloadedOperationsCount();
+    /**
+     * @return state of the map-store offloaded-operations machinery
+     * for this record store: the queue of step-based operations and
+     * the chain-ownership used to serialize their execution.
+     */
+    OffloadedOperations getOffloadedOperations();
 
     long getMapStoreOffloadedOperationsCount();
+
+    boolean isTieredStorageEnabled();
+
+    default void disposeOnSplitBrainHeal() {
+        getMapContainer().onDestroy();
+    }
 }

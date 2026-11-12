@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import com.hazelcast.instance.BuildInfoProvider;
 import com.hazelcast.instance.EndpointQualifier;
 import com.hazelcast.internal.cluster.fd.ClusterFailureDetectorType;
 import com.hazelcast.internal.diagnostics.HealthMonitorLevel;
-import com.hazelcast.internal.util.OsHelper;
+import com.hazelcast.internal.tpcengine.util.OS;
 import com.hazelcast.internal.util.RuntimeAvailableProcessors;
 import com.hazelcast.map.IMap;
 import com.hazelcast.map.QueryResultSizeExceededException;
@@ -59,7 +59,7 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 /**
  * Defines the name and default value for Hazelcast properties.
  */
-@SuppressWarnings({"checkstyle:magicnumber"})
+@SuppressWarnings("checkstyle:magicnumber")
 public final class ClusterProperty {
     /*
      * NETWORKING / TCP PROPERTIES
@@ -219,7 +219,7 @@ public final class ClusterProperty {
      *     <a href="https://bugs.openjdk.org/browse/JDK-8194298">JDK support</a>.</li>
      * </ul>
      *
-     * @since 5.3.0
+     * @since 5.3
      * @see <a href="https://docs.oracle.com/en/java/javase/11/docs/api/jdk.net/jdk/net/ExtendedSocketOptions.html#TCP_KEEPIDLE">
      *     jdk.net.ExtendedSocketOptions#TCP_KEEPIDLE</a>
      */
@@ -237,10 +237,10 @@ public final class ClusterProperty {
      *     <a href="https://bugs.openjdk.org/browse/JDK-8194298">JDK support</a>.</li>
      * </ul>
      *
-     * @since 5.3.0
-     * @see <a href="https://docs.oracle.com/en/java/javase/11/docs/api/jdk.net/jdk/net/
-     ExtendedSocketOptions.html#TCP_KEEPINTERVAL">
-     *     jdk.net.ExtendedSocketOptions#TCP_KEEPINTERVAL</a>
+     * @since 5.3
+     * @see <a href=
+     *      "https://docs.oracle.com/en/java/javase/11/docs/api/jdk.net/jdk/net/ExtendedSocketOptions.html#TCP_KEEPINTERVAL">
+     *      jdk.net.ExtendedSocketOptions#TCP_KEEPINTERVAL</a>
      */
     public static final HazelcastProperty SOCKET_KEEP_INTERVAL
             = new HazelcastProperty("hazelcast.socket.keep.interval", 75);
@@ -256,9 +256,7 @@ public final class ClusterProperty {
      *     <li>Requires a recent JDK 8, JDK 11 or greater version that includes the required
      *     <a href="https://bugs.openjdk.org/browse/JDK-8194298">JDK support</a>.</li>
      * </ul>
-     *
-     * @return the configured value of Keep-Alive probe count.
-     * @since 5.3.0
+     * @since 5.3
      * @see <a href="https://docs.oracle.com/en/java/javase/11/docs/api/jdk.net/jdk/net/ExtendedSocketOptions.html#TCP_KEEPCOUNT">
      *     jdk.net.ExtendedSocketOptions#TCP_KEEPCOUNT</a>
      */
@@ -279,7 +277,7 @@ public final class ClusterProperty {
      * output. For individual control, check {@link #IO_INPUT_THREAD_COUNT} and
      * {@link #IO_OUTPUT_THREAD_COUNT}.
      * <p>
-     * The default is depends on the number of available processors. If the
+     * The default depends on the number of available processors. If the
      * available processors count is smaller than 20, there will be 3+3 io threads,
      * otherwise 4+4.
      * <p>
@@ -340,14 +338,14 @@ public final class ClusterProperty {
     });
 
     /**
-     * Controls the number of socket input threads. By default it is the same
+     * Controls the number of socket input threads. By default, it is the same
      * as {@link #IO_THREAD_COUNT}.
      */
     public static final HazelcastProperty IO_INPUT_THREAD_COUNT
             = new HazelcastProperty("hazelcast.io.input.thread.count", IO_THREAD_COUNT);
 
     /**
-     * Controls the number of socket output threads. By default it is the same
+     * Controls the number of socket output threads. By default, it is the same
      * as {@link #IO_THREAD_COUNT}.
      */
     public static final HazelcastProperty IO_OUTPUT_THREAD_COUNT
@@ -370,7 +368,7 @@ public final class ClusterProperty {
      * that concurrency has been detected, even if there are no further updates
      * in that window.
      * <p>
-     * Normally in a concurrent system the window keeps sliding forward so it
+     * Normally in a concurrent system the window keeps sliding forward, so it
      * will always remain concurrent.
      * <p>
      * Setting it too high effectively disables the optimization because once
@@ -543,7 +541,7 @@ public final class ClusterProperty {
      * This parameter defines time that the master node will wait since the last
      * received join request (a pre-join window) before it starts processing the
      * join requests and forming a cluster.
-     * Alternatively, if the pre-join phase has laster for over
+     * Alternatively, if the pre-join phase has lasted for over
      * {@link #MAX_WAIT_SECONDS_BEFORE_JOIN} seconds, the master node will proceed
      * with processing the join requests and forming the cluster, regardless of the
      * time elapsed since the last join request.
@@ -552,6 +550,8 @@ public final class ClusterProperty {
      * introduce any more waiting and join requests will be processed as they arrive.
      * The only exception to this is if the master state is reset, which may happen
      * in some cases like split-brain healing.
+     * <p>
+     * See {@link #ASYNC_JOIN_STRATEGY_ENABLED} for how this behaviour can change.
      */
     public static final HazelcastProperty WAIT_SECONDS_BEFORE_JOIN
             = new HazelcastProperty("hazelcast.wait.seconds.before.join", 5, SECONDS);
@@ -577,9 +577,26 @@ public final class ClusterProperty {
      * introduce any more waiting and join requests will be processed as they arrive.
      * The only exception to this is if the master state is reset, which may happen
      * in some cases like split-brain healing.
+     * <p>
+     * See {@link #ASYNC_JOIN_STRATEGY_ENABLED} for how this behaviour can change.
      */
     public static final HazelcastProperty MAX_WAIT_SECONDS_BEFORE_JOIN
             = new HazelcastProperty("hazelcast.max.wait.seconds.before.join", 20, SECONDS);
+
+    /**
+     * Controls how {@link #WAIT_SECONDS_BEFORE_JOIN} and {@link #MAX_WAIT_SECONDS_BEFORE_JOIN} behave.
+     * If async is true, the joining member's {@link HazelcastInstance} constructor returns right away without blocking.
+     * Cluster remains in the same state as before until the configured timeouts have expired, and the new member
+     * will behave as if it was a lite member until they expire.
+     * After the timeouts expire and no other joining members are in the queue,
+     * cluster repartitioning will be performed in the background.
+     * <p>
+     * Async reduces latency significantly when new members join clusters, often reducing startup time.
+     *
+     * @since 5.4
+     */
+    public static final HazelcastProperty ASYNC_JOIN_STRATEGY_ENABLED
+            = new HazelcastProperty("hazelcast.async.join.strategy.enabled", true);
 
     /**
      * Join timeout, maximum time to try to join before giving up.
@@ -636,7 +653,7 @@ public final class ClusterProperty {
      * If this configuration option is set to 0, this functionality is disabled.
      * It is recommended to be set to at least 3 or 5 so that the master will
      * wait long enough to collect heartbeat problem reports. Otherwise, the
-     * master member can make sub-optimal decisions.
+     * master member can make suboptimal decisions.
      */
     public static final HazelcastProperty PARTIAL_MEMBER_DISCONNECTION_RESOLUTION_HEARTBEAT_COUNT
             = new HazelcastProperty("hazelcast.partial.member.disconnection.resolution.heartbeat.count", 0);
@@ -729,15 +746,23 @@ public final class ClusterProperty {
             = new HazelcastProperty("hazelcast.partition.max.parallel.migrations", 10);
 
     /**
+     * Maximum number of backup promotion destination batches to execute concurrently, including the master's local batch.
+     * Must be positive.
+     */
+    public static final HazelcastProperty PARTITION_MAX_PARALLEL_PROMOTION_BATCHES
+            = new HazelcastProperty("hazelcast.partition.max.parallel.promotion.batches", 4);
+
+    /**
      * Maximum number of anti-entropy partition replications to be executed on a member.
-     * By default equals to {@link #PARTITION_MAX_PARALLEL_MIGRATIONS}.
+     * By default, equals to {@link #PARTITION_MAX_PARALLEL_MIGRATIONS}.
      */
     public static final HazelcastProperty PARTITION_MAX_PARALLEL_REPLICATIONS
             = new HazelcastProperty("hazelcast.partition.max.parallel.replications", PARTITION_MAX_PARALLEL_MIGRATIONS);
 
     /**
      * Class name implementing {@link com.hazelcast.partition.PartitioningStrategy}, which
-     * defines key to partition mapping.
+     * defines key to partition mapping. Member-side equivalent of client property
+     * {@link com.hazelcast.client.properties.ClientProperty#PARTITIONING_STRATEGY_CLASS}.
      */
     public static final HazelcastProperty PARTITIONING_STRATEGY_CLASS
             = new HazelcastProperty("hazelcast.partitioning.strategy.class", "");
@@ -904,6 +929,13 @@ public final class ClusterProperty {
             = new HazelcastProperty("hazelcast.metrics.datastructures.enabled", "true");
 
     /**
+     * Enables/disables collecting metrics from user code namespaces.
+     * By default, user code namespaces metrics collection is enabled.
+     */
+    public static final HazelcastProperty METRICS_USER_CODE_NAMESPACES
+            = new HazelcastProperty("hazelcast.metrics.user.code.namespaces.enabled", "true");
+
+    /**
      * Sets the metrics collection frequency in seconds.
      * <p>
      * NOTE: This property overrides {@link MetricsConfig#getCollectionFrequencySeconds()}.
@@ -1010,6 +1042,17 @@ public final class ClusterProperty {
             = new HazelcastProperty("hazelcast.hd.global.index.enabled", true);
 
     /**
+     * Page size for every instance of Hybrid Log on member.
+     * <p>
+     * Default value is 1MB, must be a power of 2, the minimum value is 1MB,
+     * the maximum is 16MB.
+     *
+     * @since 5.4
+     */
+    public static final HazelcastProperty TIERED_STORE_HYBRID_LOG_PAGE_SIZE_IN_MEGABYTES
+            = new HazelcastProperty("hazelcast.tiered.store.hybridlog.page.size.in.mb", 1);
+
+    /**
      * Result size limit for query operations on maps.
      * <p>
      * This value defines the maximum number of returned elements for a single
@@ -1063,7 +1106,7 @@ public final class ClusterProperty {
      * <li>NONE - optimization are disabled</li>
      * </ul>
      * <p>
-     * Values are case sensitive
+     * Values are case-sensitive
      */
     public static final HazelcastProperty QUERY_OPTIMIZER_TYPE
             = new HazelcastProperty("hazelcast.query.optimizer.type", QueryOptimizerFactory.Type.RULES.toString());
@@ -1212,6 +1255,8 @@ public final class ClusterProperty {
 
     /**
      * Scheduler delay for map tasks those are executed on backup members.
+     * Backup flush always lags behind the primary flush for this value,
+     * for both regular and manual flush operations.
      */
     public static final HazelcastProperty MAP_REPLICA_SCHEDULED_TASK_DELAY_SECONDS
             = new HazelcastProperty("hazelcast.map.replica.scheduled.task.delay.seconds", 10, SECONDS);
@@ -1230,8 +1275,8 @@ public final class ClusterProperty {
     /**
      * Maximum number of IMap entries Hazelcast will evict during a
      * single eviction cycle. Eviction cycle is triggered by a map
-     * mutation. Typically it's OK to evict at most a single entry.
-     * However imagine the scenario where you are inserting values in a
+     * mutation. Typically, it's OK to evict at most a single entry.
+     * However, imagine the scenario where you are inserting values in a
      * loop and in each iteration you double entry size. In this
      * situation Hazelcast has to evict more than just a single entry -
      * as all existing entries are smaller than the entry which is about
@@ -1270,7 +1315,7 @@ public final class ClusterProperty {
     /**
      * Setting this capacity is valid if you set {@code writeCoalescing} to {@code false}
      * (see {@link com.hazelcast.config.MapStoreConfig#setWriteCoalescing(boolean)}).
-     * Otherwise its value will not be taken into account.
+     * Otherwise, its value will not be taken into account.
      * <p>
      * The per node maximum write-behind queue capacity is the total of all
      * write-behind queue sizes in a node, including backups.
@@ -1279,6 +1324,32 @@ public final class ClusterProperty {
      */
     public static final HazelcastProperty MAP_WRITE_BEHIND_QUEUE_CAPACITY
             = new HazelcastProperty("hazelcast.map.write.behind.queue.capacity", 50000);
+
+    /**
+     * The cleanup threshold for the event journal, expressed as a fraction of its capacity.
+     * <p>
+     * When the remaining capacity of the event journal drops below this threshold,
+     * a cleanup task may be triggered to remove <b>expired</b> events and reclaim space.
+     * Cleanup triggered by put operation.
+     * Cleanup is performed only if the journal has a configured
+     * {@link com.hazelcast.config.EventJournalConfig#setTimeToLiveSeconds(int) time-to-live (TTL)} value,
+     * since only expired items are eligible for removal.
+     * <p>
+     * For example, with the value of {@code 0.3}, cleanup triggers by put operation when
+     * less than 30% of the total journal capacity remains available.
+     * <p>
+     * This property affects the event journal used by both IMap and ICache.
+     * This property helps balance memory usage and cleanup frequency.
+     * Setting a lower value delays cleanup (potentially increasing memory pressure),
+     * while a higher value triggers cleanup more aggressively.
+     * <p>
+     * Applicable only when {@code timeToLiveSeconds > 0}.
+     * Default value: {@code 1f}, meaning cleanup is triggered after each put operation.
+     *
+     * @since 5.7
+     */
+    public static final HazelcastProperty EVENT_JOURNAL_CLEANUP_THRESHOLD
+            = new HazelcastProperty("hazelcast.journal.cleanup.threshold", 1f);
 
     /*
      * INVOCATION / OPERATION SYSTEM PROPERTIES
@@ -1338,7 +1409,7 @@ public final class ClusterProperty {
      * <p>
      * To deal with overloads of backups, the property
      * {@link #OPERATION_BACKUP_TIMEOUT_MILLIS} should be set to a larger value;
-     * above 60000 is recommended. Otherwise it can still happen backups
+     * above 60000 is recommended. Otherwise, it can still happen backups
      * accumulate.
      */
     public static final HazelcastProperty BACKPRESSURE_ENABLED
@@ -1388,13 +1459,13 @@ public final class ClusterProperty {
      * exponential back-off is applied till eventually a timeout happens or there
      * is room for the invocation.
      * <p>
-     * By default it is configured as 100. With 271 partitions, that would give
+     * By default, it is configured as 100. With 271 partitions, that would give
      * (271 + 1) * 100 = 27200 concurrent invocations from a single member. The
      * +1 is for generic operations. The reasons why 100 is chosen are:
      * - there can be concurrent operations that touch a lot of partitions which
      * consume more than 1 invocation, and
-     * - certain methods like those from the IExecutor are also invocations and
-     * they can be very long running.
+     * - certain methods like those from the IExecutor are also invocations, and
+     * they can be very long-running.
      * <p>
      * No promise is made for the invocations being tracked per partition, or
      * if there is a general pool of invocations.
@@ -1407,6 +1478,10 @@ public final class ClusterProperty {
      * being migrated. This can lead to stale reads for some scenarios. You can
      * disable stale read operations by setting this system property’s value to
      * "true". Its default value is "false", meaning that stale reads are allowed.
+     * @apiNote Allowing stale reads does not allow {@link IMap} reads to mutate
+     * the partition data being migrated. For example, a read that would insert
+     * a value returned by a {@link com.hazelcast.map.MapLoader} is retried until migration
+     * completes instead of invoking the loader during migration.
      */
     public static final HazelcastProperty DISABLE_STALE_READ_ON_PARTITION_MIGRATION
             = new HazelcastProperty("hazelcast.partition.migration.stale.read.disabled", false);
@@ -1440,7 +1515,7 @@ public final class ClusterProperty {
      * The default is 1.
      * <p>
      * Having at least 1 priority generic operation thread helps to improve cluster
-     * stability since a lot of cluster operations are generic priority operations
+     * stability since a lot of cluster operations are generic priority operations,
      * and they should get executed as soon as possible. If there is a dedicated
      * generic operation thread then these operations don't get delayed because
      * the generic threads are busy executing regular user operations. So unless
@@ -1452,7 +1527,7 @@ public final class ClusterProperty {
     /**
      * The number of threads that process responses.
      * <p>
-     * By default there are 2 response threads; this gives stable and good performance.
+     * By default, there are 2 response threads; this gives stable and good performance.
      * <p>
      * If set to 0, the response threads are bypassed and the response handling is done
      * on the IO threads. Under certain conditions this can give a higher throughput, but
@@ -1552,7 +1627,7 @@ public final class ClusterProperty {
 
     /**
      * The timeout for offering an event to the event executor for processing.
-     * If the event queue is full, the event might not be accepted to the queue
+     * If the event queue is full, the event might not be accepted to the queue,
      * and it will be dropped.
      * This applies only to processing of local events. Remote events (events
      * on a remote subscriber) have no timeout, meaning that the event can be
@@ -1583,7 +1658,7 @@ public final class ClusterProperty {
 
     /**
      * Enable Hazelcast shutdownhook thread. When this is enabled, this thread
-     * terminates the Hazelcast instance without waiting to shutdown gracefully.
+     * terminates the Hazelcast instance without waiting to shut down gracefully.
      */
     public static final HazelcastProperty SHUTDOWNHOOK_ENABLED
             = new HazelcastProperty("hazelcast.shutdownhook.enabled", true);
@@ -1593,12 +1668,12 @@ public final class ClusterProperty {
      * <p>
      * Possible values:
      * TERMINATE: Terminate Hazelcast immediately
-     * GRACEFUL:  Initiate graceful shutdown. This can significantly slow-down
+     * GRACEFUL:  Initiate graceful shutdown. This can significantly slow down
      * JVM exit process, but it's tries to retain data safety.
      * <p>
      * Default: TERMINATE
      * <p>
-     * You should always shutdown Hazelcast explicitly via {@link HazelcastInstance#shutdown()}
+     * You should always shut down Hazelcast explicitly via {@link HazelcastInstance#shutdown()}
      * It's not recommended to rely on shutdown hook, this is a last-effort measure.
      */
     public static final HazelcastProperty SHUTDOWNHOOK_POLICY
@@ -1618,6 +1693,20 @@ public final class ClusterProperty {
             = new HazelcastProperty("hazelcast.logging.details.enabled", true);
 
     /**
+     * Controls whether Hazelcast will explicitly shut down the logging implementation as part of
+     * Hazelcast graceful shutdown procedure. Default value is {@code false}.
+     * <p/>
+     * This property can be enabled when Hazelcast is the only application being executed in the JVM,
+     * for example, when running a Hazelcast cluster member in its own process.
+     * If the JVM process is expected to continue executing other application bits after Hazelcast is shut down, then
+     * if this property is {@code true}, logging may be disrupted.
+     *
+     * @since 5.4
+     */
+    public static final HazelcastProperty LOGGING_SHUTDOWN
+            = new HazelcastProperty("hazelcast.logging.shutdown", false);
+
+    /**
      * All locks which are acquired without an explicit lease time use this value
      * (in seconds) as the lease time. When you want to set an explicit lease
      * time for your locks, you cannot set it to a longer time than this value.
@@ -1626,10 +1715,12 @@ public final class ClusterProperty {
             = new HazelcastProperty("hazelcast.lock.max.lease.time.seconds", Long.MAX_VALUE, SECONDS);
 
     /**
-     * Hazelcast IMDG Enterprise license key.
+     * Hazelcast Enterprise license key.
      */
-    public static final HazelcastProperty ENTERPRISE_LICENSE_KEY
-            = new HazelcastProperty("hazelcast.enterprise.license.key");
+    public static final HazelcastProperty ENTERPRISE_LICENSE_KEY = new HazelcastProperty("hazelcast.enterprise.license.key")
+            // Print a warning when British spelling of "License" is used
+            // https://github.com/hazelcast/hazelcast/issues/13161
+            .setDeprecatedName("hazelcast.enterprise.licence.key");
 
     /**
      * Hazelcast serialization version. This is single byte value between 1 and
@@ -1675,7 +1766,7 @@ public final class ClusterProperty {
      * If set to {@code true}, Moby Name will be chosen, otherwise a name that
      * is concatenation of static prefix, number and cluster name.
      * <p>
-     * By default is {@code true}.
+     * By default, is {@code true}.
      */
     public static final HazelcastProperty MOBY_NAMING_ENABLED
             = new HazelcastProperty("hazelcast.member.naming.moby.enabled", true);
@@ -1827,7 +1918,7 @@ public final class ClusterProperty {
      * @since 5.0
      */
     public static final HazelcastProperty LOG_EMOJI_ENABLED = new HazelcastProperty("hazelcast.logging.emoji.enabled",
-            StandardCharsets.UTF_8.equals(Charset.defaultCharset()) && !OsHelper.isWindows());
+            StandardCharsets.UTF_8.equals(Charset.defaultCharset()) && !OS.isWindows());
 
     /**
      * When set to any not-{@code null} value, security recommendations are logged on INFO level during the node start. The
@@ -1839,15 +1930,24 @@ public final class ClusterProperty {
             "hazelcast.security.recommendations");
 
     /**
-     * Enable experimental support for accessing nested fields by using custom
-     * types in SQL. The feature is unstable in 5.2, this property will be
+     * Enable experimental support for accessing cyclic nested fields by using custom
+     * types in SQL. The feature is unstable in 5.4, this property will be
      * removed once the feature is stable.
      *
-     * @since 5.2
+     * @since 5.4
      */
     @Beta
-    public static final HazelcastProperty SQL_CUSTOM_TYPES_ENABLED = new HazelcastProperty(
-            "hazelcast.sql.experimental.custom.types.enabled", false);
+    public static final HazelcastProperty SQL_CUSTOM_CYCLIC_TYPES_ENABLED = new HazelcastProperty(
+            "hazelcast.sql.experimental.custom.cyclic.types.enabled", false);
+
+    /**
+     * Enable experimental support for querying Tiered Storage IMaps via SQL.
+     * @since 5.4
+     */
+    @Beta
+    public static final HazelcastProperty SQL_TSTORE_ENABLED = new HazelcastProperty(
+            "hazelcast.sql.tstore.enabled", false);
+
 
     /**
      * When {@code true}, enables monitoring of the runtime environment to detect the intent of shutdown
@@ -1871,6 +1971,120 @@ public final class ClusterProperty {
      */
     public static final HazelcastProperty PERSISTENCE_AUTO_CLUSTER_STATE_STRATEGY = new HazelcastProperty(
             "hazelcast.persistence.auto.cluster.state.strategy", ClusterState.NO_MIGRATION);
+
+    /**
+     * The directory path to be used for jar uploading. The path must exist and must have
+     * read + write + execute permissions for the Hazelcast process
+     * <p>
+     * A different path can be specified for each member
+     * <p>
+     * The path can be absolute or relative to current working directory of Hazelcast process
+     * @since 5.3
+     */
+    public static final HazelcastProperty JAR_UPLOAD_DIR_PATH
+            = new HazelcastProperty("hazelcast.cluster.jarupload.dirpath");
+
+    /**
+     * Defines whether WAN replication events should be fired when values are evicted
+     * from {@link IMap} objects.
+     * <p>
+     * The default value is {@code false}.
+     * <p>
+     * NOTE: The expected use-case for this property to be enabled is very specific, namely where
+     * an exact copy of a source is wanted on a target with no evictions enabled; however in this
+     * scenario, the target cluster would need to have evictions enabled if it were to become the
+     * active cluster - failing to do so could lead to Out Of Memory or data inconsistency issues.
+     * The reverse would also be necessary if returning back to the original cluster. Ensure you
+     * have a plan for handling these scenarios (such as using Management Centre to configure
+     * evictions manually) before enabling this property and changing between active clusters.
+     *
+     * @since 5.4
+     */
+    public static final HazelcastProperty WAN_REPLICATE_IMAP_EVICTIONS
+            = new HazelcastProperty("hazelcast.wan.replicate.imap.evictions", false);
+
+    /**
+     * Defines whether WAN replication events should be fired when values are evicted
+     * from {@link com.hazelcast.cache.ICache} objects.
+     * <p>
+     * The default value is {@code false}.
+     * <p>
+     * NOTE: The expected use-case for this property to be enabled is very specific, namely where
+     * an exact copy of a source is wanted on a target with no evictions enabled; however in this
+     * scenario, the target cluster would need to have evictions enabled if it were to become the
+     * active cluster - failing to do so could lead to Out Of Memory or data inconsistency issues.
+     * The reverse would also be necessary if returning back to the original cluster. Ensure you
+     * have a plan for handling these scenarios (such as using Management Centre to configure
+     * evictions manually) before enabling this property and changing between active clusters.
+     *
+     * @since 5.4
+     */
+    public static final HazelcastProperty WAN_REPLICATE_ICACHE_EVICTIONS
+            = new HazelcastProperty("hazelcast.wan.replicate.icache.evictions", false);
+
+    /**
+     * Maximum wait in seconds during member demotion to a lite member.
+     *
+     * @since 5.4
+     */
+    public static final HazelcastProperty DEMOTE_MAX_WAIT
+            = new HazelcastProperty("hazelcast.member.demote.max.wait", 600, SECONDS);
+
+    /**
+     * Defines the results threshold at or above which logging is produced for expensive {@link IMap} invocations.
+     * If an implementing invocation returns results totalling equal to or above this threshold, it is logged on the member side.
+     * <p>
+     * Currently only implemented for client invocations of the following methods:
+     * {@link IMap#entrySet()}, and {@link IMap#values()}.
+     *
+     * @since 5.6
+     */
+    public static final HazelcastProperty EXPENSIVE_IMAP_INVOCATION_REPORTING_THRESHOLD
+            = new HazelcastProperty("hazelcast.expensive.imap.invocation.reporting.threshold", 100);
+
+
+    /**
+     * Enables or disables the use of a dedicated executor for vector collection
+     * index maintenance operations, such as optimization and cleanup of deleted nodes.
+     * <p>
+     * When enabled, index maintenance tasks are executed in an isolated executor
+     * instead of sharing the common {@link java.util.concurrent.ForkJoinPool}.
+     * <p>
+     * Default value is {@code true}.
+     *
+     * @since 6.0
+     */
+    public static final HazelcastProperty USE_INDEX_ISOLATED_EXECUTOR =
+        new HazelcastProperty("hazelcast.vector.maintenance.executor.enabled", true);
+
+    /**
+     * Property that defines the maximum parallelism level for the isolated vector collection index executor.
+     * <p>
+     * This controls the number of threads that can execute index-related
+     * tasks concurrently when the isolated executor is enabled.
+     * <p>
+     * If the property is not set, or is set to {@code 0} or a negative value, the default parallelism is used:
+     * <pre>{@code
+     * max(1, Runtime.getRuntime().availableProcessors() - 1)
+     * }</pre>
+     * The maximum parallelism is limited to:
+     * <pre>{@code
+     * Runtime.getRuntime().availableProcessors() * 2
+     * }</pre>
+     * If a value greater than this limit is provided, it will be capped and
+     * the effective parallelism will be set to:
+     * <pre>{@code
+     * Runtime.getRuntime().availableProcessors() * 2
+     * }</pre>
+     *
+     * @see #USE_INDEX_ISOLATED_EXECUTOR
+     *
+     * @since 6.0
+     */
+    public static final HazelcastProperty INDEX_ISOLATED_EXECUTOR_MAX_PARALLELISM
+        = new HazelcastProperty(
+            "hazelcast.vector.maintenance.executor.maxParallelism",
+        RuntimeAvailableProcessors.get() - 1);
 
     private ClusterProperty() {
     }

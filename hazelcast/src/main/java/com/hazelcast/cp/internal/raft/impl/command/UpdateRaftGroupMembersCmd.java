@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.cp.internal.raft.impl.command;
 
 import com.hazelcast.cp.internal.raft.MembershipChangeMode;
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.cp.internal.raft.command.RaftGroupCmd;
 import com.hazelcast.cp.internal.raft.impl.RaftDataSerializerHook;
 import com.hazelcast.nio.ObjectDataInput;
@@ -32,7 +33,7 @@ import java.util.LinkedHashSet;
  * A {@code RaftGroupCmd} to update members of an existing Raft group.
  * This command is generated as a result of member add or remove request.
  */
-public class UpdateRaftGroupMembersCmd extends RaftGroupCmd implements IdentifiedDataSerializable {
+public class UpdateRaftGroupMembersCmd implements RaftGroupCmd, IdentifiedDataSerializable {
 
     private Collection<RaftEndpoint> members;
     private RaftEndpoint member;
@@ -71,10 +72,7 @@ public class UpdateRaftGroupMembersCmd extends RaftGroupCmd implements Identifie
 
     @Override
     public void writeData(ObjectDataOutput out) throws IOException {
-        out.writeInt(members.size());
-        for (RaftEndpoint member : members) {
-            out.writeObject(member);
-        }
+        SerializationUtil.writeCollection(members, out);
         out.writeObject(member);
         out.writeString(mode.name());
     }
@@ -82,7 +80,7 @@ public class UpdateRaftGroupMembersCmd extends RaftGroupCmd implements Identifie
     @Override
     public void readData(ObjectDataInput in) throws IOException {
         int count = in.readInt();
-        Collection<RaftEndpoint> members = new LinkedHashSet<RaftEndpoint>();
+        Collection<RaftEndpoint> members = new LinkedHashSet<>();
         for (int i = 0; i < count; i++) {
             RaftEndpoint member = in.readObject();
             members.add(member);

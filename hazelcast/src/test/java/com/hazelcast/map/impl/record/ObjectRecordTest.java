@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ import org.junit.runner.RunWith;
 
 /**
  * Uses basic map functionality with different configuration than existing ones.
- * Actually, it tests {@link ObjectRecord#getValue()} and {@link ObjectRecord#setValue(Object)}.
+ * Actually, it tests {@link ObjectRecordWithStats#getValue()} and {@link ObjectRecordWithStats#setValue(Object)}.
  */
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
@@ -53,14 +53,14 @@ public class ObjectRecordTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testGetValue() throws Exception {
+    public void testGetValue() {
         map.put(1, new SampleTestObjects.Employee("alex", 26, true, 25));
         map.get(1);
         assertSizeEventually(1, map);
     }
 
     @Test
-    public void testSetValue() throws Exception {
+    public void testSetValue() {
         map.put(1, new SampleTestObjects.Employee("alex", 26, true, 25));
         map.put(1, new SampleTestObjects.Employee("tom", 24, true, 10));
         assertSizeEventually(1, map);

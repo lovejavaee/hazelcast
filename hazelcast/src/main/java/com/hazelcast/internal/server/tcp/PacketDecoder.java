@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,13 +29,12 @@ import java.util.function.Consumer;
 import static com.hazelcast.internal.networking.HandlerStatus.CLEAN;
 import static com.hazelcast.internal.nio.IOUtil.compactOrClear;
 import static com.hazelcast.internal.nio.Packet.FLAG_URGENT;
-import static com.hazelcast.internal.util.JVMUtil.upcast;
 
 /**
  * The {@link InboundHandler} for member to member communication.
- *
+ * <p>
  * It reads as many packets from the src {@link ByteBuffer} as possible, and
- * each of the Packets is send to the destination.
+ * each of the Packets is sent to the destination.
  *
  * @see Consumer
  * @see PacketEncoder
@@ -57,7 +56,7 @@ public class PacketDecoder extends InboundHandlerWithCounters<ByteBuffer, Consum
 
     @Override
     public HandlerStatus onRead() throws Exception {
-        upcast(src).flip();
+        src.flip();
         try {
             while (src.hasRemaining()) {
                 Packet packet = packetReader.readFrom(src);

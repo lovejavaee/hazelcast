@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,10 +33,10 @@ public class ProgressMonitor {
     private static final ILogger LOGGER = Logger.getLogger(ProgressMonitor.class);
 
     private final long maximumStaleNanos;
-    private final List<BounceMemberRule.TestTaskRunnable> tasks = new ArrayList<BounceMemberRule.TestTaskRunnable>();
+    private final List<BounceMemberRule.TestTaskRunnable> tasks = new ArrayList<>();
 
     private long lastProgressLoggedNanos;
-    private long progressDelta;
+    private long lastProgress;
 
     public ProgressMonitor(long maximumStaleSeconds) {
         this.maximumStaleNanos = maximumStaleSeconds == STALENESS_DETECTOR_DISABLED
@@ -45,8 +45,8 @@ public class ProgressMonitor {
     }
 
     public void registerTask(Runnable task) {
-        if (task instanceof BounceMemberRule.TestTaskRunnable) {
-            tasks.add((BounceMemberRule.TestTaskRunnable) task);
+        if (task instanceof BounceMemberRule.TestTaskRunnable runnable) {
+            tasks.add(runnable);
         } else if (maximumStaleNanos != STALENESS_DETECTOR_DISABLED) {
             throw new UnsupportedOperationException("Progress checking is enabled only for automatically repeated tasks");
         }
@@ -77,12 +77,12 @@ public class ProgressMonitor {
             StringBuilder sb = new StringBuilder("Aggregated progress: ")
                     .append(aggregatedProgress)
                     .append(" operations. ");
-            progressDelta = aggregatedProgress - progressDelta;
             if (lastProgressLoggedNanos > 0) {
                 sb.append("Maximum latency: ")
                         .append(TimeUnit.NANOSECONDS.toMillis(maxLatencyNanos))
-                        .append(" ms.");
+                        .append(" ms. ");
 
+                long progressDelta = aggregatedProgress - lastProgress;
                 long timeInNanos = now - lastProgressLoggedNanos;
                 double timeInSeconds = (double) timeInNanos / 1000000000;
                 double progressPerSecond = progressDelta / timeInSeconds;
@@ -94,13 +94,14 @@ public class ProgressMonitor {
 
             }
 
+            lastProgress = aggregatedProgress;
             lastProgressLoggedNanos = now;
             LOGGER.info(sb.toString());
         }
     }
 
     private void onStalenessDetected(BounceMemberRule.TestTaskRunnable task, long currentStaleNanos) {
-        // this could seems redundant as the Hazelcast JUnit runner will also take threadumps
+        // this could seem redundant as the Hazelcast JUnit runner will also take threadumps
         // however in this case we are doing the threaddump before declaring a test failure
         // and stopping Hazelcast instances -> there is a higher chance we will actually
         // record something useful.

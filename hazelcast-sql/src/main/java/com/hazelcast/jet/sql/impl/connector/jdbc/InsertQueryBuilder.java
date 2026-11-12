@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,9 +25,7 @@ class InsertQueryBuilder {
 
     private final String query;
 
-    InsertQueryBuilder(JdbcTable jdbcTable) {
-        SqlDialect dialect = jdbcTable.sqlDialect();
-
+    InsertQueryBuilder(JdbcTable jdbcTable, SqlDialect dialect) {
         StringBuilder sb = new StringBuilder()
                 .append("INSERT INTO ");
         dialect.quoteIdentifier(sb, Arrays.asList(jdbcTable.getExternalName()));

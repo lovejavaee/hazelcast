@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ import com.hazelcast.spi.discovery.SimpleDiscoveryNode;
 import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Function;
+import java.util.function.ToIntFunction;
 
 import static com.hazelcast.internal.util.HostnameUtil.getLocalHostname;
 
@@ -46,7 +46,7 @@ class KubernetesApiEndpointResolver
     KubernetesApiEndpointResolver(ILogger logger, KubernetesConfig config, ClusterTopologyIntentTracker tracker) {
         this(logger, config.getServiceName(), config.getServicePort(), config.getServiceLabelName(),
                 config.getServiceLabelValue(), config.getPodLabelName(), config.getPodLabelValue(),
-                config.isResolveNotReadyAddresses(), buildKubernetesClient(config, tracker));
+                config.isResolveNotReadyAddresses(), new KubernetesClient(config, tracker));
     }
 
     /**
@@ -64,13 +64,6 @@ class KubernetesApiEndpointResolver
         this.podLabelValue = podLabelValue;
         this.resolveNotReadyAddresses = resolveNotReadyAddresses;
         this.client = client;
-    }
-
-    private static KubernetesClient buildKubernetesClient(KubernetesConfig config, ClusterTopologyIntentTracker tracker) {
-        return new KubernetesClient(config.getNamespace(), config.getKubernetesMasterUrl(), config.getTokenProvider(),
-                config.getKubernetesCaCertificate(), config.getKubernetesApiRetries(), config.getExposeExternallyMode(),
-                config.isUseNodeNameAsExternalAddress(), config.getServicePerPodLabelName(),
-                config.getServicePerPodLabelValue(), tracker);
     }
 
     @Override
@@ -103,20 +96,20 @@ class KubernetesApiEndpointResolver
             discoveredNodes
                     .add(new SimpleDiscoveryNode(privateAddress, publicAddress, endpoint.getAdditionalProperties()));
             if (logger.isFinestEnabled()) {
-                logger.finest(String.format("Found node service with addresses (private, public): %s, %s ", privateAddress,
-                        publicAddress));
+                logger.finest("Found node service with addresses (private, public): %s, %s ", privateAddress,
+                        publicAddress);
             }
         }
     }
 
     private Address createAddress(KubernetesClient.EndpointAddress address,
-                                  Function<KubernetesClient.EndpointAddress, Integer> portResolver) {
+            ToIntFunction<KubernetesClient.EndpointAddress> portResolver) {
         if (address == null) {
             return null;
         }
         String ip = address.getIp();
         InetAddress inetAddress = mapAddress(ip);
-        int port = portResolver.apply(address);
+        int port = portResolver.applyAsInt(address);
         return new Address(inetAddress, port);
     }
 

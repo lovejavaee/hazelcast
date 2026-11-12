@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.map;
 
 import com.hazelcast.core.ReadOnly;
 import com.hazelcast.internal.serialization.BinaryInterface;
+import com.hazelcast.spi.annotation.NamespacesSupported;
 
 import javax.annotation.Nullable;
 import java.io.Serializable;
@@ -45,7 +46,7 @@ import java.util.Map.Entry;
  * {@link java.util.Map.Entry#setValue} method of {@link java.util.Map.Entry} such as:
  * <pre>
  * <code>
- * {@literal}Override
+ * {@literal @}Override
  *     public Object process(Map.Entry entry) {
  *        Value value = entry.getValue();
  *        // process and modify value
@@ -56,7 +57,7 @@ import java.util.Map.Entry;
  * </code>
  * </pre>
  * otherwise EntryProcessor does not guarantee that it will modify the entry.
- *<p>
+ * <p>
  * EntryProcessor instances can be shared between threads. If an EntryProcessor instance contains mutable state, proper
  * concurrency control needs to be provided to coordinate access to mutable state. Another option is to rely
  * on {@code ThreadLocal}s.
@@ -64,17 +65,16 @@ import java.util.Map.Entry;
  * Since Hazelcast 4.1, an instance of {@link ExtendedMapEntry} is provided as argument in {@link #process(Map.Entry)}
  * method:
  * <pre>
- * {@code
- * class IncrementWithOptionalTtl implements EntryProcessor<Integer, Integer, Void> {
+ * class IncrementWithOptionalTtl implements EntryProcessor&lt;Integer, Integer, Void&gt; {
  *     private final long ttlSeconds;
  *
  *     public IncrementWithOptionalTtl(long ttlSeconds) {
  *         this.ttlSeconds = ttlSeconds;
  *     }
  *
- *     @Override
- *     public Void process(Map.Entry<Integer, Integer> e) {
- *         ExtendedMapEntry<Integer, Integer> entry = (ExtendedMapEntry<Integer, Integer>) e;
+ *     {@literal @}Override
+ *     public Void process(Map.Entry&lt;Integer, Integer&gt; e) {
+ *         ExtendedMapEntry&lt;Integer, Integer&gt; entry = (ExtendedMapEntry&lt;Integer, Integer&gt;) e;
  *         int newValue = entry.getValue() + 1;
  *         if (ttlSeconds > 0) {
  *             entry.setValue(newValue, ttlSeconds, TimeUnit.SECONDS);
@@ -84,7 +84,6 @@ import java.util.Map.Entry;
  *         return null;
  *     }
  * }
- * }
  * </pre>
  *
  * @param <K> map entry key type
@@ -93,6 +92,7 @@ import java.util.Map.Entry;
  *
  * @see ExtendedMapEntry
  */
+@NamespacesSupported
 @BinaryInterface
 @FunctionalInterface
 public interface EntryProcessor<K, V, R> extends Serializable {
@@ -136,8 +136,8 @@ public interface EntryProcessor<K, V, R> extends Serializable {
      * that a key exists but its backup processor may not find it at run time due
      * to an unsent backup of a previous operation (e.g. a previous put). In
      * those situations, Hazelcast internally/eventually will sync those owner
-     * and backup partitions so you will not lose any data.
-     * When coding an backup entry processor, you should take that case into
+     * and backup partitions, so you will not lose any data.
+     * When coding a backup entry processor, you should take that case into
      * account, otherwise {@link java.lang.NullPointerException}s can be seen
      * since {@link java.util.Map.Entry#getValue()} may return null.
      *

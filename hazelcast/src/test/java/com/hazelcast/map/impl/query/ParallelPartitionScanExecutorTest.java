@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,14 +27,13 @@ import com.hazelcast.spi.exception.RetryableHazelcastException;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
+import com.hazelcast.test.starter.ReflectionUtils;
 import org.junit.After;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.rules.TestName;
 import org.junit.runner.RunWith;
-import org.powermock.reflect.Whitebox;
 
 import java.util.List;
 import java.util.UUID;
@@ -43,6 +42,7 @@ import java.util.concurrent.TimeUnit;
 
 import static java.lang.Thread.currentThread;
 import static java.util.Arrays.asList;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -58,9 +58,6 @@ public class ParallelPartitionScanExecutorTest {
 
     @Rule
     public TestName testName = new TestName();
-
-    @Rule
-    public ExpectedException expected = ExpectedException.none();
 
     private NamedThreadPoolExecutor threadPoolExecutor;
 
@@ -79,11 +76,11 @@ public class ParallelPartitionScanExecutorTest {
     }
 
     @Test
-    public void execute_success() {
+    public void execute_success() throws Exception {
         IPartitionService partitionService = mock(IPartitionService.class);
         when(partitionService.getPartitionCount()).thenReturn(271);
         PartitionScanRunner runner = mock(PartitionScanRunner.class);
-        Whitebox.setInternalState(runner, "partitionService", partitionService);
+        ReflectionUtils.setFieldValueReflectively(runner, "partitionService", partitionService);
         ParallelPartitionScanExecutor executor = executor(runner);
         Predicate predicate = Predicates.equal("attribute", 1);
         QueryResult queryResult = new QueryResult(IterationType.ENTRY, null, null, Long.MAX_VALUE, false);
@@ -102,8 +99,9 @@ public class ParallelPartitionScanExecutorTest {
 
         doThrow(new QueryException()).when(runner).run(anyString(), eq(predicate), anyInt(), isA(QueryResult.class));
 
-        expected.expect(QueryException.class);
-        executor.execute("Map", predicate, asList(1, 2, 3), queryResult);
+        List<Integer> list = asList(1, 2, 3);
+        assertThatThrownBy(() -> executor.execute("Map", predicate, list, queryResult))
+                .isInstanceOf(QueryException.class);
     }
 
     @Test
@@ -115,7 +113,8 @@ public class ParallelPartitionScanExecutorTest {
 
         doThrow(new RetryableHazelcastException()).when(runner).run(anyString(), eq(predicate), anyInt(), isA(QueryResult.class));
 
-        expected.expect(RetryableHazelcastException.class);
-        executor.execute("Map", predicate, asList(1, 2, 3), queryResult);
+        List<Integer> list = asList(1, 2, 3);
+        assertThatThrownBy(() -> executor.execute("Map", predicate, list, queryResult))
+                .isInstanceOf(RetryableHazelcastException.class);
     }
 }

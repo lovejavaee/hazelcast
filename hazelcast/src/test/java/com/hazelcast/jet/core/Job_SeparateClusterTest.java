@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ package com.hazelcast.jet.core;
 
 import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.client.config.ClientNetworkConfig;
+import com.hazelcast.client.config.ClusterRoutingConfig;
+import com.hazelcast.client.config.RoutingMode;
 import com.hazelcast.client.properties.ClientProperty;
 import com.hazelcast.cluster.Address;
 import com.hazelcast.config.Config;
@@ -27,16 +29,14 @@ import com.hazelcast.jet.JobAlreadyExistsException;
 import com.hazelcast.jet.config.JobConfig;
 import com.hazelcast.jet.core.TestProcessors.MockPS;
 import com.hazelcast.jet.core.TestProcessors.NoOutputSourceP;
+import com.hazelcast.test.Accessors;
 import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.SlowTest;
-import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Ignore;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import java.util.ArrayList;
@@ -47,9 +47,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
+import static com.hazelcast.jet.core.JobAssertions.assertThat;
 import static com.hazelcast.jet.core.JobStatus.RUNNING;
 import static com.hazelcast.jet.core.JobStatus.SUSPENDED;
 import static java.util.Arrays.asList;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 
 /**
@@ -61,9 +63,6 @@ public class Job_SeparateClusterTest extends JetTestSupport {
 
     private static final int NODE_COUNT = 2;
     private static final int LOCAL_PARALLELISM = 1;
-
-    @Rule
-    public ExpectedException expectedException = ExpectedException.none();
 
     private HazelcastInstance instance1;
     private HazelcastInstance instance2;
@@ -88,15 +87,15 @@ public class Job_SeparateClusterTest extends JetTestSupport {
 
         // When
         Job job1 = instance1.getJet().newJob(dag, config);
-        assertJobStatusEventually(job1, RUNNING);
+        assertThat(job1).eventuallyHasStatus(RUNNING);
         job1.suspend();
-        assertJobStatusEventually(job1, SUSPENDED);
+        assertThat(job1).eventuallyHasStatus(SUSPENDED);
         // gracefully shutdown the master
         instance1.shutdown();
 
         // Then
-        expectedException.expect(JobAlreadyExistsException.class);
-        instance2.getJet().newJob(dag, config);
+        assertThatThrownBy(() -> instance2.getJet().newJob(dag, config))
+                .isInstanceOf(JobAlreadyExistsException.class);
     }
 
     @Test
@@ -125,8 +124,7 @@ public class Job_SeparateClusterTest extends JetTestSupport {
         NoOutputSourceP.failure.set(ex);
 
         // Then
-        expectedException.expectMessage(Matchers.containsString(ex.getMessage()));
-        job.join();
+        assertThatThrownBy(job::join).hasMessageContaining(ex.getMessage());
     }
 
     @Test
@@ -134,11 +132,11 @@ public class Job_SeparateClusterTest extends JetTestSupport {
         DAG dag = new DAG().vertex(new Vertex("test", new MockPS(NoOutputSourceP::new, NODE_COUNT)));
 
         int timeoutSecs = 1;
-        Address address = getAddress(instance2);
+        Address address = Accessors.getAddress(instance2);
         ClientConfig config = new ClientConfig()
                 .setProperty(ClientProperty.INVOCATION_TIMEOUT_SECONDS.getName(), Integer.toString(timeoutSecs))
                 .setNetworkConfig(new ClientNetworkConfig()
-                        .setSmartRouting(false)
+                        .setClusterRoutingConfig(new ClusterRoutingConfig().setRoutingMode(RoutingMode.SINGLE_MEMBER))
                         .addAddress(address.getHost() + ":" + address.getPort())
                 );
         HazelcastInstance client = createHazelcastClient(config);
@@ -160,8 +158,7 @@ public class Job_SeparateClusterTest extends JetTestSupport {
         NoOutputSourceP.failure.set(ex);
 
         // Then
-        expectedException.expectMessage(Matchers.containsString(ex.getMessage()));
-        job.join();
+        assertThatThrownBy(job::join).hasMessageContaining(ex.getMessage());
     }
 
     @Test
@@ -186,7 +183,7 @@ public class Job_SeparateClusterTest extends JetTestSupport {
                 () -> job.get().getMetrics(),
                 () -> job.get().getConfig()
         );
-        List<Future> checkerFutures = new ArrayList<>();
+        List<Future<?>> checkerFutures = new ArrayList<>();
         for (Runnable action : actions) {
             checkerFutures.add(spawn(() -> {
                 while (!done.get()) {
@@ -199,12 +196,14 @@ public class Job_SeparateClusterTest extends JetTestSupport {
             instance1.shutdown();
             instance1 = createHazelcastInstance();
             job.set(submitterSupplier.get().getJet().getJob(job.get().getId()));
-            assertJobStatusEventually(job.get(), RUNNING);
+            Job job2 = job.get();
+            assertThat(job2).eventuallyHasStatus(RUNNING);
 
             instance2.shutdown();
             instance2 = createHazelcastInstance();
             job.set(submitterSupplier.get().getJet().getJob(job.get().getId()));
-            assertJobStatusEventually(job.get(), RUNNING);
+            Job job1 = job.get();
+            assertThat(job1).eventuallyHasStatus(RUNNING);
 
             sleepSeconds(1);
             if (checkerFutures.stream().anyMatch(Future::isDone)) {
@@ -213,7 +212,7 @@ public class Job_SeparateClusterTest extends JetTestSupport {
         }
 
         done.set(true);
-        for (Future future : checkerFutures) {
+        for (Future<?> future : checkerFutures) {
             future.get();
         }
     }

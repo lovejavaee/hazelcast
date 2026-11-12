@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,8 @@ import java.io.IOException;
  * This interface allows deserialization of a binary data with a provided class type.
  */
 @FunctionalInterface
-public interface TypedByteArrayDeserializer<T>  {
+@SuppressWarnings("JavadocType")
+public interface TypedByteArrayDeserializer<T> {
     /**
      * Reads object from objectDataInputStream
      *
@@ -31,5 +32,5 @@ public interface TypedByteArrayDeserializer<T>  {
      * @return read object
      * @throws IOException in case of failure to read
      */
-    T read(byte[] bytes, Class aClass) throws IOException;
+    T read(byte[] bytes, Class<?> aClass) throws IOException;
 }

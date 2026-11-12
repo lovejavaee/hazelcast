@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,11 +20,10 @@ import com.hazelcast.cache.EventJournalCacheEvent;
 import com.hazelcast.cache.ICache;
 import com.hazelcast.config.CacheSimpleConfig;
 import com.hazelcast.config.Config;
-import com.hazelcast.config.MaxSizePolicy;
 import com.hazelcast.config.InMemoryFormat;
+import com.hazelcast.config.MaxSizePolicy;
 import com.hazelcast.journal.AbstractEventJournalBasicTest;
 import com.hazelcast.journal.EventJournalTestContext;
-import com.hazelcast.map.EventJournalMapEvent;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
@@ -34,14 +33,18 @@ import org.junit.runner.RunWith;
 
 import javax.cache.CacheManager;
 import javax.cache.spi.CachingProvider;
+import java.io.Serializable;
+import java.util.function.Predicate;
 
+import static com.hazelcast.cache.CacheEventType.CREATED;
 import static com.hazelcast.cache.CacheTestSupport.createServerCachingProvider;
 import static com.hazelcast.config.EvictionConfig.DEFAULT_MAX_SIZE_POLICY;
 import static com.hazelcast.config.MaxSizePolicy.USED_NATIVE_MEMORY_SIZE;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
-public class CacheEventJournalBasicTest<K, V> extends AbstractEventJournalBasicTest<EventJournalMapEvent> {
+public class CacheEventJournalBasicTest<K, V> extends AbstractEventJournalBasicTest<EventJournalCacheEvent> {
 
     private static final String NON_EVICTING_CACHE = "cache";
     private static final String EVICTING_CACHE = "evicting";
@@ -73,10 +76,10 @@ public class CacheEventJournalBasicTest<K, V> extends AbstractEventJournalBasicT
     protected EventJournalTestContext<K, V, EventJournalCacheEvent<K, V>> createContext() {
         final CacheManager cacheManager = createCacheManager();
 
-        return new EventJournalTestContext<K, V, EventJournalCacheEvent<K, V>>(
-                new EventJournalCacheDataStructureAdapter<K, V>((ICache<K, V>) cacheManager.getCache(NON_EVICTING_CACHE)),
-                new EventJournalCacheDataStructureAdapter<K, V>((ICache<K, V>) cacheManager.getCache(EVICTING_CACHE)),
-                new EventJournalCacheEventAdapter<K, V>()
+        return new EventJournalTestContext<>(
+                new EventJournalCacheDataStructureAdapter<>((ICache<K, V>) cacheManager.getCache(NON_EVICTING_CACHE)),
+                new EventJournalCacheDataStructureAdapter<>((ICache<K, V>) cacheManager.getCache(EVICTING_CACHE)),
+                new EventJournalCacheEventAdapter<>()
         );
     }
 
@@ -90,6 +93,20 @@ public class CacheEventJournalBasicTest<K, V> extends AbstractEventJournalBasicT
     @Ignore
     public void receiveExpirationEventsWhenPutOnExpiringStructure() {
         // not tested
+    }
+
+    @Override
+    protected boolean isAfterLostEvents(EventJournalCacheEvent event) {
+        return event.isAfterLostEvents();
+    }
+
+    protected Predicate<EventJournalCacheEvent> putFilter() {
+        return new PutPredicate();
+    }
+
+    @Override
+    protected void assertValueEquals(EventJournalCacheEvent event, Object expectedValue) {
+        assertThat(event.getNewValue()).isEqualTo(expectedValue);
     }
 
     @Override
@@ -107,5 +124,13 @@ public class CacheEventJournalBasicTest<K, V> extends AbstractEventJournalBasicT
     protected CacheManager createCacheManager() {
         CachingProvider cachingProvider = createServerCachingProvider(getRandomInstance());
         return cachingProvider.getCacheManager();
+    }
+
+    public static class PutPredicate implements Predicate<EventJournalCacheEvent>, Serializable {
+
+        @Override
+        public boolean test(EventJournalCacheEvent e) {
+            return e.getType() == CREATED;
+        }
     }
 }

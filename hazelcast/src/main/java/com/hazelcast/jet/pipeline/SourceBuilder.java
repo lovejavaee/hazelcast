@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package com.hazelcast.jet.pipeline;
 import com.hazelcast.function.BiConsumerEx;
 import com.hazelcast.function.ConsumerEx;
 import com.hazelcast.function.FunctionEx;
-import com.hazelcast.internal.util.Preconditions;
 import com.hazelcast.jet.JetException;
 import com.hazelcast.jet.config.JobConfig;
 import com.hazelcast.jet.config.ProcessingGuarantee;
@@ -32,9 +31,11 @@ import javax.annotation.Nonnull;
 import java.security.Permission;
 import java.util.List;
 
+import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 import static com.hazelcast.internal.util.Preconditions.checkPositive;
 import static com.hazelcast.jet.core.processor.SourceProcessors.convenientSourceP;
 import static com.hazelcast.jet.core.processor.SourceProcessors.convenientTimestampedSourceP;
+import static com.hazelcast.jet.impl.util.Util.checkNonNullAndSerializable;
 import static com.hazelcast.jet.impl.util.Util.checkSerializable;
 
 /**
@@ -57,6 +58,7 @@ public final class SourceBuilder<C> {
     private final String name;
     private Permission permission;
     private final FunctionEx<? super Context, ? extends C> createFn;
+    private ConsumerEx<? super C> initFn = ConsumerEx.noop();
     private FunctionEx<? super C, Object> createSnapshotFn = ctx -> null;
     private BiConsumerEx<? super C, ? super List<Object>> restoreSnapshotFn = (ctx, states) -> { };
     private ConsumerEx<? super C> destroyFn = ConsumerEx.noop();
@@ -327,7 +329,7 @@ public final class SourceBuilder<C> {
      * partitioned, you may run into issues with event skew between partitions
      * assigned to a given parallel processor. The timestamp you get from one
      * partition may be significantly behind the timestamp you already got from
-     * another one. If the skew is more than the allowed lag and you have
+     * another one. If the skew is more than the allowed lag, and you have
      * {@linkplain StreamSourceStage#withNativeTimestamps(long) configured
      * native timestamps}, you risk that the events will be late. Use a
      * {@linkplain Sources#streamFromProcessorWithWatermarks custom processor}
@@ -350,6 +352,19 @@ public final class SourceBuilder<C> {
 
     private abstract class Base<T> {
         private Base() {
+        }
+
+        /**
+         * Sets the context initialization function, that will be called right after context is created.
+         * <p>
+         * Therefore, if anything fails in initFn, the context object already exist and can react to the exception in
+         * {@link #destroyFn}.
+         */
+        @Nonnull
+        public Base<T> initFn(@Nonnull ConsumerEx<? super C> initFn) {
+            checkNonNullAndSerializable(initFn, "initFn");
+            SourceBuilder.this.initFn = initFn;
+            return this;
         }
 
         /**
@@ -392,7 +407,7 @@ public final class SourceBuilder<C> {
         }
 
         /**
-         * Sets the the permission required to use this sink when the
+         * Sets the permission required to use this sink when the
          * security is enabled. The default value is {@code null} which
          * means there is no restriction to use this sink. Security is an
          * enterprise feature.
@@ -495,6 +510,7 @@ public final class SourceBuilder<C> {
      *
      * @since Jet 3.0
      */
+    @SuppressWarnings("DuplicatedCode")
     public final class Batch<T> extends BaseNoTimestamps<T> {
         private Batch() {
         }
@@ -510,6 +526,11 @@ public final class SourceBuilder<C> {
                 @Nonnull BiConsumerEx<? super C, ? super SourceBuffer<T_NEW>> fillBufferFn
         ) {
             return (Batch<T_NEW>) super.fillBufferFn(fillBufferFn);
+        }
+
+        @Nonnull
+        public Batch<T> initFn(@Nonnull ConsumerEx<? super C> initFn) {
+            return (Batch<T>) super.initFn(initFn);
         }
 
         @Override @Nonnull
@@ -530,18 +551,29 @@ public final class SourceBuilder<C> {
         /**
          * Builds and returns the batch source.
          */
+        // UnnecessaryLocalVariable -> we want to avoid accidental builder serialization
+        @SuppressWarnings("UnnecessaryLocalVariable")
         @Nonnull
         public BatchSource<T> build() {
-            Preconditions.checkNotNull(fillBufferFn, "fillBufferFn must be non-null");
-            return new BatchSourceTransform<>(name, convenientSourceP(createFn, fillBufferFn, createSnapshotFn,
-                    restoreSnapshotFn, destroyFn, preferredLocalParallelism, true, permission));
+            FunctionEx<? super Context, ? extends C> createFnLocal = createFn;
+            ConsumerEx<? super C> initFnLocal = initFn;
+            BiConsumerEx<? super C, ? super SourceBuffer<T>> fillBufferFnLocal = fillBufferFn;
+            FunctionEx<? super C, Object> createSnapshotFnLocal = createSnapshotFn;
+            BiConsumerEx<? super C, ? super List<Object>> restoreSnapshotFnLocal = restoreSnapshotFn;
+            ConsumerEx<? super C> destroyFnLocal = destroyFn;
+            int preferredLocalParallelismLocal = preferredLocalParallelism;
+            checkNotNull(fillBufferFn, "fillBufferFn must be non-null");
+            return new BatchSourceTransform<>(name, convenientSourceP(createFnLocal, initFnLocal, fillBufferFnLocal,
+                                                                      createSnapshotFnLocal, restoreSnapshotFnLocal,
+                                                                      destroyFnLocal,
+                                                                      preferredLocalParallelismLocal, true, permission));
         }
 
         /**
          * A private method. Do not call.
          */
         @Nonnull @Override
-        @SuppressWarnings("unchecked")
+        @SuppressWarnings({"unchecked", "rawtypes"})
         FaultTolerant createSnapshotFn(@Nonnull FunctionEx createSnapshotFn) {
             throw new UnsupportedOperationException();
         }
@@ -563,6 +595,11 @@ public final class SourceBuilder<C> {
                 @Nonnull BiConsumerEx<? super C, ? super SourceBuffer<T_NEW>> fillBufferFn
         ) {
             return (Stream<T_NEW>) super.fillBufferFn(fillBufferFn);
+        }
+
+        @Nonnull
+        public Stream<T> initFn(@Nonnull ConsumerEx<? super C> initFn) {
+            return (Stream<T>) super.initFn(initFn);
         }
 
         @Override @Nonnull
@@ -592,9 +629,10 @@ public final class SourceBuilder<C> {
          */
         @Nonnull
         public StreamSource<T> build() {
-            Preconditions.checkNotNull(fillBufferFn, "fillBufferFn() wasn't called");
+            checkNotNull(fillBufferFn, "fillBufferFn() wasn't called");
 
             FunctionEx<? super Context, ? extends C> createFnLocal = createFn;
+            ConsumerEx<? super C> initFnLocal = initFn;
             BiConsumerEx<? super C, ? super SourceBuffer<T>> fillBufferFnLocal = fillBufferFn;
             FunctionEx<? super C, Object> createSnapshotFnLocal = createSnapshotFn;
             BiConsumerEx<? super C, ? super List<Object>> restoreSnapshotFnLocal = restoreSnapshotFn;
@@ -605,7 +643,7 @@ public final class SourceBuilder<C> {
             return new StreamSourceTransform<>(
                     name,
                     eventTimePolicy -> convenientSourceP(
-                            createFnLocal, fillBufferFnLocal, createSnapshotFnLocal, restoreSnapshotFnLocal,
+                            createFnLocal, initFnLocal, fillBufferFnLocal, createSnapshotFnLocal, restoreSnapshotFnLocal,
                             destroyFnLocal, preferredLocalParallelismLocal, false, requiredPermission),
                     false, false);
         }
@@ -657,6 +695,11 @@ public final class SourceBuilder<C> {
             return newThis;
         }
 
+        @Nonnull
+        public TimestampedStream<T> initFn(@Nonnull ConsumerEx<? super C> initFn) {
+            return (TimestampedStream<T>) super.initFn(initFn);
+        }
+
         @Override @Nonnull
         public TimestampedStream<T> destroyFn(@Nonnull ConsumerEx<? super C> pDestroyFn) {
             return (TimestampedStream<T>) super.destroyFn(pDestroyFn);
@@ -684,9 +727,10 @@ public final class SourceBuilder<C> {
          */
         @Nonnull
         public StreamSource<T> build() {
-            Preconditions.checkNotNull(fillBufferFn, "fillBufferFn must be set");
+            checkNotNull(fillBufferFn, "fillBufferFn must be set");
 
             FunctionEx<? super Context, ? extends C> createFnLocal = createFn;
+            ConsumerEx<? super C> initFnLocal = initFn;
             BiConsumerEx<? super C, ? super TimestampedSourceBuffer<T>> fillBufferFnLocal = fillBufferFn;
             FunctionEx<? super C, Object> createSnapshotFnLocal = createSnapshotFn;
             BiConsumerEx<? super C, ? super List<Object>> restoreSnapshotFnLocal = restoreSnapshotFn;
@@ -695,8 +739,10 @@ public final class SourceBuilder<C> {
 
             return new StreamSourceTransform<>(
                     name,
-                    eventTimePolicy -> convenientTimestampedSourceP(createFnLocal, fillBufferFnLocal, eventTimePolicy,
-                           createSnapshotFnLocal, restoreSnapshotFnLocal, destroyFnLocal, preferredLocalParallelismLocal),
+                    eventTimePolicy -> convenientTimestampedSourceP(createFnLocal, initFnLocal, fillBufferFnLocal,
+                                                                    eventTimePolicy,
+                                                                    createSnapshotFnLocal, restoreSnapshotFnLocal,
+                                                                    destroyFnLocal, preferredLocalParallelismLocal),
                     true, true);
         }
     }
@@ -738,7 +784,7 @@ public final class SourceBuilder<C> {
          * is distributed, the list will contain objects returned by {@code
          * createSnapshotFn} in all parallel instances. This is why {@code
          * restoreSnapshotFn} accepts a list of snapshot objects. It should
-         * figure out which part of the snapshot data pertains to it and it can
+         * figure out which part of the snapshot data pertains to it, and it can
          * do so as explained {@link Base#distributed here}.
          *
          * @param restoreSnapshotFn the function to restore the state into the

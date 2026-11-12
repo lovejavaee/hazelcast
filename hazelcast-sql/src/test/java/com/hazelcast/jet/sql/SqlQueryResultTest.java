@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,20 +22,24 @@ import com.hazelcast.sql.SqlExpectedResultType;
 import com.hazelcast.sql.SqlResult;
 import com.hazelcast.sql.SqlRow;
 import com.hazelcast.sql.SqlStatement;
+import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
+import org.junit.runner.RunWith;
 
 import java.util.ArrayList;
 import java.util.List;
 
 import static java.util.Collections.emptyList;
+import static java.util.stream.Collectors.toList;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
 @Category({QuickTest.class, ParallelJVMTest.class})
+@RunWith(HazelcastSerialClassRunner.class)
 public class SqlQueryResultTest extends SqlTestSupport {
 
     private static final String MAP_NAME = "map";
@@ -79,13 +83,9 @@ public class SqlQueryResultTest extends SqlTestSupport {
     }
 
     private List<SqlRow> execute(String query) {
-        List<SqlRow> rows = new ArrayList<>();
         try (SqlResult result = instance().getSql().execute(query)) {
-            for (SqlRow row : result) {
-                rows.add(row);
-            }
+            return result.stream().collect(toList());
         }
-        return rows;
     }
 
     private void checkSuccess(

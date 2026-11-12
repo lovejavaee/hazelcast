@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,66 +17,65 @@
 package com.hazelcast.spring.cache;
 
 import com.hazelcast.core.Hazelcast;
-import com.hazelcast.spring.CustomSpringJUnit4ClassRunner;
-import com.hazelcast.test.annotation.QuickTest;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
-import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
+import com.hazelcast.spring.CustomSpringExtension;
+
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.hazelcast.test.HazelcastTestSupport.sleepMillis;
-import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
 
 /**
  * Tests for {@link HazelcastCache}.
  *
  * @author Stephane Nicoll
  */
-@RunWith(CustomSpringJUnit4ClassRunner.class)
+@ExtendWith({SpringExtension.class, CustomSpringExtension.class})
 @ContextConfiguration(locations = {"simple-config.xml"})
-@Category(QuickTest.class)
-public class HazelcastCacheTest {
+class HazelcastCacheTest {
 
     @Autowired
     public CacheManager cacheManager;
 
     private Cache cache;
 
-    @BeforeClass
-    @AfterClass
+    @BeforeAll
+    @AfterAll
     public static void start() {
         Hazelcast.shutdownAll();
     }
 
-    @Before
+    @BeforeEach
     public void setup() {
         this.cache = cacheManager.getCache("test");
     }
 
     @Test
-    public void testCacheGetCallable() {
+    void testCacheGetCallable() {
         doTestCacheGetCallable("test");
     }
 
     @Test
-    public void testCacheGetCallableWithNull() {
+    void testCacheGetCallableWithNull() {
         doTestCacheGetCallable(null);
     }
 
@@ -85,23 +84,18 @@ public class HazelcastCacheTest {
         String key = createRandomKey();
 
         assertNull(cache.get(key));
-        Object value = cache.get(key, new Callable<Object>() {
-            @Override
-            public Object call() {
-                return returnValue;
-            }
-        });
+        Object value = cache.get(key, () -> returnValue);
         assertEquals(returnValue, value);
         assertEquals(value, cache.get(key).get());
     }
 
     @Test
-    public void testCacheGetCallableNotInvokedWithHit() {
+    void testCacheGetCallableNotInvokedWithHit() {
         doTestCacheGetCallableNotInvokedWithHit("existing");
     }
 
     @Test
-    public void testCacheGetCallableNotInvokedWithHitNull() {
+    void testCacheGetCallableNotInvokedWithHitNull() {
         doTestCacheGetCallableNotInvokedWithHit(null);
     }
 
@@ -109,26 +103,20 @@ public class HazelcastCacheTest {
         String key = createRandomKey();
         cache.put(key, initialValue);
 
-        Object value = cache.get(key, new Callable<Object>() {
-            @Override
-            public Object call() {
-                throw new IllegalStateException("Should not have been invoked");
-            }
+        Object value = cache.get(key, () -> {
+            throw new IllegalStateException("Should not have been invoked");
         });
         assertEquals(initialValue, value);
     }
 
     @Test
-    public void testCacheGetCallableFail() {
+    void testCacheGetCallableFail() {
         String key = createRandomKey();
         assertNull(cache.get(key));
 
         try {
-            cache.get(key, new Callable<Object>() {
-                @Override
-                public Object call() {
-                    throw new UnsupportedOperationException("Expected exception");
-                }
+            cache.get(key, () -> {
+                throw new UnsupportedOperationException("Expected exception");
             });
         } catch (Cache.ValueRetrievalException ex) {
             assertNotNull(ex.getCause());
@@ -140,29 +128,23 @@ public class HazelcastCacheTest {
      * Tests that a call to get with a Callable concurrently properly synchronize the invocations.
      */
     @Test
-    public void testCacheGetSynchronized() throws Exception {
+    void testCacheGetSynchronized() throws Exception {
         final AtomicInteger counter = new AtomicInteger();
-        final List<Object> results = new CopyOnWriteArrayList<Object>();
+        final List<Object> results = new CopyOnWriteArrayList<>();
         final CountDownLatch latch = new CountDownLatch(10);
 
         final String key = createRandomKey();
-        Runnable run = new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    Integer value = cache.get(key, new Callable<Integer>() {
-                        @Override
-                        public Integer call() {
-                            // make sure the thread will overlap
-                            sleepMillis(50);
+        Runnable run = () -> {
+            try {
+                Integer value = cache.get(key, () -> {
+                    // make sure the thread will overlap
+                    sleepMillis(50);
 
-                            return counter.incrementAndGet();
-                        }
-                    });
-                    results.add(value);
-                } finally {
-                    latch.countDown();
-                }
+                    return counter.incrementAndGet();
+                });
+                results.add(value);
+            } finally {
+                latch.countDown();
             }
         };
 
@@ -173,8 +155,32 @@ public class HazelcastCacheTest {
 
         assertEquals(10, results.size());
         for (Object result : results) {
-            assertThat((Integer) result, is(1));
+            assertThat((Integer) result).isEqualTo(1);
         }
+    }
+
+    @Test
+    void testCacheRetrieveWithNull() {
+        assertThrows(NullPointerException.class, () -> cache.get(null).get());
+    }
+
+    @Test
+    void testCacheRetrieveWithRandomKey() {
+        String key = createRandomKey();
+        Cache.ValueWrapper valueWrapper = cache.get(key);
+
+        assertNull(valueWrapper);
+    }
+
+    @Test
+    void testCacheRetrieveWithExistingKey() {
+        String key = createRandomKey();
+        cache.put(key, "test");
+
+        Cache.ValueWrapper valueWrapper = cache.get(key);
+
+        assertNotNull(valueWrapper);
+        assertThat(valueWrapper.get()).isEqualTo("test");
     }
 
     private String createRandomKey() {

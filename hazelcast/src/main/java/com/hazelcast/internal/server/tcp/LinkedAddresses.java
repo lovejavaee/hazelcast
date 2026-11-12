@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static com.hazelcast.internal.util.EmptyStatement.ignore;
-import static java.util.Collections.newSetFromMap;
 import static java.util.Collections.unmodifiableSet;
 
 /**
@@ -43,7 +42,7 @@ public final class LinkedAddresses {
 
     LinkedAddresses(Address primaryAddress) {
         this.primaryAddress = primaryAddress;
-        allLinkedAddresses = newSetFromMap(new ConcurrentHashMap<>());
+        allLinkedAddresses = ConcurrentHashMap.newKeySet();
         allLinkedAddresses.add(primaryAddress);
     }
 
@@ -108,7 +107,7 @@ public final class LinkedAddresses {
     public boolean intersects(LinkedAddresses other) {
         Set<Address> tmp = new HashSet<>(allLinkedAddresses);
         tmp.retainAll(other.getAllAddresses());
-        return tmp.size() > 0;
+        return !tmp.isEmpty();
     }
 
     @Override

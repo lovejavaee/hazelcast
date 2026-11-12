@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,7 +27,6 @@ import com.hazelcast.internal.metrics.managementcenter.ManagementCenterPublisher
 import com.hazelcast.internal.services.ManagedService;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.spi.impl.NodeEngine;
-import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.spi.impl.executionservice.ExecutionService;
 import com.hazelcast.spi.impl.operationservice.LiveOperations;
 import com.hazelcast.spi.impl.operationservice.LiveOperationsTracker;
@@ -57,7 +56,7 @@ import static java.util.stream.Collectors.joining;
 public class MetricsService implements ManagedService, LiveOperationsTracker {
     public static final String SERVICE_NAME = "hz:impl:metricsService";
 
-    private final NodeEngineImpl nodeEngine;
+    private final NodeEngine nodeEngine;
     private final ILogger logger;
     private final MetricsConfig config;
     private final LiveOperationRegistry liveOperationRegistry;
@@ -78,11 +77,11 @@ public class MetricsService implements ManagedService, LiveOperationsTracker {
     private final Supplier<MetricsRegistry> metricsRegistrySupplier;
 
     public MetricsService(NodeEngine nodeEngine) {
-        this(nodeEngine, ((NodeEngineImpl) nodeEngine)::getMetricsRegistry);
+        this(nodeEngine, nodeEngine::getMetricsRegistry);
     }
 
     public MetricsService(NodeEngine nodeEngine, Supplier<MetricsRegistry> metricsRegistrySupplier) {
-        this.nodeEngine = (NodeEngineImpl) nodeEngine;
+        this.nodeEngine = nodeEngine;
         this.logger = nodeEngine.getLogger(getClass());
         this.config = nodeEngine.getConfig().getMetricsConfig();
         this.liveOperationRegistry = new LiveOperationRegistry();
@@ -124,8 +123,8 @@ public class MetricsService implements ManagedService, LiveOperationsTracker {
             publishers.add(publisher);
             scheduleMetricsCollectorIfNeeded();
         } else {
-            logger.fine(String.format("Custom publisher is not registered with function %s as the metrics system is disabled",
-                    registerFunction));
+            logger.fine("Custom publisher is not registered with function %s as the metrics system is disabled",
+                    registerFunction);
         }
     }
 
@@ -190,9 +189,10 @@ public class MetricsService implements ManagedService, LiveOperationsTracker {
     private void tryCompleteRead(CompletableFuture<RingbufferSlice<Map.Entry<Long, byte[]>>> future, long sequence) {
         try {
             RingbufferSlice<Map.Entry<Long, byte[]>> slice = metricsJournal.copyFrom(sequence);
-            if (!slice.isEmpty()) {
-                future.complete(slice);
-            }
+            // Always complete the future, even with empty slice.
+            // This prevents memory leak in LiveOperationRegistry when requesting sequence == tail.
+            // Empty slice is a valid response meaning "no data available yet at this sequence".
+            future.complete(slice);
         } catch (ConcurrentArrayRingbuffer.SequenceOutOfBoundsException e) {
             logger.fine("Error reading from metrics journal, sequence: " + sequence + "."
                     + " In case of persistence-enabled member restart, this error is handled by MC gracefully.", e);
@@ -212,6 +212,15 @@ public class MetricsService implements ManagedService, LiveOperationsTracker {
         if (scheduledFuture != null) {
             scheduledFuture.cancel(false);
         }
+
+        // Complete all pending reads to prevent memory leak on shutdown
+        // The scheduled timeout tasks may not execute if ExecutionService is already stopping
+        pendingReads.forEach((future, sequence) -> {
+            if (!future.isDone()) {
+                tryCompleteRead(future, sequence);
+            }
+        });
+        pendingReads.clear();
 
         publishers.forEach(MetricsPublisher::shutdown);
     }

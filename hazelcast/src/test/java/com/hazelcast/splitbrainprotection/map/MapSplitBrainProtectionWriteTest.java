@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,6 +44,7 @@ import java.util.concurrent.TimeUnit;
 
 import static com.hazelcast.map.InterceptorTest.SimpleInterceptor;
 import static java.util.Arrays.asList;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assume.assumeTrue;
 
 @RunWith(HazelcastParametrizedRunner.class)
@@ -137,14 +138,14 @@ public class MapSplitBrainProtectionWriteTest extends AbstractSplitBrainProtecti
 
     @Test
     public void putAll_successful_whenSplitBrainProtectionSize_met() {
-        HashMap<Object, Object> map = new HashMap<Object, Object>();
+        HashMap<Object, Object> map = new HashMap<>();
         map.put("foo", "bar");
         map(0).putAll(map);
     }
 
     @Test(expected = SplitBrainProtectionException.class)
     public void putAll_failing_whenSplitBrainProtectionSize_met() {
-        HashMap<Object, Object> map = new HashMap<Object, Object>();
+        HashMap<Object, Object> map = new HashMap<>();
         map.put("foo", "bar");
         map(3).putAll(map);
     }
@@ -177,6 +178,16 @@ public class MapSplitBrainProtectionWriteTest extends AbstractSplitBrainProtecti
     @Test(expected = ExecutionException.class)
     public void removeAsync_failing_whenSplitBrainProtectionSize_met() throws Exception {
         map(3).removeAsync("foo").toCompletableFuture().get();
+    }
+
+    @Test
+    public void deleteAsync_successful_whenSplitBrainProtectionSize_met() throws Exception {
+        map(0).deleteAsync("foo").toCompletableFuture().get();
+    }
+
+    @Test(expected = ExecutionException.class)
+    public void deleteAsync_failing_whenSplitBrainProtectionSize_met() throws Exception {
+        map(3).deleteAsync("foo").toCompletableFuture().get();
     }
 
     @Test
@@ -250,6 +261,22 @@ public class MapSplitBrainProtectionWriteTest extends AbstractSplitBrainProtecti
     }
 
     @Test
+    public void flushAsync_successful_whenSplitBrainProtectionSize_met() throws Exception {
+        assumeTrue(map(0) instanceof MapProxyImpl);
+
+        ((MapProxyImpl<?, ?>) map(0)).flushAsync().get();
+    }
+
+    @Test
+    public void flushAsync_failing_whenSplitBrainProtectionSize_met() throws Exception {
+        assumeTrue(map(3) instanceof MapProxyImpl);
+
+        assertThat(((MapProxyImpl<?, ?>) map(3)).flushAsync())
+                .failsWithin(ASSERT_TRUE_EVENTUALLY_TIMEOUT_DURATION)
+                .withThrowableThat().withRootCauseInstanceOf(SplitBrainProtectionException.class);
+    }
+
+    @Test
     public void evictAll_successful_whenSplitBrainProtectionSize_met() {
         map(0).evictAll();
     }
@@ -311,14 +338,14 @@ public class MapSplitBrainProtectionWriteTest extends AbstractSplitBrainProtecti
 
     @Test
     public void executeOnKeys_successful_whenSplitBrainProtectionSize_met() {
-        HashSet<Object> keys = new HashSet<Object>();
+        HashSet<Object> keys = new HashSet<>();
         keys.add("foo");
         map(0).executeOnKey(keys, new TestLoggingEntryProcessor());
     }
 
     @Test(expected = SplitBrainProtectionException.class)
     public void executeOnKeys_failing_whenSplitBrainProtectionSize_met() {
-        HashSet<Object> keys = new HashSet<Object>();
+        HashSet<Object> keys = new HashSet<>();
         keys.add("foo");
         map(3).executeOnKey(keys, new TestLoggingEntryProcessor());
     }

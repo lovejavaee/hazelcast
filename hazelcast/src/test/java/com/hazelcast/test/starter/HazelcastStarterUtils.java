@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,12 +18,12 @@ package com.hazelcast.test.starter;
 
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
+import com.hazelcast.test.TestJavaSerializationUtils;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
+import java.io.Serializable;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -35,7 +35,6 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-import static com.hazelcast.internal.nio.IOUtil.closeResource;
 import static java.lang.String.format;
 import static org.junit.Assert.assertEquals;
 
@@ -47,8 +46,8 @@ public class HazelcastStarterUtils {
     private static final ILogger LOGGER = Logger.getLogger(HazelcastStarterUtils.class);
 
     public static RuntimeException rethrowGuardianException(Throwable t) {
-        if (t instanceof RuntimeException) {
-            throw (RuntimeException) t;
+        if (t instanceof RuntimeException exception) {
+            throw exception;
         }
         throw new GuardianException(t);
     }
@@ -93,27 +92,10 @@ public class HazelcastStarterUtils {
             return object;
         }
 
-        ByteArrayOutputStream byteArrayOutputStream = null;
-        ObjectOutputStream objectOutputStream = null;
-        ByteArrayInputStream byteArrayInputStream = null;
-        ObjectInputStream objectInputStream = null;
         try {
-            byteArrayOutputStream = new ByteArrayOutputStream();
-            objectOutputStream = new ObjectOutputStream(byteArrayOutputStream);
-            objectOutputStream.writeObject(object);
-            byte[] serializedObject = byteArrayOutputStream.toByteArray();
-
-            byteArrayInputStream = new ByteArrayInputStream(serializedObject);
-            objectInputStream = new ObjectInputStream(byteArrayInputStream);
-            //noinspection unchecked
-            return (T) objectInputStream.readObject();
+            return (T) TestJavaSerializationUtils.serializeAndDeserialize((Serializable) object);
         } catch (Exception e) {
             throw new GuardianException("Object transfer via serialization failed for: " + object, e);
-        } finally {
-            closeResource(objectInputStream);
-            closeResource(byteArrayInputStream);
-            closeResource(objectOutputStream);
-            closeResource(byteArrayOutputStream);
         }
     }
 
@@ -139,15 +121,10 @@ public class HazelcastStarterUtils {
         Method objectInputStreamCloseMethod = objectInputStreamClass.getMethod("close");
         Method objectInputStreamReadObjectMethod = objectInputStreamClass.getMethod("readObject");
 
-        ByteArrayOutputStream byteArrayOutputStream = null;
-        ObjectOutputStream objectOutputStream = null;
         Object byteArrayInputStream = null;
         Object objectInputStream = null;
         try {
-            byteArrayOutputStream = new ByteArrayOutputStream();
-            objectOutputStream = new ObjectOutputStream(byteArrayOutputStream);
-            objectOutputStream.writeObject(object);
-            byte[] serializedObject = byteArrayOutputStream.toByteArray();
+            byte[] serializedObject = TestJavaSerializationUtils.serialize((Serializable) object);
 
             byteArrayInputStream = byteArrayInputStreamConstructor.newInstance(new Object[]{serializedObject});
             objectInputStream = objectInputStreamConstructor.newInstance(byteArrayInputStream);
@@ -162,8 +139,6 @@ public class HazelcastStarterUtils {
             if (byteArrayInputStream != null) {
                 byteArrayInputStreamCloseMethod.invoke(byteArrayInputStream);
             }
-            closeResource(objectOutputStream);
-            closeResource(byteArrayOutputStream);
         }
     }
 
@@ -191,13 +166,13 @@ public class HazelcastStarterUtils {
     public static Collection<Object> newCollectionFor(Class<?> type) {
         if (Set.class.isAssignableFrom(type)) {
             // original set might be ordered
-            return new LinkedHashSet<Object>();
+            return new LinkedHashSet<>();
         } else if (List.class.isAssignableFrom(type)) {
-            return new ArrayList<Object>();
+            return new ArrayList<>();
         } else if (Queue.class.isAssignableFrom(type)) {
-            return new ConcurrentLinkedQueue<Object>();
+            return new ConcurrentLinkedQueue<>();
         } else if (Collection.class.isAssignableFrom(type)) {
-            return new LinkedList<Object>();
+            return new LinkedList<>();
         } else {
             throw new UnsupportedOperationException("Cannot locate collection type for " + type);
         }

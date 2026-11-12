@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,22 +16,28 @@
 
 package com.hazelcast.jet.sql.impl.connector.jdbc;
 
+import com.hazelcast.config.Config;
+import com.hazelcast.config.JavaSerializationFilterConfig;
 import com.hazelcast.sql.HazelcastSqlException;
 import com.hazelcast.test.jdbc.H2DatabaseProvider;
 import org.junit.Before;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.util.Lists.newArrayList;
 
 public class InsertJdbcSqlConnectorTest extends JdbcSqlTestSupport {
 
-    private String tableName;
+    protected String tableName;
 
     @BeforeClass
     public static void beforeClass() {
-        initialize(new H2DatabaseProvider());
+        Config config = smallInstanceConfig();
+        JavaSerializationFilterConfig filterConfig = new JavaSerializationFilterConfig();
+        filterConfig.setDefaultsDisabled(true);
+        config.getSerializationConfig().setJavaSerializationFilterConfig(filterConfig);
+        initialize(new H2DatabaseProvider(), config);
     }
 
     @Before
@@ -48,7 +54,9 @@ public class InsertJdbcSqlConnectorTest extends JdbcSqlTestSupport {
 
         execute("INSERT INTO " + tableName + " VALUES (0, 'name-0')");
 
-        assertJdbcRowsAnyOrder(tableName, new Row(0, "name-0"));
+        assertJdbcRowsAnyOrder(tableName,
+                newArrayList(Integer.class, String.class),
+                new Row(0, "name-0"));
     }
 
     @Test
@@ -59,7 +67,9 @@ public class InsertJdbcSqlConnectorTest extends JdbcSqlTestSupport {
 
         execute("INSERT INTO " + mappingName + " VALUES (0, 'name-0')");
 
-        assertJdbcRowsAnyOrder(tableName, new Row(0, "name-0"));
+        assertJdbcRowsAnyOrder(tableName,
+                newArrayList(Integer.class, String.class),
+                new Row(0, "name-0"));
     }
 
     @Test
@@ -75,7 +85,9 @@ public class InsertJdbcSqlConnectorTest extends JdbcSqlTestSupport {
 
         execute("INSERT INTO " + tableName + " VALUES (0, 'name-0')");
 
-        assertJdbcRowsAnyOrder(tableName, new Row(0, "name-0"));
+        assertJdbcRowsAnyOrder(tableName,
+                newArrayList(Integer.class, String.class),
+                new Row(0, "name-0"));
     }
 
     @Test
@@ -86,6 +98,7 @@ public class InsertJdbcSqlConnectorTest extends JdbcSqlTestSupport {
         execute("INSERT INTO " + tableName + " (name, id) VALUES ('name-0', 0), ('name-1', 1)");
 
         assertJdbcRowsAnyOrder(tableName,
+                newArrayList(Integer.class, String.class),
                 new Row(0, "name-0"),
                 new Row(1, "name-1")
         );
@@ -105,6 +118,7 @@ public class InsertJdbcSqlConnectorTest extends JdbcSqlTestSupport {
         execute("INSERT INTO " + tableName + " (fullName, id) VALUES ('name-0', 0), ('name-1', 1)");
 
         assertJdbcRowsAnyOrder(tableName,
+                newArrayList(Integer.class, String.class),
                 new Row(0, "name-0"),
                 new Row(1, "name-1")
         );
@@ -118,6 +132,7 @@ public class InsertJdbcSqlConnectorTest extends JdbcSqlTestSupport {
         execute("INSERT INTO " + tableName + " SELECT v,'name-' || v FROM TABLE(generate_series(0,4))");
 
         assertJdbcRowsAnyOrder(tableName,
+                newArrayList(Integer.class, String.class),
                 new Row(0, "name-0"),
                 new Row(1, "name-1"),
                 new Row(2, "name-2"),
@@ -126,12 +141,7 @@ public class InsertJdbcSqlConnectorTest extends JdbcSqlTestSupport {
         );
     }
 
-    /**
-     * H2 throws org.h2.jdbc.JdbcBatchUpdateException, after which the insert is retried, we can either handle
-     * java.sql.BatchUpdateException as non-transient exception, or something else, not sure
-     */
     @Test
-    @Ignore
     public void insertIntoTableSameValues() throws Exception {
         createTable(tableName);
         createMapping(tableName);
@@ -153,6 +163,7 @@ public class InsertJdbcSqlConnectorTest extends JdbcSqlTestSupport {
         execute("INSERT INTO " + tableName + " (name, id) VALUES ('name-0', 0)");
 
         assertJdbcRowsAnyOrder(tableName,
+                newArrayList(Integer.class, String.class),
                 new Row(0, "name-0")
         );
     }

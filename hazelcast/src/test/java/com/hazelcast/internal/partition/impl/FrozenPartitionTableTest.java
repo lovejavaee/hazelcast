@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import com.hazelcast.cluster.Member;
 import com.hazelcast.cluster.impl.MemberImpl;
 import com.hazelcast.config.Config;
 import com.hazelcast.core.HazelcastInstance;
-import com.hazelcast.instance.StaticMemberNodeContext;
 import com.hazelcast.internal.partition.InternalPartition;
 import com.hazelcast.internal.partition.PartitionReplica;
 import com.hazelcast.internal.partition.PartitionTableView;
@@ -32,7 +31,6 @@ import com.hazelcast.spi.impl.operationservice.ExceptionAction;
 import com.hazelcast.spi.impl.operationservice.Operation;
 import com.hazelcast.spi.impl.operationservice.impl.OperationServiceImpl;
 import com.hazelcast.test.Accessors;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.OverridePropertyRule;
@@ -48,17 +46,14 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-import static com.hazelcast.instance.impl.HazelcastInstanceFactory.newHazelcastInstance;
 import static com.hazelcast.instance.impl.TestUtil.terminateInstance;
 import static com.hazelcast.internal.cluster.impl.AdvancedClusterStateTest.changeClusterStateEventually;
 import static com.hazelcast.internal.cluster.impl.ClusterJoinManager.STALE_JOIN_PREVENTION_DURATION_PROP;
-import static com.hazelcast.internal.util.UuidUtil.newUnsecureUUID;
 import static com.hazelcast.test.Accessors.getClusterService;
 import static com.hazelcast.test.Accessors.getNode;
 import static com.hazelcast.test.Accessors.getOperationService;
 import static com.hazelcast.test.Accessors.getPartitionService;
 import static com.hazelcast.test.OverridePropertyRule.clear;
-import static com.hazelcast.test.TestHazelcastInstanceFactory.initOrCreateConfig;
 import static java.util.Arrays.asList;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
@@ -89,7 +84,7 @@ public class FrozenPartitionTableTest extends HazelcastTestSupport {
         warmUpPartitions(instances);
 
         changeClusterStateEventually(instances[0], clusterState);
-        List<HazelcastInstance> instancesList = new ArrayList<HazelcastInstance>(asList(instances));
+        List<HazelcastInstance> instancesList = new ArrayList<>(asList(instances));
         Collections.shuffle(instancesList);
 
         final PartitionTableView partitionTable = getPartitionTable(instances[0]);
@@ -142,23 +137,20 @@ public class FrozenPartitionTableTest extends HazelcastTestSupport {
         assertTrueEventually(() -> assertTrue(Accessors.isPartitionStateInitialized(newInstance)));
 
         final List<HazelcastInstance> instanceList = asList(hz1, hz3);
-        assertTrueAllTheTime(new AssertTask() {
-            @Override
-            public void run() {
-                for (HazelcastInstance instance : instanceList) {
-                    PartitionTableView newPartitionTable = getPartitionTable(instance);
-                    for (int i = 0; i < newPartitionTable.length(); i++) {
-                        for (int j = 0; j < InternalPartition.MAX_REPLICA_COUNT; j++) {
-                            PartitionReplica replica = partitionTable.getReplica(i, j);
-                            PartitionReplica newReplica = newPartitionTable.getReplica(i, j);
+        assertTrueAllTheTime(() -> {
+            for (HazelcastInstance instance : instanceList) {
+                PartitionTableView newPartitionTable = getPartitionTable(instance);
+                for (int i = 0; i < newPartitionTable.length(); i++) {
+                    for (int j = 0; j < InternalPartition.MAX_REPLICA_COUNT; j++) {
+                        PartitionReplica replica = partitionTable.getReplica(i, j);
+                        PartitionReplica newReplica = newPartitionTable.getReplica(i, j);
 
-                            if (replica == null) {
-                                assertNull(newReplica);
-                            } else if (replica.equals(PartitionReplica.from(member3))) {
-                                assertEquals(PartitionReplica.from(newMember3), newReplica);
-                            } else {
-                                assertEquals(replica, newReplica);
-                            }
+                        if (replica == null) {
+                            assertNull(newReplica);
+                        } else if (replica.equals(PartitionReplica.from(member3))) {
+                            assertEquals(PartitionReplica.from(newMember3), newReplica);
+                        } else {
+                            assertEquals(replica, newReplica);
                         }
                     }
                 }
@@ -183,7 +175,7 @@ public class FrozenPartitionTableTest extends HazelcastTestSupport {
 
         changeClusterStateEventually(instances[0], clusterState);
 
-        List<HazelcastInstance> instancesList = new ArrayList<HazelcastInstance>(asList(instances));
+        List<HazelcastInstance> instancesList = new ArrayList<>(asList(instances));
         Collections.shuffle(instancesList);
         final HazelcastInstance instanceToShutdown = instancesList.remove(0);
         final Address addressToShutdown = getNode(instanceToShutdown).getThisAddress();
@@ -228,8 +220,7 @@ public class FrozenPartitionTableTest extends HazelcastTestSupport {
         hz3.shutdown();
         assertClusterSizeEventually(2, hz1, hz2);
 
-        hz3 = newHazelcastInstance(initOrCreateConfig(new Config()),
-                randomName(), new StaticMemberNodeContext(factory, newUnsecureUUID(), member3.getAddress()));
+        hz3 = factory.newHazelcastInstance(member3.getAddress());
         assertClusterSizeEventually(3, hz1, hz2);
         waitAllForSafeState(hz1, hz2, hz3);
 
@@ -260,8 +251,7 @@ public class FrozenPartitionTableTest extends HazelcastTestSupport {
         hz4.shutdown();
         assertClusterSizeEventually(2, hz1, hz2);
 
-        newHazelcastInstance(initOrCreateConfig(new Config()),
-                randomName(), new StaticMemberNodeContext(factory, member4.getUuid(), member3.getAddress()));
+        factory.builder().withAddress(member3.getAddress()).withUuid(member4.getUuid()).construct();
         assertClusterSizeEventually(3, hz1, hz2);
         waitAllForSafeState(hz1, hz2);
 

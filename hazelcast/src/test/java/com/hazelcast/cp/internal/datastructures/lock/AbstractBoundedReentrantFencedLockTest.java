@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,9 +23,7 @@ import com.hazelcast.cp.internal.HazelcastRaftTestSupport;
 import com.hazelcast.cp.lock.FencedLock;
 import com.hazelcast.cp.lock.exception.LockAcquireLimitReachedException;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -40,8 +38,6 @@ import static org.junit.Assert.assertTrue;
 
 public abstract class AbstractBoundedReentrantFencedLockTest extends HazelcastRaftTestSupport {
 
-    @Rule
-    public ExpectedException expectedException = ExpectedException.none();
 
     protected HazelcastInstance[] instances;
     protected FencedLock lock;
@@ -145,8 +141,7 @@ public abstract class AbstractBoundedReentrantFencedLockTest extends HazelcastRa
         lock.lock();
         lock.lock();
 
-        expectedException.expect(LockAcquireLimitReachedException.class);
-        lock.lock();
+        assertThrows(LockAcquireLimitReachedException.class, () -> lock.lock());
     }
 
     @Test

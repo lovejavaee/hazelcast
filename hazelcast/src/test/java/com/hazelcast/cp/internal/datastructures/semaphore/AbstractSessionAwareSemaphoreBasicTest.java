@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ import com.hazelcast.cp.internal.HazelcastRaftTestSupport;
 import com.hazelcast.cp.internal.RaftGroupId;
 import com.hazelcast.cp.internal.RaftOp;
 import com.hazelcast.cp.internal.datastructures.semaphore.proxy.SessionAwareSemaphoreProxy;
-import com.hazelcast.cp.internal.session.AbstractProxySessionManager;
+import com.hazelcast.cp.internal.session.ProxySessionManager;
 import com.hazelcast.cp.internal.session.ProxySessionManagerService;
 import com.hazelcast.cp.internal.session.SessionExpiredException;
 import com.hazelcast.cp.internal.session.operation.CloseSessionOp;
@@ -36,8 +36,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 
-import static com.hazelcast.cp.internal.session.AbstractProxySessionManager.NO_SESSION_ID;
-import static com.hazelcast.test.Accessors.getNodeEngineImpl;
+import static com.hazelcast.cp.internal.session.ProxySessionManager.NO_SESSION_ID;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -100,7 +99,7 @@ public abstract class AbstractSessionAwareSemaphoreBasicTest extends HazelcastRa
     @Test
     public void testAcquire_whenNoPermits() {
         semaphore.init(0);
-        Future future = spawn(() -> {
+        Future<?> future = spawn(() -> {
             try {
                 semaphore.acquire();
             } catch (InterruptedException e) {
@@ -117,7 +116,7 @@ public abstract class AbstractSessionAwareSemaphoreBasicTest extends HazelcastRa
     @Test
     public void testAcquire_whenNoPermits_andSemaphoreDestroyed() throws Exception {
         semaphore.init(0);
-        Future future = spawn(() -> {
+        Future<?> future = spawn(() -> {
             try {
                 semaphore.acquire();
             } catch (InterruptedException e) {
@@ -281,7 +280,7 @@ public abstract class AbstractSessionAwareSemaphoreBasicTest extends HazelcastRa
     public void testMultipleAcquire_whenNotEnoughPermits() {
         int permits = 5;
         semaphore.init(permits);
-        Future future = spawn(() -> {
+        Future<?> future = spawn(() -> {
             try {
                 semaphore.acquire(6);
             } catch (InterruptedException e) {
@@ -326,7 +325,7 @@ public abstract class AbstractSessionAwareSemaphoreBasicTest extends HazelcastRa
         semaphore.init(permits);
         semaphore.acquire(permits);
 
-        Future future = spawn(() -> {
+        Future<?> future = spawn(() -> {
             try {
                 semaphore.acquire();
             } catch (InterruptedException e) {
@@ -506,7 +505,7 @@ public abstract class AbstractSessionAwareSemaphoreBasicTest extends HazelcastRa
         semaphore.init(1);
     }
 
-    protected AbstractProxySessionManager getSessionManager(HazelcastInstance instance) {
+    protected ProxySessionManager getSessionManager(HazelcastInstance instance) {
         return getNodeEngineImpl(instance).getService(ProxySessionManagerService.SERVICE_NAME);
     }
 

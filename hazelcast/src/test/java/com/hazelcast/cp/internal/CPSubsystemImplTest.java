@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,18 +19,21 @@ package com.hazelcast.cp.internal;
 import com.hazelcast.config.Config;
 import com.hazelcast.core.HazelcastException;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.cp.CPGroupId;
+import com.hazelcast.cp.CPSubsystem;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
+import java.util.Collection;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertNotNull;
 
 @RunWith(HazelcastParallelClassRunner.class)
@@ -39,58 +42,15 @@ public class CPSubsystemImplTest extends HazelcastTestSupport {
 
     private TestHazelcastInstanceFactory factory;
 
-    @Rule
-    public ExpectedException thrown = ExpectedException.none();
-
     @Before
     public void init() {
         factory = createHazelcastInstanceFactory();
     }
 
     @Test
-    public void test_atomicLong_whenCPSubsystemNotConfigured() {
+    public void test_throws_whenCPSubsystemNotConfigured() {
         HazelcastInstance instance = factory.newHazelcastInstance();
-        assertNotNull(instance.getCPSubsystem().getAtomicLong("long"));
-    }
-
-    @Test
-    public void test_atomicReference_whenCPSubsystemNotConfigured() {
-        HazelcastInstance instance = factory.newHazelcastInstance();
-        assertNotNull(instance.getCPSubsystem().getAtomicReference("ref"));
-    }
-
-    @Test
-    public void test_lock_whenCPSubsystemNotConfigured() {
-        HazelcastInstance instance = factory.newHazelcastInstance();
-        assertNotNull(instance.getCPSubsystem().getLock("lock"));
-    }
-
-    @Test
-    public void test_semaphore_whenCPSubsystemNotConfigured() {
-        HazelcastInstance instance = factory.newHazelcastInstance();
-        assertNotNull(instance.getCPSubsystem().getSemaphore("semaphore"));
-    }
-
-    @Test
-    public void test_countDownLatch_whenCPSubsystemNotConfigured() {
-        HazelcastInstance instance = factory.newHazelcastInstance();
-        assertNotNull(instance.getCPSubsystem().getCountDownLatch("latch"));
-    }
-
-    @Test
-    public void test_cpSubsystemManagementService_whenCPSubsystemNotConfigured() {
-        HazelcastInstance instance = factory.newHazelcastInstance();
-        thrown.expect(HazelcastException.class);
-
-        instance.getCPSubsystem().getCPSubsystemManagementService();
-    }
-
-    @Test
-    public void test_cpSessionManagementService_whenCPSubsystemNotConfigured() {
-        HazelcastInstance instance = factory.newHazelcastInstance();
-        thrown.expect(HazelcastException.class);
-
-        instance.getCPSubsystem().getCPSessionManagementService();
+        assertThrows(HazelcastException.class, instance::getCPSubsystem);
     }
 
     @Test
@@ -175,6 +135,26 @@ public class CPSubsystemImplTest extends HazelcastTestSupport {
         HazelcastInstance instance = factory.newHazelcastInstance(config);
 
         assertNotNull(instance.getCPSubsystem().getCPSessionManagementService());
+    }
+
+    @Test
+    public void testGetCPGroupIdsWhenSubsystemConfigured() {
+        Config config = new Config();
+        config.getCPSubsystemConfig().setCPMemberCount(3);
+
+        factory.newHazelcastInstance(config);
+        factory.newHazelcastInstance(config);
+        HazelcastInstance instance = factory.newHazelcastInstance(config);
+
+        CPSubsystem cp = instance.getCPSubsystem();
+
+        cp.getAtomicLong("long");
+        cp.getAtomicLong("long@group1");
+        cp.getAtomicLong("long@group2");
+
+        Collection<CPGroupId> cpGroupIds = cp.getCPGroupIds();
+        assertThat(cpGroupIds).extracting(CPGroupId::getName)
+                .containsExactlyInAnyOrder("METADATA", "default", "group1", "group2");
     }
 
 }

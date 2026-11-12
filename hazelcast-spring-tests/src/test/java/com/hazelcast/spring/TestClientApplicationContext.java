@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package com.hazelcast.spring;
 
 import com.hazelcast.client.HazelcastClient;
 import com.hazelcast.client.LoadBalancer;
-import com.hazelcast.client.config.ClientTpcConfig;
 import com.hazelcast.client.config.ClientCloudConfig;
 import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.client.config.ClientConnectionStrategyConfig;
@@ -30,6 +29,7 @@ import com.hazelcast.client.config.ClientNetworkConfig;
 import com.hazelcast.client.config.ClientReliableTopicConfig;
 import com.hazelcast.client.config.ClientSqlConfig;
 import com.hazelcast.client.config.ClientSqlResubmissionMode;
+import com.hazelcast.client.config.ClientTpcConfig;
 import com.hazelcast.client.config.ClientUserCodeDeploymentConfig;
 import com.hazelcast.client.config.ConnectionRetryConfig;
 import com.hazelcast.client.config.ProxyFactoryConfig;
@@ -39,6 +39,7 @@ import com.hazelcast.collection.IList;
 import com.hazelcast.collection.IQueue;
 import com.hazelcast.collection.ISet;
 import com.hazelcast.config.AwsConfig;
+import com.hazelcast.config.ClassFilter;
 import com.hazelcast.config.CompactSerializationConfig;
 import com.hazelcast.config.CompactSerializationConfigAccessor;
 import com.hazelcast.config.EntryListenerConfig;
@@ -47,6 +48,7 @@ import com.hazelcast.config.InMemoryFormat;
 import com.hazelcast.config.IndexConfig;
 import com.hazelcast.config.IndexType;
 import com.hazelcast.config.InstanceTrackingConfig;
+import com.hazelcast.config.JavaSerializationFilterConfig;
 import com.hazelcast.config.LoginModuleConfig;
 import com.hazelcast.config.MaxSizePolicy;
 import com.hazelcast.config.NativeMemoryConfig;
@@ -61,28 +63,24 @@ import com.hazelcast.config.security.JaasAuthenticationConfig;
 import com.hazelcast.config.security.RealmConfig;
 import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
-import com.hazelcast.cp.IAtomicLong;
-import com.hazelcast.cp.IAtomicReference;
-import com.hazelcast.cp.ICountDownLatch;
-import com.hazelcast.cp.ISemaphore;
+import com.hazelcast.internal.serialization.impl.compact.CompactTestUtil;
 import com.hazelcast.map.IMap;
 import com.hazelcast.memory.MemoryUnit;
 import com.hazelcast.multimap.MultiMap;
 import com.hazelcast.security.Credentials;
 import com.hazelcast.spring.serialization.DummyCompactSerializer;
 import com.hazelcast.spring.serialization.DummyReflectiveSerializable;
-import com.hazelcast.test.annotation.QuickTest;
 import com.hazelcast.topic.ITopic;
 import com.hazelcast.topic.TopicOverloadPolicy;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
-import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 
-import javax.annotation.Resource;
 import java.nio.ByteOrder;
 import java.util.Collection;
 import java.util.List;
@@ -95,143 +93,166 @@ import static com.hazelcast.config.PersistentMemoryMode.MOUNTED;
 import static com.hazelcast.config.PersistentMemoryMode.SYSTEM_MEMORY;
 import static com.hazelcast.test.HazelcastTestSupport.assertContains;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-@RunWith(CustomSpringJUnit4ClassRunner.class)
+
+@ExtendWith({SpringExtension.class, CustomSpringExtension.class})
 @ContextConfiguration(locations = {"node-client-applicationContext-hazelcast.xml"})
-@Category(QuickTest.class)
-public class TestClientApplicationContext {
+class TestClientApplicationContext {
 
-    @Resource(name = "client")
+    @Autowired
+    @Qualifier(value = "client")
     private HazelcastClientProxy client;
 
-    @Resource(name = "client2")
+    @Autowired
+    @Qualifier(value = "client2")
     private HazelcastClientProxy client2;
 
-    @Resource(name = "client3")
+    @Autowired
+    @Qualifier(value = "client3")
     private HazelcastClientProxy client3;
 
-    @Resource(name = "client4")
+    @Autowired
+    @Qualifier(value = "client4")
     private HazelcastClientProxy client4;
 
-    @Resource(name = "client5")
+    @Autowired
+    @Qualifier(value = "client5")
     private HazelcastClientProxy client5;
 
-    @Resource(name = "client6")
+    @Autowired
+    @Qualifier(value = "client6")
     private HazelcastClientProxy client6;
 
-    @Resource(name = "client7-empty-serialization-config")
+    @Autowired
+    @Qualifier(value = "client7-empty-serialization-config")
     private HazelcastClientProxy client7;
 
-    @Resource(name = "client8")
+    @Autowired
+    @Qualifier(value = "client8")
     private HazelcastClientProxy client8;
 
-    @Resource(name = "client9-user-code-deployment-test")
+    @Autowired
+    @Qualifier(value = "client9-user-code-deployment-test")
     private HazelcastClientProxy userCodeDeploymentTestClient;
 
-    @Resource(name = "client10-flakeIdGenerator")
+    @Autowired
+    @Qualifier(value = "client10-flakeIdGenerator")
     private HazelcastClientProxy client10;
 
-    @Resource(name = "client11-icmp-ping")
+    @Autowired
+    @Qualifier(value = "client11-icmp-ping")
     private HazelcastClientProxy icmpPingTestClient;
 
-    @Resource(name = "client12-hazelcast-cloud")
+    @Autowired
+    @Qualifier(value = "client12-hazelcast-cloud")
     private HazelcastClientProxy hazelcastCloudClient;
 
-    @Resource(name = "client13-exponential-connection-retry")
+    @Autowired
+    @Qualifier(value = "client13-exponential-connection-retry")
     private HazelcastClientProxy connectionRetryClient;
 
-    @Resource(name = "client14-reliable-topic")
+    @Autowired
+    @Qualifier(value = "client14-reliable-topic")
     private HazelcastClientProxy hazelcastReliableTopic;
 
-    @Resource(name = "client16-name-and-labels")
+    @Autowired
+    @Qualifier(value = "client16-name-and-labels")
     private HazelcastClientProxy namedClient;
 
-    @Resource(name = "client17-backupAckToClient")
+    @Autowired
+    @Qualifier(value = "client17-backupAckToClient")
     private HazelcastClientProxy backupAckToClient;
 
-    @Resource(name = "client18-metrics")
+    @Autowired
+    @Qualifier(value = "client18-metrics")
     private HazelcastClientProxy metricsClient;
 
-    @Resource(name = "client19-instance-tracking")
+    @Autowired
+    @Qualifier(value = "client19-instance-tracking")
     private HazelcastClientProxy instanceTrackingClient;
 
-    @Resource(name = "client20-native-memory")
+    @Autowired
+    @Qualifier(value = "client20-native-memory")
     private HazelcastClientProxy nativeMemoryClient;
 
-    @Resource(name = "client21-persistent-memory-system-memory")
+    @Autowired
+    @Qualifier(value = "client21-persistent-memory-system-memory")
     private HazelcastClientProxy pmemSystemMemoryClient;
 
-    @Resource(name = "client22-with-overridden-default-serializers")
+    @Autowired
+    @Qualifier(value = "client22-with-overridden-default-serializers")
     private HazelcastClientProxy clientWithOverriddenDefaultSerializers;
 
-    @Resource(name = "client23-with-compact-serialization")
+    @Autowired
+    @Qualifier(value = "client23-with-compact-serialization")
     private HazelcastClientProxy clientWithCompactSerialization;
 
-    @Resource(name = "client24-with-sql")
+    @Autowired
+    @Qualifier(value = "client24-with-sql")
     private HazelcastClientProxy clientWithSql;
 
-    @Resource(name = "client25-with-tpc")
+    @Autowired
+    @Qualifier(value = "client25-with-tpc")
     private HazelcastClientProxy clientWithTpc;
 
-    @Resource(name = "instance")
+    @Autowired
+    @Qualifier(value = "instance")
     private HazelcastInstance instance;
 
-    @Resource(name = "map1")
+    @Autowired
+    @Qualifier(value = "map1")
     private IMap<Object, Object> map1;
 
-    @Resource(name = "map2")
+    @Autowired
+    @Qualifier(value = "map2")
     private IMap<Object, Object> map2;
 
-    @Resource(name = "multiMap")
-    private MultiMap multiMap;
+    @Autowired
+    @Qualifier(value = "multiMap")
+    private MultiMap<?, ?> multiMap;
 
-    @Resource(name = "queue")
-    private IQueue queue;
+    @Autowired
+    @Qualifier(value = "queue")
+    private IQueue<?> queue;
 
-    @Resource(name = "topic")
-    private ITopic topic;
+    @Autowired
+    @Qualifier(value = "topic")
+    private ITopic<?> topic;
 
-    @Resource(name = "set")
-    private ISet set;
+    @Autowired
+    @Qualifier(value = "set")
+    private ISet<?> set;
 
-    @Resource(name = "list")
-    private IList list;
+    @Autowired
+    @Qualifier(value = "list")
+    private IList<?> list;
 
-    @Resource(name = "executorService")
+    @Autowired
+    @Qualifier(value = "executorService")
     private ExecutorService executorService;
 
-    @Resource(name = "atomicLong")
-    private IAtomicLong atomicLong;
-
-    @Resource(name = "atomicReference")
-    private IAtomicReference atomicReference;
-
-    @Resource(name = "countDownLatch")
-    private ICountDownLatch countDownLatch;
-
-    @Resource(name = "semaphore")
-    private ISemaphore semaphore;
-
-    @Resource(name = "reliableTopic")
-    private ITopic reliableTopic;
+    @Autowired
+    @Qualifier(value = "reliableTopic")
+    private ITopic<?> reliableTopic;
 
     @Autowired
     private Credentials credentials;
 
-    @BeforeClass
-    @AfterClass
-    public static void start() {
+    @BeforeAll
+    @AfterAll
+    static void start() {
         HazelcastClient.shutdownAll();
         Hazelcast.shutdownAll();
     }
 
     @Test
-    public void testClient() {
+    void testClient() {
         assertNotNull(client);
         assertNotNull(client2);
         assertNotNull(client3);
@@ -258,10 +279,10 @@ public class TestClientApplicationContext {
         assertFalse(serConf.isUseNativeByteOrder());
         assertEquals(10, serConf.getPortableVersion());
 
-        Map<Integer, String> map1 = serConf.getDataSerializableFactoryClasses();
-        assertNotNull(map1);
-        assertTrue(map1.containsKey(1));
-        assertEquals("com.hazelcast.spring.serialization.DummyDataSerializableFactory", map1.get(1));
+        Map<Integer, String> dataSerializableFactoryClasses = serConf.getDataSerializableFactoryClasses();
+        assertNotNull(dataSerializableFactoryClasses);
+        assertTrue(dataSerializableFactoryClasses.containsKey(1));
+        assertEquals("com.hazelcast.spring.serialization.DummyDataSerializableFactory", dataSerializableFactoryClasses.get(1));
 
         Map<Integer, String> portableFactoryClasses = serConf.getPortableFactoryClasses();
         assertNotNull(portableFactoryClasses);
@@ -287,7 +308,7 @@ public class TestClientApplicationContext {
 
         LoadBalancer loadBalancer = config3.getLoadBalancer();
         assertNotNull(loadBalancer);
-        assertTrue(loadBalancer instanceof RoundRobinLB);
+        assertInstanceOf(RoundRobinLB.class, loadBalancer);
 
         NearCacheConfig nearCacheConfig = config3.getNearCacheConfig("default");
         assertNotNull(nearCacheConfig);
@@ -302,7 +323,7 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void testAwsClientConfig() {
+    void testAwsClientConfig() {
         assertNotNull(client4);
         ClientConfig config = client4.getClientConfig();
         ClientNetworkConfig networkConfig = config.getNetworkConfig();
@@ -319,7 +340,7 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void testUnlimitedConnectionAttempt() {
+    void testUnlimitedConnectionAttempt() {
         assertNotNull(client5);
 
         ClientConfig config = client5.getClientConfig();
@@ -327,7 +348,7 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void testSecurityRealms() {
+    void testSecurityRealms() {
         assertNotNull(client5);
 
         RealmConfig realmConfig = client5.getClientConfig().getSecurityConfig().getRealmConfig("krb5Initiator");
@@ -341,7 +362,7 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void testHazelcastInstances() {
+    void testHazelcastInstances() {
         assertNotNull(map1);
         assertNotNull(map2);
         assertNotNull(multiMap);
@@ -350,10 +371,6 @@ public class TestClientApplicationContext {
         assertNotNull(set);
         assertNotNull(list);
         assertNotNull(executorService);
-        assertNotNull(atomicLong);
-        assertNotNull(atomicReference);
-        assertNotNull(countDownLatch);
-        assertNotNull(semaphore);
         assertNotNull(reliableTopic);
         assertEquals("map1", map1.getName());
         assertEquals("map2", map2.getName());
@@ -362,15 +379,11 @@ public class TestClientApplicationContext {
         assertEquals("topic", topic.getName());
         assertEquals("set", set.getName());
         assertEquals("list", list.getName());
-        assertEquals("atomicLong", atomicLong.getName());
-        assertEquals("atomicReference", atomicReference.getName());
-        assertEquals("countDownLatch", countDownLatch.getName());
-        assertEquals("semaphore", semaphore.getName());
         assertEquals("reliableTopic", reliableTopic.getName());
     }
 
     @Test
-    public void testDefaultSerializationConfig() {
+    void testDefaultSerializationConfig() {
         ClientConfig config7 = client7.getClientConfig();
         SerializationConfig serConf = config7.getSerializationConfig();
 
@@ -385,7 +398,7 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void testOverrideDefaultSerializersSerializationConfig() {
+    void testOverrideDefaultSerializersSerializationConfig() {
         final ClientConfig config = clientWithOverriddenDefaultSerializers.getClientConfig();
         final SerializationConfig serializationConfig = config.getSerializationConfig();
 
@@ -393,10 +406,9 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void tesCompactSerializationConfig() {
-        CompactSerializationConfig compactSerializationConfig = clientWithCompactSerialization.getClientConfig()
-                .getSerializationConfig()
-                .getCompactSerializationConfig();
+    void tesCompactSerializationConfig() {
+        SerializationConfig serializationConfig = clientWithCompactSerialization.getClientConfig().getSerializationConfig();
+        CompactSerializationConfig compactSerializationConfig = serializationConfig.getCompactSerializationConfig();
 
         List<String> serializerClassNames
                 = CompactSerializationConfigAccessor.getSerializerClassNames(compactSerializationConfig);
@@ -413,10 +425,17 @@ public class TestClientApplicationContext {
         String compactSerializerClassName = DummyCompactSerializer.class.getName();
         assertThat(serializerClassNames)
                 .contains(compactSerializerClassName);
+
+        JavaSerializationFilterConfig expectedFilter = new JavaSerializationFilterConfig()
+                .setDefaultsDisabled(true)
+                .setBlacklist(new ClassFilter().addClasses("com.hz.ClassA").addPackages("com.hz.a").addPrefixes("com.hz.a.other."))
+                .setWhitelist(new ClassFilter().addClasses("com.hz.ClassB").addPackages("com.hz.b").addPrefixes("com.hazelcast"));
+
+        CompactTestUtil.assertZeroConfigFilter(serializationConfig, expectedFilter);
     }
 
     @Test
-    public void testClientNearCacheEvictionPolicies() {
+    void testClientNearCacheEvictionPolicies() {
         ClientConfig config = client3.getClientConfig();
         assertEquals(EvictionPolicy.LFU, getNearCacheEvictionPolicy("lfuNearCacheEviction", config));
         assertEquals(EvictionPolicy.LRU, getNearCacheEvictionPolicy("lruNearCacheEviction", config));
@@ -425,7 +444,7 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void testNearCachePreloader() {
+    void testNearCachePreloader() {
         NearCachePreloaderConfig preloaderConfig = client3.getClientConfig()
                 .getNearCacheConfig("preloader")
                 .getPreloaderConfig();
@@ -437,7 +456,7 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void testUserCodeDeploymentConfig() {
+    void testUserCodeDeploymentConfig() {
         ClientConfig config = userCodeDeploymentTestClient.getClientConfig();
         ClientUserCodeDeploymentConfig userCodeDeploymentConfig = config.getUserCodeDeploymentConfig();
         List<String> classNames = userCodeDeploymentConfig.getClassNames();
@@ -455,10 +474,11 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void testFullQueryCacheConfig() throws Exception {
+    void testFullQueryCacheConfig() {
         ClientConfig config = client6.getClientConfig();
 
         QueryCacheConfig queryCacheConfig = getQueryCacheConfig(config);
+        assert queryCacheConfig != null;
         EntryListenerConfig entryListenerConfig = queryCacheConfig.getEntryListenerConfigs().get(0);
 
         assertTrue(entryListenerConfig.isIncludeValue());
@@ -496,14 +516,14 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void testClientConnectionStrategyConfig() {
+    void testClientConnectionStrategyConfig() {
         ClientConnectionStrategyConfig connectionStrategyConfig = client8.getClientConfig().getConnectionStrategyConfig();
         assertTrue(connectionStrategyConfig.isAsyncStart());
         assertEquals(ReconnectMode.ASYNC, connectionStrategyConfig.getReconnectMode());
     }
 
     @Test
-    public void testFlakeIdGeneratorConfig() {
+    void testFlakeIdGeneratorConfig() {
         Map<String, ClientFlakeIdGeneratorConfig> configMap = client10.getClientConfig().getFlakeIdGeneratorConfigMap();
         assertEquals(1, configMap.size());
         ClientFlakeIdGeneratorConfig config = configMap.values().iterator().next();
@@ -513,27 +533,27 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void testClientIcmpConfig() {
+    void testClientIcmpConfig() {
         ClientIcmpPingConfig icmpPingConfig = icmpPingTestClient.getClientConfig()
                 .getNetworkConfig().getClientIcmpPingConfig();
-        assertEquals(false, icmpPingConfig.isEnabled());
+        assertFalse(icmpPingConfig.isEnabled());
         assertEquals(2000, icmpPingConfig.getTimeoutMilliseconds());
         assertEquals(3000, icmpPingConfig.getIntervalMilliseconds());
         assertEquals(50, icmpPingConfig.getTtl());
         assertEquals(5, icmpPingConfig.getMaxAttempts());
-        assertEquals(false, icmpPingConfig.isEchoFailFastOnStartup());
+        assertFalse(icmpPingConfig.isEchoFailFastOnStartup());
     }
 
     @Test
-    public void testCloudConfig() {
+    void testCloudConfig() {
         ClientCloudConfig cloudConfig = hazelcastCloudClient.getClientConfig()
                 .getNetworkConfig().getCloudConfig();
-        assertEquals(false, cloudConfig.isEnabled());
+        assertFalse(cloudConfig.isEnabled());
         assertEquals("EXAMPLE_TOKEN", cloudConfig.getDiscoveryToken());
     }
 
     @Test
-    public void testConnectionRetry() {
+    void testConnectionRetry() {
         ConnectionRetryConfig connectionRetryConfig = connectionRetryClient
                 .getClientConfig().getConnectionStrategyConfig().getConnectionRetryConfig();
         assertEquals(5000, connectionRetryConfig.getClusterConnectTimeoutMillis());
@@ -544,7 +564,7 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void testReliableTopicConfig() {
+    void testReliableTopicConfig() {
         ClientConfig clientConfig = hazelcastReliableTopic.getClientConfig();
         ClientReliableTopicConfig topicConfig = clientConfig.getReliableTopicConfig("rel-topic");
         assertEquals(100, topicConfig.getReadBatchSize());
@@ -564,24 +584,24 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void testInstanceNameConfig() {
+    void testInstanceNameConfig() {
         assertEquals("clusterName", namedClient.getName());
     }
 
     @Test
-    public void testLabelsConfig() {
+    void testLabelsConfig() {
         Set<String> labels = namedClient.getClientConfig().getLabels();
         assertEquals(1, labels.size());
         assertContains(labels, "foo");
     }
 
     @Test
-    public void testBackupAckToClient() {
+    void testBackupAckToClient() {
         assertFalse(backupAckToClient.getClientConfig().isBackupAckToClientEnabled());
     }
 
     @Test
-    public void testMetrics() {
+    void testMetrics() {
         ClientMetricsConfig metricsConfig = metricsClient.getClientConfig().getMetricsConfig();
 
         assertFalse(metricsConfig.isEnabled());
@@ -590,7 +610,7 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void testInstanceTracking() {
+    void testInstanceTracking() {
         InstanceTrackingConfig trackingConfig = instanceTrackingClient.getClientConfig().getInstanceTrackingConfig();
 
         assertTrue(trackingConfig.isEnabled());
@@ -600,12 +620,12 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void testNativeMemory() {
+    void testNativeMemory() {
         NativeMemoryConfig nativeMemoryConfig = nativeMemoryClient.getClientConfig().getNativeMemoryConfig();
 
         assertFalse(nativeMemoryConfig.isEnabled());
-        assertEquals(MemoryUnit.GIGABYTES, nativeMemoryConfig.getSize().getUnit());
-        assertEquals(256, nativeMemoryConfig.getSize().getValue());
+        assertEquals(MemoryUnit.GIGABYTES, nativeMemoryConfig.getCapacity().getUnit());
+        assertEquals(256, nativeMemoryConfig.getCapacity().getValue());
         assertEquals(20, nativeMemoryConfig.getPageSize());
         assertEquals(NativeMemoryConfig.MemoryAllocatorType.STANDARD, nativeMemoryConfig.getAllocatorType());
         assertEquals(10.2, nativeMemoryConfig.getMetadataSpacePercentage(), 0.1);
@@ -624,12 +644,12 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void testNativeMemorySystemMemory() {
+    void testNativeMemorySystemMemory() {
         NativeMemoryConfig nativeMemoryConfig = pmemSystemMemoryClient.getClientConfig().getNativeMemoryConfig();
 
         assertFalse(nativeMemoryConfig.isEnabled());
-        assertEquals(MemoryUnit.GIGABYTES, nativeMemoryConfig.getSize().getUnit());
-        assertEquals(256, nativeMemoryConfig.getSize().getValue());
+        assertEquals(MemoryUnit.GIGABYTES, nativeMemoryConfig.getCapacity().getUnit());
+        assertEquals(256, nativeMemoryConfig.getCapacity().getValue());
         assertEquals(20, nativeMemoryConfig.getPageSize());
         assertEquals(NativeMemoryConfig.MemoryAllocatorType.STANDARD, nativeMemoryConfig.getAllocatorType());
         assertEquals(10.2, nativeMemoryConfig.getMetadataSpacePercentage(), 0.1);
@@ -641,13 +661,13 @@ public class TestClientApplicationContext {
     }
 
     @Test
-    public void testSql() {
+    void testSql() {
         ClientSqlConfig sqlConfig = clientWithSql.getClientConfig().getSqlConfig();
         assertEquals(ClientSqlResubmissionMode.RETRY_SELECTS, sqlConfig.getResubmissionMode());
     }
 
     @Test
-    public void testTpc() {
+    void testTpc() {
         ClientTpcConfig tpcConfig = clientWithTpc.getClientConfig().getTpcConfig();
         assertTrue(tpcConfig.isEnabled());
     }

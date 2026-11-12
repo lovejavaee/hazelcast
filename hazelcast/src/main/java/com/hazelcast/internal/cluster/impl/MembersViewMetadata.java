@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 
 import java.io.IOException;
+import java.util.Objects;
 import java.util.UUID;
 
 public class MembersViewMetadata implements IdentifiedDataSerializable {
@@ -107,14 +108,14 @@ public class MembersViewMetadata implements IdentifiedDataSerializable {
         if (!memberUuid.equals(that.memberUuid)) {
             return false;
         }
-        return masterAddress.equals(that.masterAddress);
+        return Objects.equals(masterAddress, that.masterAddress);
     }
 
     @Override
     public int hashCode() {
         int result = memberAddress.hashCode();
         result = 31 * result + memberUuid.hashCode();
-        result = 31 * result + masterAddress.hashCode();
+        result = 31 * result + (masterAddress != null ? masterAddress.hashCode() : 0);
         result = 31 * result + memberListVersion;
         return result;
     }

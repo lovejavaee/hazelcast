@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,7 +27,6 @@ import javax.annotation.concurrent.NotThreadSafe;
 
 @NotThreadSafe
 public class AvroQueryTarget implements QueryTarget {
-
     private GenericRecord record;
 
     @Override
@@ -49,13 +48,13 @@ public class AvroQueryTarget implements QueryTarget {
         return () -> type.convert(extractValue(record, path));
     }
 
-    private static Object extractValue(GenericRecord record, String path) {
+    public static Object extractValue(GenericRecord record, String path) {
         if (!record.hasField(path)) {
             return null;
         }
         Object value = record.get(path);
-        if (value instanceof Utf8) {
-            return ((Utf8) value).toString();
+        if (value instanceof Utf8 utf8) {
+            return utf8.toString();
         } else {
             return value;
         }

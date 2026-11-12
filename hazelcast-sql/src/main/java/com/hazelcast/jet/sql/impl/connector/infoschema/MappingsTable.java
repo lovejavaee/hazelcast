@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@
 package com.hazelcast.jet.sql.impl.connector.infoschema;
 
 import com.hazelcast.jet.json.JsonUtil;
+import com.hazelcast.jet.sql.impl.connector.SqlConnector;
+import com.hazelcast.jet.sql.impl.connector.SqlConnectorCache;
 import com.hazelcast.sql.impl.schema.ConstantTableStatistics;
 import com.hazelcast.sql.impl.schema.Mapping;
 import com.hazelcast.sql.impl.schema.TableField;
@@ -25,9 +27,15 @@ import com.hazelcast.sql.impl.type.QueryDataType;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.function.Function;
 
 import static com.hazelcast.jet.impl.util.Util.uncheckCall;
-import static com.hazelcast.sql.impl.QueryUtils.quoteCompoundIdentifier;
+import static com.hazelcast.sql.impl.QuoteIdentifierUtil.quoteCompoundIdentifier;
 import static java.util.Arrays.asList;
 
 /**
@@ -48,12 +56,18 @@ public class MappingsTable extends InfoSchemaTable {
 
     private final String mappingsSchema;
     private final Collection<Mapping> mappings;
+    private final Function<String, String> dataConnectionTypeResolver;
+    private final boolean securityEnabled;
+    private final SqlConnectorCache sqlConnectorCache;
 
     public MappingsTable(
             String catalog,
             String schemaName,
             String mappingsSchema,
-            Collection<Mapping> mappings
+            Collection<Mapping> mappings,
+            SqlConnectorCache sqlConnectorCache,
+            Function<String, String> dataConnectionTypeResolver,
+            boolean securityEnabled
     ) {
         super(
                 FIELDS,
@@ -65,19 +79,42 @@ public class MappingsTable extends InfoSchemaTable {
 
         this.mappingsSchema = mappingsSchema;
         this.mappings = mappings;
+        this.sqlConnectorCache = sqlConnectorCache;
+        this.dataConnectionTypeResolver = dataConnectionTypeResolver;
+        this.securityEnabled = securityEnabled;
     }
 
     @Override
     protected List<Object[]> rows() {
         List<Object[]> rows = new ArrayList<>(mappings.size());
         for (Mapping mapping : mappings) {
+            Map<String, String> options;
+
+            final String type = Optional.ofNullable(mapping.dataConnection())
+                .map(dataConnectionTypeResolver)
+                .or(() -> Optional.ofNullable(mapping.connectorType()))
+                .orElseThrow(() ->
+                    new IllegalStateException("Could not resolve mapping type for mapping " + mapping.name()));
+
+            if (!securityEnabled) {
+                options = mapping.options();
+            } else {
+                options = new TreeMap<>();
+                final SqlConnector sqlConnector = sqlConnectorCache.forType(type);
+                final Set<String> secureConnectorOptions = sqlConnector.nonSensitiveConnectorOptions();
+                for (Entry<String, String> e : mapping.options().entrySet()) {
+                    if (secureConnectorOptions.contains(e.getKey())) {
+                        options.put(e.getKey(), e.getValue());
+                    }
+                }
+            }
             Object[] row = new Object[]{
                     catalog(),
                     mappingsSchema,
                     mapping.name(),
                     quoteCompoundIdentifier(mapping.externalName()),
-                    mapping.connectorType(),
-                    uncheckCall(() -> JsonUtil.toJson(mapping.options()))
+                    type,
+                    uncheckCall(() -> JsonUtil.toJson(options))
             };
             rows.add(row);
         }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,10 @@
 package com.hazelcast.instance.impl;
 
 import com.hazelcast.auditlog.AuditlogService;
+import com.hazelcast.client.impl.ClientEngine;
 import com.hazelcast.cluster.ClusterState;
+import com.hazelcast.config.SSLConfig;
+import com.hazelcast.cp.CPSubsystem;
 import com.hazelcast.cp.internal.persistence.CPPersistenceService;
 import com.hazelcast.hotrestart.HotRestartService;
 import com.hazelcast.instance.EndpointQualifier;
@@ -25,10 +28,12 @@ import com.hazelcast.internal.ascii.TextCommandService;
 import com.hazelcast.internal.cluster.impl.JoinMessage;
 import com.hazelcast.internal.cluster.impl.JoinRequest;
 import com.hazelcast.internal.diagnostics.Diagnostics;
+import com.hazelcast.internal.diagnostics.HealthMonitor;
 import com.hazelcast.internal.hotrestart.InternalHotRestartService;
 import com.hazelcast.internal.jmx.ManagementService;
 import com.hazelcast.internal.management.TimedMemberStateFactory;
 import com.hazelcast.internal.memory.MemoryStats;
+import com.hazelcast.internal.namespace.UserCodeNamespaceService;
 import com.hazelcast.internal.networking.ChannelInitializer;
 import com.hazelcast.internal.networking.InboundHandler;
 import com.hazelcast.internal.networking.OutboundHandler;
@@ -36,17 +41,22 @@ import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.internal.serialization.impl.compact.schema.MemberSchemaService;
 import com.hazelcast.internal.server.ServerConnection;
 import com.hazelcast.internal.server.ServerContext;
+import com.hazelcast.internal.tpc.TpcServerBootstrap;
 import com.hazelcast.internal.util.ByteArrayProcessor;
 import com.hazelcast.internal.util.UuidUtil;
 import com.hazelcast.jet.JetService;
 import com.hazelcast.jet.impl.JetServiceBackend;
 import com.hazelcast.nio.MemberSocketInterceptor;
+import com.hazelcast.nio.ssl.SSLEngineFactory;
 import com.hazelcast.security.SecurityContext;
 import com.hazelcast.security.SecurityService;
+import com.hazelcast.security.impl.InternalSecurityContext;
+import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.version.Version;
 
 import javax.annotation.Nullable;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -54,7 +64,7 @@ import java.util.function.Function;
  * NodeExtension is a <tt>Node</tt> extension mechanism to be able to plug different implementations of
  * some modules, like; <tt>SerializationService</tt>, <tt>ChannelFactory</tt> etc.
  */
-@SuppressWarnings({"checkstyle:methodcount"})
+@SuppressWarnings("checkstyle:methodcount")
 public interface NodeExtension {
 
     /**
@@ -218,11 +228,21 @@ public interface NodeExtension {
     MemberSchemaService createSchemaService();
 
     /**
-     * Returns <tt>SecurityContext</tt> for this <tt>Node</tt> if available, otherwise returns null.
+     * Returns <tt>SecurityContext</tt> for this <tt>Node</tt> if available, otherwise logs a warning
+     * and returns null.
      *
      * @return security context
      */
-    SecurityContext getSecurityContext();
+    InternalSecurityContext getSecurityContext();
+
+    /**
+     * Returns <tt>SecurityContext</tt> for this <tt>Node</tt> if available, otherwise returns null
+     * without logging any warning.
+     *
+     * @return The {@link SecurityContext} instance if present else null
+     */
+    @Nullable
+    InternalSecurityContext getSecurityContextOrNull();
 
     /**
      * Creates a service which is an implementation of given type parameter.
@@ -237,8 +257,8 @@ public interface NodeExtension {
     /**
      * Creates additional extension services, which will be registered by
      * service manager during start-up.
-     *
-     * By default returned map will be empty.
+     * <p>
+     * By default, returned map will be empty.
      *
      * @return extension services
      */
@@ -258,7 +278,7 @@ public interface NodeExtension {
 
     /**
      * Creates a <tt>InboundHandler</tt> for given <tt>Connection</tt> instance.
-     *
+     * <p>
      * For TLS and other enterprise features, instead of returning the regular protocol decoder, a TLS decoder
      * can be returned. This is the first item in the chain.
      *
@@ -279,9 +299,6 @@ public interface NodeExtension {
 
     /**
      * Creates the channel initializer function.
-     *
-     * @param serverContext
-     * @return
      */
     Function<EndpointQualifier, ChannelInitializer> createChannelInitializerFn(ServerContext serverContext);
 
@@ -299,6 +316,12 @@ public interface NodeExtension {
       * with a message explaining rejection reason.
       */
     void validateJoinRequest(JoinMessage joinMessage);
+
+    /**
+     * Returns {@link Version}s supported by this Node, meaning all the versions that can communicate with this Node.
+     * @return a Set of supported cluster versions
+     */
+    Set<Version> getSupportedVersions();
 
     /**
      * Called before starting a cluster state change transaction. Called only
@@ -325,7 +348,7 @@ public interface NodeExtension {
     void onClusterStateChange(ClusterState newState, boolean isTransient);
 
     /**
-     * Called synchronously when partition state (partition assignments, version etc) changes
+     * Called synchronously when partition state (partition assignments, version etc.) changes
      */
     void onPartitionStateChange();
 
@@ -383,11 +406,6 @@ public interface NodeExtension {
     void registerPlugins(Diagnostics diagnostics);
 
     /**
-     * Send PhoneHome ping from OS or EE instance to PhoneHome application
-     */
-    void sendPhoneHome();
-
-    /**
      * @return not-{@code null} {@link AuditlogService} instance
      */
     AuditlogService getAuditlogService();
@@ -398,6 +416,19 @@ public interface NodeExtension {
     CPPersistenceService getCPPersistenceService();
 
     /**
+     * Creates the relevant {@link CPSubsystem}.
+     */
+    CPSubsystem createCPSubsystem(NodeEngine nodeEngine);
+
+    /**
+     * Returns {@code true} if the ADVANCED_CP feature is available
+     * (e.g. CPMap, CP group snapshots for client routing, auto step-down).
+     */
+    default boolean isAdvancedCPEnabled() {
+        return false;
+    }
+
+    /**
      * Returns a JetService.
      */
     JetService getJet();
@@ -405,4 +436,41 @@ public interface NodeExtension {
     /** Returns the internal jet service backend */
     @Nullable
     JetServiceBackend getJetServiceBackend();
+
+    /**
+     * @return an instance of {@link com.hazelcast.nio.ssl.SSLEngineFactory} when TLS is enabled, {@code null} otherwise
+     * @throws java.lang.IllegalStateException if the method call is not allowed
+     */
+    SSLEngineFactory createSslEngineFactory(SSLConfig sslConfig);
+
+    /**
+     * Retrieves the {@link UserCodeNamespaceService} provided by the implementing class.
+     *
+     * @return the {@link UserCodeNamespaceService} instance for this member.
+     */
+    UserCodeNamespaceService getNamespaceService();
+
+    TpcServerBootstrap createTpcServerBootstrap();
+
+    /**
+     * Creates an implementation of the {@link ClientEngine} depending on Hazelcast edition.
+     *
+     * @return a new {@link ClientEngine} instance for this member
+     */
+    ClientEngine createClientEngine();
+
+    /**
+     * @return the license object, if a Hazelcast Enterprise license is configured, otherwise {@code null}
+     */
+    @Nullable
+    default Object getLicense() {
+        return null;
+    }
+
+    /**
+     * Creates and implementation of the {@link HealthMonitor} depending on Hazelcast edition.
+     *
+     * @return a new {@link HealthMonitor} instance for this member
+     */
+    HealthMonitor createHealthMonitor();
 }

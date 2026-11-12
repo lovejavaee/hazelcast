@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,15 +25,17 @@ import com.hazelcast.cp.internal.raft.impl.dataservice.RaftDataService;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendFailureResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendRequest;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendSuccessResponse;
-import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshot;
+import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshotRequest;
 import com.hazelcast.cp.internal.raft.impl.log.LogEntry;
 import com.hazelcast.cp.internal.raft.impl.testing.LocalRaftGroup;
-import com.hazelcast.spi.impl.InternalCompletableFuture;
 import com.hazelcast.test.HazelcastParallelClassRunner;
+import com.hazelcast.spi.impl.InternalCompletableFuture;
+import com.hazelcast.test.ChangeLoggingRule;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.After;
+import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
@@ -54,18 +56,20 @@ import static com.hazelcast.cp.internal.raft.impl.RaftUtil.getMatchIndex;
 import static com.hazelcast.cp.internal.raft.impl.RaftUtil.getSnapshotEntry;
 import static com.hazelcast.cp.internal.raft.impl.RaftUtil.getStatus;
 import static com.hazelcast.cp.internal.raft.impl.testing.LocalRaftGroup.LocalRaftGroupBuilder.newGroup;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class SnapshotTest extends HazelcastTestSupport {
+
+    @ClassRule
+    public static ChangeLoggingRule changeLoggingRule = new ChangeLoggingRule("log4j2-cp-debug.xml");
 
     private LocalRaftGroup group;
 
@@ -99,6 +103,61 @@ public class SnapshotTest extends HazelcastTestSupport {
                     assertEquals(("val" + i), service.get(i + 1));
                 }
             }
+        });
+    }
+
+    @Test
+    public void when_snapshotIsTaken_then_buildMetricsAreRecorded() throws ExecutionException, InterruptedException {
+        final int entryCount = 50;
+        RaftAlgorithmConfig config = new RaftAlgorithmConfig().setCommitIndexAdvanceCountToSnapshot(entryCount);
+        group = newGroup(3, config);
+        group.start();
+
+        RaftNodeImpl leader = group.waitUntilLeaderElected();
+
+        for (int i = 0; i < entryCount; i++) {
+            leader.replicate(new ApplyRaftRunnable("val" + i)).get();
+        }
+
+        assertTrueEventually(() -> {
+            for (RaftNodeImpl raftNode : group.getNodes()) {
+                assertEquals(entryCount, getSnapshotEntry(raftNode).index());
+                assertThat(raftNode.getSnapshotBuildCount()).isGreaterThanOrEqualTo(1L);
+                assertThat(raftNode.getLastSnapshotBuildDurationMs()).isGreaterThanOrEqualTo(0L);
+            }
+        });
+    }
+
+    @Test
+    public void when_followerInstallsSnapshot_then_transferMetricsAreRecorded() throws ExecutionException, InterruptedException {
+        final int entryCount = 50;
+        RaftAlgorithmConfig config = new RaftAlgorithmConfig().setCommitIndexAdvanceCountToSnapshot(entryCount);
+        group = newGroup(3, config);
+        group.start();
+
+        RaftNodeImpl leader = group.waitUntilLeaderElected();
+
+        leader.replicate(new ApplyRaftRunnable("val0")).get();
+
+        RaftNodeImpl[] followers = group.getNodesExcept(leader.getLocalMember());
+        RaftNodeImpl slowFollower = followers[1];
+
+        group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), AppendRequest.class);
+        group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), InstallSnapshotRequest.class);
+
+        for (int i = 1; i < entryCount; i++) {
+            leader.replicate(new ApplyRaftRunnable("val" + i)).get();
+        }
+
+        assertTrueEventually(() -> assertEquals(entryCount, getSnapshotEntry(leader).index()));
+
+        group.allowMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), InstallSnapshotRequest.class);
+
+        assertTrueEventually(() -> {
+            assertEquals(entryCount, getCommitIndex(slowFollower));
+            assertThat(slowFollower.getSnapshotTransferCount()).isEqualTo(1L);
+            assertThat(slowFollower.getLastSnapshotTransferDurationMs())
+                    .isGreaterThanOrEqualTo(0L);
         });
     }
 
@@ -150,7 +209,7 @@ public class SnapshotTest extends HazelcastTestSupport {
         RaftNodeImpl slowFollower = followers[1];
 
         group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), AppendRequest.class);
-        group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), InstallSnapshot.class);
+        group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), InstallSnapshotRequest.class);
 
         for (int i = 0; i < entryCount; i++) {
             leader.replicate(new ApplyRaftRunnable("val" + i)).get();
@@ -160,7 +219,7 @@ public class SnapshotTest extends HazelcastTestSupport {
 
         leader.replicate(new ApplyRaftRunnable("valFinal")).get();
 
-        group.allowMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), InstallSnapshot.class);
+        group.allowMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), InstallSnapshotRequest.class);
 
         assertTrueEventually(() -> assertEquals(entryCount, getCommitIndex(slowFollower)));
 
@@ -194,7 +253,7 @@ public class SnapshotTest extends HazelcastTestSupport {
         RaftNodeImpl slowFollower = followers[1];
 
         group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), AppendRequest.class);
-        group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), InstallSnapshot.class);
+        group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), InstallSnapshotRequest.class);
 
         for (int i = 1; i < entryCount; i++) {
             leader.replicate(new ApplyRaftRunnable("val" + i)).get();
@@ -204,7 +263,7 @@ public class SnapshotTest extends HazelcastTestSupport {
 
         leader.replicate(new ApplyRaftRunnable("valFinal")).get();
 
-        group.allowMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), InstallSnapshot.class);
+        group.allowMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), InstallSnapshotRequest.class);
 
         assertTrueEventually(() -> assertEquals(entryCount, getCommitIndex(slowFollower)));
 
@@ -306,7 +365,7 @@ public class SnapshotTest extends HazelcastTestSupport {
         });
 
         group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), AppendRequest.class);
-        group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), InstallSnapshot.class);
+        group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), InstallSnapshotRequest.class);
 
         leader.replicate(new ApplyRaftRunnable("val" + (entryCount - 1))).get();
 
@@ -353,7 +412,7 @@ public class SnapshotTest extends HazelcastTestSupport {
         });
 
         group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), AppendRequest.class);
-        group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), InstallSnapshot.class);
+        group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), InstallSnapshotRequest.class);
 
         for (int i = entryCount - missingEntryCountOnSlowFollower; i < entryCount; i++) {
             leader.replicate(new ApplyRaftRunnable("val" + i)).get();
@@ -408,9 +467,9 @@ public class SnapshotTest extends HazelcastTestSupport {
             }
         });
 
-        List<InternalCompletableFuture> futures = new ArrayList<>();
+        List<InternalCompletableFuture<?>> futures = new ArrayList<>();
         for (int i = 40; i < 45; i++) {
-            InternalCompletableFuture f = leader.replicate(new ApplyRaftRunnable("isolated" + i));
+            InternalCompletableFuture<?> f = leader.replicate(new ApplyRaftRunnable("isolated" + i));
             futures.add(f);
         }
 
@@ -430,7 +489,7 @@ public class SnapshotTest extends HazelcastTestSupport {
         group.dropMessagesToMember(leader.getLocalMember(), followers[1].getLocalMember(), AppendRequest.class);
         group.merge();
 
-        for (InternalCompletableFuture f : futures) {
+        for (InternalCompletableFuture<?> f : futures) {
             try {
                 f.joinInternal();
                 fail();
@@ -479,7 +538,7 @@ public class SnapshotTest extends HazelcastTestSupport {
         }
 
         RaftNodeImpl newRaftNode1 = group.createNewRaftNode();
-        Future f1 = leader.replicateMembershipChange(newRaftNode1.getLocalMember(), MembershipChangeMode.ADD);
+        Future<?> f1 = leader.replicateMembershipChange(newRaftNode1.getLocalMember(), MembershipChangeMode.ADD);
 
         assertTrueEventually(() -> {
             for (RaftNodeImpl follower : followers) {
@@ -488,7 +547,7 @@ public class SnapshotTest extends HazelcastTestSupport {
         });
 
         group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), AppendRequest.class);
-        group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), InstallSnapshot.class);
+        group.dropMessagesToMember(leader.getLocalMember(), slowFollower.getLocalMember(), InstallSnapshotRequest.class);
 
         for (RaftNodeImpl follower : followers) {
             if (follower != slowFollower) {
@@ -502,11 +561,11 @@ public class SnapshotTest extends HazelcastTestSupport {
             leader.replicate(new ApplyRaftRunnable("val" + i)).get();
         }
 
-        assertTrueEventually(() -> assertThat(getSnapshotEntry(leader).index(), greaterThanOrEqualTo((long) entryCount)));
+        assertTrueEventually(() -> assertThat(getSnapshotEntry(leader).index()).isGreaterThanOrEqualTo(entryCount));
 
         group.allowAllMessagesToMember(leader.getLeader(), slowFollower.getLocalMember());
 
-        assertTrueEventually(() -> assertThat(getSnapshotEntry(slowFollower).index(), greaterThanOrEqualTo((long) entryCount)));
+        assertTrueEventually(() -> assertThat(getSnapshotEntry(slowFollower).index()).isGreaterThanOrEqualTo(entryCount));
 
         assertTrueEventually(() -> {
             assertEquals(getCommittedGroupMembers(leader).index(), getCommittedGroupMembers(slowFollower).index());
@@ -562,16 +621,17 @@ public class SnapshotTest extends HazelcastTestSupport {
         RaftNodeImpl newRaftNode = group.createNewRaftNode();
 
         Function<Object, Object> alterFunc = o -> {
-            if (o instanceof AppendRequest) {
-                AppendRequest request = (AppendRequest) o;
+            if (o instanceof AppendRequest request) {
                 LogEntry[] entries = request.entries();
                 if (entries.length > 0) {
                     if (entries[entries.length - 1].operation() instanceof UpdateRaftGroupMembersCmd) {
                         entries = Arrays.copyOf(entries, entries.length - 1);
-                        return new AppendRequest(request.leader(), request.term(), request.prevLogTerm(), request.prevLogIndex(), request.leaderCommitIndex(), entries, request.queryRound());
+                        return new AppendRequest(request.leader(), request.term(), request.prevLogTerm(), request.prevLogIndex(),
+                                request.leaderCommitIndex(), entries, request.queryRound(), request.flowControlSequenceNumber());
                     } else if (entries[0].operation() instanceof UpdateRaftGroupMembersCmd) {
                         entries = new LogEntry[0];
-                        return new AppendRequest(request.leader(), request.term(), request.prevLogTerm(), request.prevLogIndex(), request.leaderCommitIndex(), entries, request.queryRound());
+                        return new AppendRequest(request.leader(), request.term(), request.prevLogTerm(), request.prevLogIndex(),
+                                request.leaderCommitIndex(), entries, request.queryRound(), request.flowControlSequenceNumber());
                     }
                 }
             }
@@ -619,7 +679,7 @@ public class SnapshotTest extends HazelcastTestSupport {
 
         long lastLogIndex3 = getLastLogOrSnapshotEntry(leader).index();
 
-        Future f = leader.replicate(new ApplyRaftRunnable("after_membership_change_append"));
+        Future<?> f = leader.replicate(new ApplyRaftRunnable("after_membership_change_append"));
 
         assertTrueEventually(() -> assertTrue(getLastLogOrSnapshotEntry(leader).index() > lastLogIndex3));
 

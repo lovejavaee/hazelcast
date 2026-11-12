@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,10 @@ import com.hazelcast.core.HazelcastInstanceNotActiveException;
 import com.hazelcast.core.LifecycleService;
 import com.hazelcast.flakeidgen.FlakeIdGenerator;
 import com.hazelcast.internal.nio.IOUtil;
+import com.hazelcast.internal.tpcengine.util.OS;
+import com.hazelcast.internal.util.ExceptionUtil;
+import com.hazelcast.internal.util.MemoizingSupplier;
+import com.hazelcast.internal.util.concurrent.ConcurrentMemoizingSupplier;
 import com.hazelcast.jet.JetException;
 import com.hazelcast.jet.Job;
 import com.hazelcast.jet.config.JobConfig;
@@ -31,8 +35,6 @@ import com.hazelcast.jet.core.metrics.JobMetrics;
 import com.hazelcast.jet.impl.deployment.IMapOutputStream;
 import com.hazelcast.jet.impl.execution.init.JetInitDataSerializerHook;
 import com.hazelcast.jet.impl.metrics.RawJobMetrics;
-import com.hazelcast.jet.impl.util.ConcurrentMemoizingSupplier;
-import com.hazelcast.jet.impl.util.ExceptionUtil;
 import com.hazelcast.jet.impl.util.ImdgUtil;
 import com.hazelcast.jet.impl.util.Util;
 import com.hazelcast.logging.ILogger;
@@ -45,15 +47,15 @@ import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.query.Predicate;
 import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.properties.ClusterProperty;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.io.BufferedInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.Serial;
+import java.io.UncheckedIOException;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Files;
@@ -70,10 +72,10 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.jar.JarEntry;
 import java.util.jar.JarInputStream;
-import java.util.zip.DeflaterOutputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -83,8 +85,7 @@ import static com.hazelcast.jet.Util.idToString;
 import static com.hazelcast.jet.impl.util.IOUtil.fileNameFromUrl;
 import static com.hazelcast.jet.impl.util.IOUtil.packDirectoryIntoZip;
 import static com.hazelcast.jet.impl.util.IOUtil.packStreamIntoZip;
-import static com.hazelcast.jet.impl.util.LoggingUtil.logFine;
-import static com.hazelcast.jet.impl.util.Util.memoizeConcurrent;
+import static com.hazelcast.internal.util.Memoizers.memoizeConcurrent;
 import static com.hazelcast.map.impl.EntryRemovingProcessor.ENTRY_REMOVING_PROCESSOR;
 import static com.hazelcast.map.impl.MapService.SERVICE_NAME;
 import static java.util.Comparator.comparing;
@@ -189,8 +190,8 @@ public class JobRepository {
         this.instance = instance;
         this.logger = instance.getLoggingService().getLogger(getClass());
 
-        jobRecords = new ConcurrentMemoizingSupplier<>(() -> instance.getMap(JOB_RECORDS_MAP_NAME));
-        jobResults = new ConcurrentMemoizingSupplier<>(() -> instance.getMap(JOB_RESULTS_MAP_NAME));
+        jobRecords = memoizeConcurrent(() -> instance.getMap(JOB_RECORDS_MAP_NAME));
+        jobResults = memoizeConcurrent(() -> instance.getMap(JOB_RESULTS_MAP_NAME));
         jobExecutionRecords = memoizeConcurrent(() -> safeImap(instance.getMap(JOB_EXECUTION_RECORDS_MAP_NAME)));
         jobMetrics = memoizeConcurrent(() -> instance.getMap(JOB_METRICS_MAP_NAME));
         exportedSnapshotDetailsCache = memoizeConcurrent(() -> instance.getMap(EXPORTED_SNAPSHOTS_DETAIL_CACHE));
@@ -224,50 +225,56 @@ public class JobRepository {
      */
     void uploadJobResources(long jobId, JobConfig jobConfig) {
         Map<String, byte[]> tmpMap = new HashMap<>();
+        boolean resourceImapCreated = false;
+        Supplier<IMap<String, byte[]>> jobFileStorage = MemoizingSupplier.memoize(() -> getJobResources(jobId));
         try {
-            Supplier<IMap<String, byte[]>> jobFileStorage = Util.memoize(() -> getJobResources(jobId));
             for (ResourceConfig rc : jobConfig.getResourceConfigs().values()) {
                 switch (rc.getResourceType()) {
-                    case CLASSPATH_RESOURCE:
-                    case CLASS:
+                    case CLASSPATH_RESOURCE, CLASS -> {
                         try (InputStream in = rc.getUrl().openStream()) {
                             readStreamAndPutCompressedToMap(rc.getId(), tmpMap, in);
                         }
-                        break;
-                    case FILE:
+                    }
+                    case FILE -> {
                         try (InputStream in = rc.getUrl().openStream();
                              IMapOutputStream os = new IMapOutputStream(jobFileStorage.get(), fileKeyName(rc.getId()))
                         ) {
+                            resourceImapCreated = true;
                             packStreamIntoZip(in, os, requireNonNull(fileNameFromUrl(rc.getUrl())));
                         }
-                        break;
-                    case DIRECTORY:
+                    }
+                    case DIRECTORY -> {
                         Path baseDir = validateAndGetDirectoryPath(rc);
                         try (IMapOutputStream os = new IMapOutputStream(jobFileStorage.get(), fileKeyName(rc.getId()))) {
+                            resourceImapCreated = true;
                             packDirectoryIntoZip(baseDir, os);
                         }
-                        break;
-                    case JAR:
-                        loadJar(tmpMap, rc);
-                        break;
-                    case JARS_IN_ZIP:
-                        loadJarsInZip(tmpMap, rc.getUrl());
-                        break;
-                    default:
-                        throw new JetException("Unsupported resource type: " + rc.getResourceType());
+                    }
+                    case JAR -> loadJar(tmpMap, rc);
+                    case JARS_IN_ZIP -> loadJarsInZip(tmpMap, rc.getUrl());
+                    default -> throw new JetException("Unsupported resource type: " + rc.getResourceType());
                 }
             }
         } catch (IOException | URISyntaxException e) {
+            if (resourceImapCreated) {
+                jobFileStorage.get().destroy();
+            }
             throw new JetException("Job resource upload failed", e);
         }
         // avoid creating resources map if map is empty
-        if (tmpMap.size() > 0) {
-            IMap<String, byte[]> jobResourcesMap = getJobResources(jobId);
+        if (!tmpMap.isEmpty()) {
+            IMap<String, byte[]> jobResourcesMap = jobFileStorage.get();
             // now upload it all
             try {
                 jobResourcesMap.putAll(tmpMap);
             } catch (Exception e) {
-                jobResourcesMap.destroy();
+                try {
+                    jobResourcesMap.destroy();
+                } catch (Exception ee) {
+                    JetException wrapper = new JetException("Job resource upload failed", ee);
+                    wrapper.addSuppressed(e);
+                    throw wrapper;
+                }
                 throw new JetException("Job resource upload failed", e);
             }
         }
@@ -295,15 +302,34 @@ public class JobRepository {
      * Unzips the ZIP archive and processes JAR files
      */
     private void loadJarsInZip(Map<String, byte[]> map, URL url) throws IOException {
-        try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(url.openStream()))) {
-            ZipEntry zipEntry;
-            while ((zipEntry = zis.getNextEntry()) != null) {
-                if (zipEntry.isDirectory()) {
-                    continue;
-                }
-                if (lowerCaseInternal(zipEntry.getName()).endsWith(".jar")) {
+        try (InputStream inputStream = new BufferedInputStream(url.openStream())) {
+            executeOnJarsInZIP(inputStream, zis -> {
+                try {
                     loadJarFromInputStream(map, zis);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
                 }
+            });
+        } catch (UncheckedIOException e) {
+            throw e.getCause();
+        }
+    }
+
+    /**
+     * Extracts JARs from a ZIP, provided by an {@link InputStream}, passing them to a consumer to process.
+     * <p>
+     * Caller is responsible for closing stream.
+     */
+    public static void executeOnJarsInZIP(InputStream zip, Consumer<ZipInputStream> processor) throws IOException {
+        ZipInputStream zis = new ZipInputStream(zip);
+        ZipEntry zipEntry;
+
+        while ((zipEntry = zis.getNextEntry()) != null) {
+            if (zipEntry.isDirectory()) {
+                continue;
+            }
+            if (lowerCaseInternal(zipEntry.getName()).endsWith(".jar")) {
+                processor.accept(zis);
             }
         }
     }
@@ -323,20 +349,11 @@ public class JobRepository {
         }
     }
 
-    private void readStreamAndPutCompressedToMap(
+    private static void readStreamAndPutCompressedToMap(
             String resourceName, Map<String, byte[]> map, InputStream in
     ) throws IOException {
         // ignore duplicates: the first resource in first jar takes precedence
-        if (map.containsKey(resourceName)) {
-            return;
-        }
-
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        try (DeflaterOutputStream compressor = new DeflaterOutputStream(baos)) {
-            IOUtil.drainTo(in, compressor);
-        }
-
-        map.put(classKeyName(resourceName), baos.toByteArray());
+        map.putIfAbsent(classKeyName(resourceName), IOUtil.compress(in.readAllBytes()));
     }
 
     /**
@@ -427,13 +444,13 @@ public class JobRepository {
             }
         }
 
-        deleteJob(jobId);
+        deleteJob(jobId, !config.getResourceConfigs().isEmpty());
     }
 
     /**
      * Performs cleanup after job completion.
      */
-    void deleteJob(long jobId) {
+    void deleteJob(long jobId, boolean hasResources) {
         // delete the job record and related records
         // ignore the eventual failure - there's a separate cleanup process that will take care
         BiConsumer<Object, Throwable> callback = (v, t) -> {
@@ -444,19 +461,35 @@ public class JobRepository {
         };
         jobExecutionRecords.get().removeAsync(jobId).whenComplete(callback);
         jobRecords.get().removeAsync(jobId).whenComplete(callback);
+        if (hasResources) {
+            // avoid creating resource map if that is not necessary
+            getJobResources(jobId).destroy();
+        }
     }
 
     /**
      * Cleans up stale maps related to jobs
      */
     void cleanup(NodeEngine nodeEngine) {
+        if (!jobRecordsMapExists()) {
+            // It is possible that master node does not see IMap when other members
+            // are going through after-hot-restart tasks. To avoid possible snapshot
+            // deletion we cannot perform cleanup in such case.
+            //
+            // The only drawback is that after job records IMap is somehow deleted,
+            // old snapshots and resources will not be cleared until new a job is submitted.
+            // But that should usually not happen.
+            logger.fine("Skipping job cleanup because job records IMap does not exist");
+            return;
+        }
+
         long start = System.nanoTime();
 
         cleanupMaps(nodeEngine);
         cleanupJobResults(nodeEngine);
 
         long elapsed = System.nanoTime() - start;
-        logger.fine("Job cleanup took " + TimeUnit.NANOSECONDS.toMillis(elapsed) + "ms");
+        logger.fine("Job cleanup took %sms", TimeUnit.NANOSECONDS.toMillis(elapsed));
     }
 
     private void cleanupMaps(NodeEngine nodeEngine) {
@@ -472,7 +505,7 @@ public class JobRepository {
             if (map.getName().startsWith(SNAPSHOT_DATA_MAP_PREFIX)) {
                 long id = jobIdFromPrefixedName(map.getName(), SNAPSHOT_DATA_MAP_PREFIX);
                 if (!activeJobs.contains(id)) {
-                    logFine(logger, "Deleting snapshot data map '%s' because job already finished", map.getName());
+                    logger.fine("Deleting snapshot data map '%s' because job already finished", map.getName());
                     map.destroy();
                 }
             } else if (map.getName().startsWith(RESOURCES_MAP_NAME_PREFIX)) {
@@ -489,7 +522,7 @@ public class JobRepository {
         }
         if (jobResults.get().containsKey(id)) {
             // if job is finished, we can safely delete the map
-            logFine(logger, "Deleting job resource map '%s' because job is already finished", map.getName());
+            logger.fine("Deleting job resource map '%s' because job is already finished", map.getName());
             map.destroy();
         } else {
             // Job might be in the process of uploading resources, check how long the map has been there.
@@ -499,14 +532,14 @@ public class JobRepository {
             IMap resourceMap = (IMap) map;
             long creationTime = resourceMap.getLocalMapStats().getCreationTime();
             if (isResourceMapExpired(creationTime)) {
-                logger.fine("Deleting job resource map " + map.getName() + " because the map " +
+                logger.fine("Deleting job resource map %s because the map %s", map.getName(),
                         "was created long ago and job record or result still doesn't exist");
                 resourceMap.destroy();
             }
         }
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     private void cleanupJobResults(NodeEngine nodeEngine) {
         int maxNoResults = Math.max(1, nodeEngine.getProperties().getInteger(ClusterProperty.JOB_RESULTS_MAX_SIZE));
         // delete oldest job results
@@ -534,13 +567,13 @@ public class JobRepository {
             return null;
         }
         if (error.getClass().equals(JetException.class) && error.getMessage() != null) {
-            String stackTrace = ExceptionUtil.stackTraceToString(error);
+            String stackTrace = ExceptionUtil.toString(error);
             // The error message is later thrown as JetException
             // Remove leading 'com.hazelcast.jet.JetException: ' from the stack trace to avoid double JetException
             // in the final stacktrace
             return stackTrace.substring(stackTrace.indexOf(' ') + 1);
         }
-        return ExceptionUtil.stackTraceToString(error);
+        return ExceptionUtil.toString(error);
     }
 
     private static long jobIdFromPrefixedName(String name, String prefix) {
@@ -576,9 +609,19 @@ public class JobRepository {
         return jobRecordsMap().values();
     }
 
+    public Collection<JobRecord> getJobRecords(@Nonnull Predicate<Long, JobRecord> predicate) {
+        if (jobRecords.remembered() != null || jobRecordsMapExists()) {
+            return jobRecords.get().values(predicate);
+        }
+        return Collections.emptyList();
+    }
+
+    private boolean jobRecordsMapExists() {
+        return ((AbstractJetInstance<?>) instance.getJet()).existsDistributedObject(SERVICE_NAME, JOB_RECORDS_MAP_NAME);
+    }
+
     private Map<Long, JobRecord> jobRecordsMap() {
-        if (jobRecords.remembered() != null ||
-                ((AbstractJetInstance) instance.getJet()).existsDistributedObject(SERVICE_NAME, JOB_RECORDS_MAP_NAME)) {
+        if (jobRecords.remembered() != null || jobRecordsMapExists()) {
             return jobRecords.get();
         }
         return Collections.emptyMap();
@@ -586,7 +629,7 @@ public class JobRepository {
 
     private Map<Long, JobResult> jobResultsMap() {
         if (jobResults.remembered() != null ||
-                ((AbstractJetInstance) instance.getJet()).existsDistributedObject(SERVICE_NAME, JOB_RESULTS_MAP_NAME)) {
+                ((AbstractJetInstance<?>) instance.getJet()).existsDistributedObject(SERVICE_NAME, JOB_RESULTS_MAP_NAME)) {
             return jobResults.get();
         }
         return Collections.emptyMap();
@@ -676,14 +719,14 @@ public class JobRepository {
      * Returns the key name in the form {@code file.<id>}
      */
     public static String fileKeyName(String id) {
-        return FILE_STORAGE_KEY_NAME_PREFIX + id;
+        return OS.ensureUnixSeparators(FILE_STORAGE_KEY_NAME_PREFIX + id);
     }
 
     /**
      * Returns the key name in the form {@code class.<id>}
      */
     public static String classKeyName(String id) {
-        return CLASS_STORAGE_KEY_NAME_PREFIX + id;
+        return OS.ensureUnixSeparators(CLASS_STORAGE_KEY_NAME_PREFIX + id);
     }
 
     /**
@@ -698,7 +741,7 @@ public class JobRepository {
         String mapName = snapshotDataMapName(jobId, dataMapIndex);
         try {
             instance.getMap(mapName).clear();
-            logFine(logger, "Cleared snapshot data map %s", mapName);
+            logger.fine("Cleared snapshot data map %s", mapName);
         } catch (Exception logged) {
             logger.warning("Cannot delete old snapshot data  " + idToString(jobId), logged);
         }
@@ -715,10 +758,11 @@ public class JobRepository {
     public static final class UpdateJobExecutionRecordEntryProcessor implements
             EntryProcessor<Long, JobExecutionRecord, Object>,
             IdentifiedDataSerializable {
-
+        @Serial
+        private static final long serialVersionUID = 1L;
         private long jobId;
-        @SuppressFBWarnings(value = "SE_BAD_FIELD",
-                justification = "this class is not going to be java-serialized")
+//        @SuppressFBWarnings(value = "SE_BAD_FIELD",
+//                justification = "this class is not going to be java-serialized")
         private JobExecutionRecord jobExecutionRecord;
         private boolean canCreate;
 
@@ -739,7 +783,7 @@ public class JobRepository {
             }
             if (entry.getValue() != null && entry.getValue().getTimestamp() >= jobExecutionRecord.getTimestamp()) {
                 // ignore older update.
-                // It can happen because we allow to execute updates in parallel and they can overtake each other.
+                // It can happen because we allow to execute updates in parallel, and they can overtake each other.
                 // We don't want to overwrite newer update.
                 return "Update to JobRecord for job " + idToString(jobId) + " ignored, newer timestamp found. "
                         + "Stored timestamp=" + entry.getValue().getTimestamp() + ", timestamp of the update="
@@ -776,7 +820,8 @@ public class JobRepository {
 
     public static class FilterJobResultByNamePredicate
             implements Predicate<Long, JobResult>, IdentifiedDataSerializable {
-
+        @Serial
+        private static final long serialVersionUID = 1L;
         private String name;
 
         public FilterJobResultByNamePredicate() {
@@ -803,12 +848,12 @@ public class JobRepository {
 
         @Override
         public void writeData(ObjectDataOutput out) throws IOException {
-            out.writeUTF(name);
+            out.writeString(name);
         }
 
         @Override
         public void readData(ObjectDataInput in) throws IOException {
-            name = in.readUTF();
+            name = in.readString();
         }
     }
 }

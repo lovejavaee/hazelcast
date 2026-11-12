@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -171,8 +171,8 @@ public class ShowStatementTest extends SqlTestSupport {
     @Test
     public void test_showResources() {
         assertRowsOrdered("SHOW RESOURCES FOR \"" + DATA_CONNECTION_NAME + "\"", rows(2,
-                "testName1", "testType1",
-                "testName2", "testType2"
+                "\"testName1\"", "testType1",
+                "\"testPrefix1\".\"testName2\"", "testType2"
         ));
     }
 

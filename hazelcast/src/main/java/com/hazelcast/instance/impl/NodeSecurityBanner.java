@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import static com.hazelcast.spi.properties.ClusterProperty.SECURITY_RECOMMENDATI
 import static com.hazelcast.spi.properties.ClusterProperty.SOCKET_SERVER_BIND_ANY;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.logging.Level;
 
 import com.hazelcast.config.AdvancedNetworkConfig;
@@ -38,7 +39,7 @@ import com.hazelcast.logging.LoggingService;
 import com.hazelcast.spi.properties.HazelcastProperties;
 
 /**
- * Class resposible for printing security recommendation to the log during the {@link Node} start.
+ * Class responsible for printing security recommendation to the log during the {@link Node} start.
  */
 class NodeSecurityBanner {
 
@@ -81,6 +82,12 @@ class NodeSecurityBanner {
         addSecurityFeatureCheck(sb,
                 "Bind Server sockets to a single network interface (disable " + SOCKET_SERVER_BIND_ANY.getName() + ")",
                 !bindAny);
+        Set<String> mcTrustedInterfaces = config.getManagementCenterConfig().getTrustedInterfaces();
+        boolean mcTrustedInterfacesUsed = mcTrustedInterfaces != null && !mcTrustedInterfaces.isEmpty();
+        addSecurityFeatureCheck(sb,
+                "Allow Management Center operations only from specified remote addresses"
+                + " (use management-center/trusted-interfaces configuration)",
+                mcTrustedInterfacesUsed);
         StringBuilder tlsSb = new StringBuilder();
         boolean tlsUsed = true;
         if (advancedNetworkConfig.isEnabled()) {
@@ -119,7 +126,7 @@ class NodeSecurityBanner {
             checkAuthnConfigured(sb, securityConfig, "client-authentication", securityConfig.getClientRealm());
         }
         // TLS here
-        sb.append(tlsSb.toString());
+        sb.append(tlsSb);
         PersistenceConfig persistenceConfig = config.getPersistenceConfig();
         if (persistenceConfig != null && persistenceConfig.isEnabled()) {
             EncryptionAtRestConfig encryptionAtRestConfig = persistenceConfig.getEncryptionAtRestConfig();
@@ -129,8 +136,11 @@ class NodeSecurityBanner {
         AuditlogConfig auditlogConfig = config.getAuditlogConfig();
         addSecurityFeatureCheck(sb, "Enable auditlog (Enterprise)", auditlogConfig != null && auditlogConfig.isEnabled());
 
-        sb.append("\nCheck the hazelcast-security-hardened.xml/yaml example config file to find why and how to configure"
-                + " these security related settings.\n");
+        sb.append("""
+
+                Check the hazelcast-security-hardened.xml/yaml example config file to find why and how to configure\
+                 these security related settings.
+                """);
         securityLogger.log(logLevel, sb.toString());
     }
 

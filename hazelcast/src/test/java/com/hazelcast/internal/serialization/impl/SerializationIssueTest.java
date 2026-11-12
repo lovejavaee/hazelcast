@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,11 +25,11 @@ import com.hazelcast.config.SerializerConfig;
 import com.hazelcast.core.MemberLeftException;
 import com.hazelcast.instance.BuildInfoProvider;
 import com.hazelcast.instance.SimpleMemberImpl;
-import com.hazelcast.internal.nio.IOUtil;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.serialization.SerializationService;
 import com.hazelcast.internal.serialization.impl.defaultserializers.JavaDefaultSerializers.JavaSerializer;
 import com.hazelcast.internal.util.UuidUtil;
+import com.hazelcast.jet.impl.util.ReflectionUtils;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.DataSerializable;
@@ -38,26 +38,22 @@ import com.hazelcast.nio.serialization.StreamSerializer;
 import com.hazelcast.partition.PartitioningStrategy;
 import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
+import com.hazelcast.test.TestJavaSerializationUtils;
 import com.hazelcast.test.annotation.QuickTest;
 import com.hazelcast.version.MemberVersion;
 import com.hazelcast.version.Version;
-
 import org.assertj.core.api.Assertions;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.Externalizable;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.InvalidClassException;
 import java.io.ObjectInput;
-import java.io.ObjectInputStream;
 import java.io.ObjectOutput;
-import java.io.ObjectOutputStream;
+import java.io.Serial;
 import java.io.Serializable;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
@@ -79,6 +75,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 @RunWith(HazelcastSerialClassRunner.class)
@@ -93,17 +90,17 @@ public class SerializationIssueTest extends HazelcastTestSupport {
         final AtomicInteger readCounter = new AtomicInteger();
         final JavaSerializer javaSerializer = new JavaSerializer(true, false, null);
         SerializationConfig serializationConfig = new SerializationConfig().setGlobalSerializerConfig(
-                globalSerializerConfig.setImplementation(new StreamSerializer<Object>() {
+                globalSerializerConfig.setImplementation(new StreamSerializer<>() {
                     @Override
                     public void write(ObjectDataOutput out, Object v) throws IOException {
                         writeCounter.incrementAndGet();
                         if (v instanceof Serializable) {
                             out.writeBoolean(true);
                             javaSerializer.write(out, v);
-                        } else if (v instanceof DummyValue) {
+                        } else if (v instanceof DummyValue value) {
                             out.writeBoolean(false);
-                            out.writeString(((DummyValue) v).s);
-                            out.writeInt(((DummyValue) v).k);
+                            out.writeString(value.s);
+                            out.writeInt(value.k);
                         }
                     }
 
@@ -148,7 +145,7 @@ public class SerializationIssueTest extends HazelcastTestSupport {
         final AtomicInteger writeCounter = new AtomicInteger();
         final AtomicInteger readCounter = new AtomicInteger();
         SerializationConfig serializationConfig = new SerializationConfig().setGlobalSerializerConfig(
-                globalSerializerConfig.setImplementation(new StreamSerializer<Object>() {
+                globalSerializerConfig.setImplementation(new StreamSerializer<>() {
                     @Override
                     public void write(ObjectDataOutput out, Object v) throws IOException {
                         writeCounter.incrementAndGet();
@@ -230,11 +227,11 @@ public class SerializationIssueTest extends HazelcastTestSupport {
                 new SerializerConfig().setTypeClass(SingletonValue.class)
                         .setImplementation(new StreamSerializer<SingletonValue>() {
                             @Override
-                            public void write(ObjectDataOutput out, SingletonValue v) throws IOException {
+                            public void write(ObjectDataOutput out, SingletonValue v) {
                             }
 
                             @Override
-                            public SingletonValue read(ObjectDataInput in) throws IOException {
+                            public SingletonValue read(ObjectDataInput in) {
                                 return new SingletonValue();
                             }
 
@@ -284,9 +281,9 @@ public class SerializationIssueTest extends HazelcastTestSupport {
     public void testSharedJavaSerialization() {
         SerializationService ss = new DefaultSerializationServiceBuilder().setEnableSharedObject(true).build();
         Data data = ss.toData(new Foo());
-        Foo foo = (Foo) ss.toObject(data);
+        Foo foo = ss.toObject(data);
 
-        assertTrue("Objects are not identical!", foo == foo.getBar().getFoo());
+        assertSame("Objects are not identical!", foo, foo.getBar().getFoo());
     }
 
     @Test
@@ -312,12 +309,7 @@ public class SerializationIssueTest extends HazelcastTestSupport {
 
     @Test
     public void testPartitionHash() {
-        PartitioningStrategy partitionStrategy = new PartitioningStrategy() {
-            @Override
-            public Object getPartitionKey(Object key) {
-                return key.hashCode();
-            }
-        };
+        PartitioningStrategy partitionStrategy = Object::hashCode;
 
         SerializationService ss = new DefaultSerializationServiceBuilder().build();
 
@@ -341,7 +333,7 @@ public class SerializationIssueTest extends HazelcastTestSupport {
         Data data = ss.toData(new Foo());
         Foo foo = ss.toObject(data);
 
-        Assert.assertFalse("Objects should not be identical!", foo == foo.getBar().getFoo());
+        Assert.assertNotSame("Objects should not be identical!", foo, foo.getBar().getFoo());
     }
 
     private static class Foo implements Serializable {
@@ -415,7 +407,7 @@ public class SerializationIssueTest extends HazelcastTestSupport {
         }
 
         @Override
-        public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
+        public void readExternal(ObjectInput in) throws IOException {
             value = in.readUTF();
         }
     }
@@ -472,13 +464,7 @@ public class SerializationIssueTest extends HazelcastTestSupport {
 
         MemberLeftException exception = new MemberLeftException(member);
 
-        ByteArrayOutputStream bout = new ByteArrayOutputStream();
-        ObjectOutputStream out = new ObjectOutputStream(bout);
-        out.writeObject(exception);
-
-        ByteArrayInputStream bin = new ByteArrayInputStream(bout.toByteArray());
-        ObjectInputStream in = new ObjectInputStream(bin);
-        MemberLeftException exception2 = (MemberLeftException) in.readObject();
+        MemberLeftException exception2 = TestJavaSerializationUtils.serializeAndDeserialize(exception);
         MemberImpl member2 = (MemberImpl) exception2.getMember();
 
         assertEquals(uuid, member2.getUuid());
@@ -501,18 +487,14 @@ public class SerializationIssueTest extends HazelcastTestSupport {
     static class TheClassThatExtendArrayList<E> extends ArrayList<E> implements DataSerializable {
         @Override
         public void writeData(ObjectDataOutput out) throws IOException {
-            out.writeInt(size());
-            for (Object item : this) {
-                out.writeObject(item);
-            }
+            SerializationUtil.writeCollection(this, out);
         }
 
         @Override
-        @SuppressWarnings("unchecked")
         public void readData(ObjectDataInput in) throws IOException {
             int size = in.readInt();
             for (int k = 0; k < size; k++) {
-                add((E) in.readObject());
+                add(in.readObject());
             }
         }
     }
@@ -604,10 +586,10 @@ public class SerializationIssueTest extends HazelcastTestSupport {
 
     private static final class DynamicProxyTestClassLoader extends ClassLoader {
 
-        private static final Set<String> WELL_KNOWN_TEST_CLASSES = new HashSet<String>(asList(IObjectA.class.getName(),
-                IPrivateObjectB.class.getName(), IPrivateObjectC.class.getName()));
+        private static final Set<String> WELL_KNOWN_TEST_CLASSES = Set.of(IObjectA.class.getName(),
+                IPrivateObjectB.class.getName(), IPrivateObjectC.class.getName());
 
-        private final Set<String> wellKnownClasses = new HashSet<String>();
+        private final Set<String> wellKnownClasses = new HashSet<>();
 
         private DynamicProxyTestClassLoader(ClassLoader parent, String... classesToLoad) {
             super(parent);
@@ -640,29 +622,20 @@ public class SerializationIssueTest extends HazelcastTestSupport {
         protected Class<?> findClass(String name) throws ClassNotFoundException {
             if (!wellKnownClasses.contains(name)) {
                 return super.findClass(name);
-            }
-            String path = name.replace('.', '/') + ".class";
-            InputStream in = null;
-            try {
-                in = getParent().getResourceAsStream(path);
-                ByteArrayOutputStream bout = new ByteArrayOutputStream();
-                byte[] buf = new byte[1024];
-                int read;
-                while ((read = in.read(buf)) != -1) {
-                    bout.write(buf, 0, read);
+            } else {
+                try {
+                    byte[] code = ReflectionUtils.getClassContent(name, getParent());
+                    return defineClass(name, code, 0, code.length);
+                } catch (IOException e) {
+                    return super.findClass(name);
                 }
-                byte[] code = bout.toByteArray();
-                return defineClass(name, code, 0, code.length);
-            } catch (IOException e) {
-                return super.findClass(name);
-            } finally {
-                IOUtil.closeResource(in);
             }
         }
     }
 
     public static final class DummyInvocationHandler implements InvocationHandler, Serializable {
 
+        @Serial
         private static final long serialVersionUID = 3459316091095397098L;
 
         private static final DummyInvocationHandler INSTANCE = new DummyInvocationHandler();

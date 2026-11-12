@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,16 +17,13 @@
 package com.hazelcast.jet.kafka.connect.impl;
 
 import com.hazelcast.jet.kafka.connect.impl.DummySourceConnector.DummyTask;
-import com.hazelcast.test.HazelcastSerialClassRunner;
-import com.hazelcast.test.OverridePropertyRule;
+import com.hazelcast.test.SerialTest;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.apache.kafka.connect.source.SourceRecord;
-import org.junit.Before;
-import org.junit.ClassRule;
-import org.junit.Test;
-import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.util.SetSystemProperty;
 
 import javax.annotation.Nonnull;
 import java.util.HashMap;
@@ -35,21 +32,20 @@ import java.util.Map;
 
 import static com.hazelcast.jet.kafka.connect.impl.DummySourceConnector.DummyTask.dummyRecord;
 import static com.hazelcast.jet.kafka.connect.impl.DummySourceConnector.ITEMS_SIZE;
-import static com.hazelcast.test.OverridePropertyRule.set;
 import static org.assertj.core.api.Assertions.assertThat;
 
-@RunWith(HazelcastSerialClassRunner.class)
-@Category({QuickTest.class, ParallelJVMTest.class})
+@QuickTest
+@ParallelJVMTest
+@SerialTest
+@SetSystemProperty(key = "hazelcast.logging.type", value = "log4j2")
 public class TaskRunnerTest {
 
-    @ClassRule
-    public static final OverridePropertyRule enableLogging = set("hazelcast.logging.type", "log4j2");
     private static final int CONFIGURED_ITEMS_SIZE = 3;
     private final DummySourceConnector connector = new DummySourceConnector();
-    private final TaskRunner taskRunner = new TaskRunner("some-task-name", new State(), DummyTask::new);
+    private final TaskRunner taskRunner = new TaskRunner("some-task-name", new State(), DummyTask::new, null);
 
 
-    @Before
+    @BeforeEach
     public void setUp() {
         connector.start(minimalProperties());
         taskRunner.updateTaskConfig(dummyTaskConfig());
@@ -128,7 +124,7 @@ public class TaskRunnerTest {
         for (SourceRecord sourceRecord : taskRunner.poll()) {
             taskRunner.commitRecord(sourceRecord);
         }
-        State snapshot = taskRunner.createSnapshot();
+        State snapshot = taskRunner.copyState();
 
         Map<Map<String, ?>, Map<String, ?>> partitionsToOffset = new HashMap<>();
         SourceRecord lastRecord = dummyRecord(2);
@@ -138,7 +134,7 @@ public class TaskRunnerTest {
 
     @Test
     public void should_restore_snapshot() {
-        State initialSnapshot = taskRunner.createSnapshot();
+        State initialSnapshot = taskRunner.copyState();
         assertThat(initialSnapshot).isEqualTo(new State(new HashMap<>()));
 
         Map<Map<String, ?>, Map<String, ?>> partitionsToOffset = new HashMap<>();
@@ -146,9 +142,9 @@ public class TaskRunnerTest {
         partitionsToOffset.put(sourceRecord.sourcePartition(), sourceRecord.sourceOffset());
         State stateToRestore = new State(partitionsToOffset);
 
-        taskRunner.restoreSnapshot(stateToRestore);
+        taskRunner.restoreState(stateToRestore);
 
-        State snapshot = taskRunner.createSnapshot();
+        State snapshot = taskRunner.copyState();
         assertThat(snapshot).isEqualTo(new State(partitionsToOffset));
     }
 

@@ -19,7 +19,7 @@
 
 |||
 |---|---|
-|Related Jira|_https://hazelcast.atlassian.net/browse/HZ-922_|
+|Related Jira|_https://hazelcast.atlassian.net/browse/HZOLD-922_|
 |Related Github issues|_https://github.com/hazelcast/hazelcast/issues/17489_ _https://github.com/hazelcast/hazelcast/issues/17490_ _https://github.com/hazelcast/hazelcast/issues/18661_ _https://github.com/hazelcast/hazelcast/issues/20331_|
 |Document Status / Completeness|DRAFT|
 |Requirement owner|_Jiri Holusa_|
@@ -167,7 +167,7 @@ will be able to proceed.
 Also, we integrated the tcp-ip member list update support to already existing
 config update APIs that are namely `hazelcast/rest/config/update` and
 `hazelcast/rest/config/reload`. See the docs for it
-[here](https://docs.hazelcast.com/hazelcast/5.1/configuration/dynamic-config-update-and-reload)
+[here](https://docs.hazelcast.com/hazelcast/latest/configuration/dynamic-config-update-and-reload)
 
 #### Technical Design
 #### Proposed Solution 1
@@ -197,7 +197,7 @@ we added a property for configuring this period namely
 Provide ways to users to dynamically update the member list of the tcp-ip join
 configuration. We plan to support the ways listed below:
 - via newly introduce REST endpoint:
-- via already existing [configuration reload and update endpoints](https://docs.hazelcast.com/hazelcast/5.1/configuration/dynamic-config-update-and-reload#update) which requires us integrating this configuration element with the dynamic configuration update.
+- via already existing [configuration reload and update endpoints](https://docs.hazelcast.com/hazelcast/latest/configuration/dynamic-config-update-and-reload#update) which requires us integrating this configuration element with the dynamic configuration update.
 
 
 We plan to implement both the first and second solution to solve this issue.

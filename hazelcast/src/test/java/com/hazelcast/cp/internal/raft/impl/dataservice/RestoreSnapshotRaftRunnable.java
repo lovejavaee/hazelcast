@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@
 package com.hazelcast.cp.internal.raft.impl.dataservice;
 
 import com.hazelcast.cp.CPGroupId;
+import com.hazelcast.cp.internal.raft.ChunkedSnapshotAwareService;
+import com.hazelcast.cp.internal.raft.DataChunkGroup;
 import com.hazelcast.cp.internal.raft.SnapshotAwareService;
 import com.hazelcast.cp.internal.raft.impl.testing.RaftRunnable;
 import com.hazelcast.nio.ObjectDataInput;
@@ -56,9 +58,18 @@ public class RestoreSnapshotRaftRunnable implements RaftRunnable, DataSerializab
 
     @Override
     public Object run(Object service, long commitIndex) {
-        checkTrue(commitIndex == this.commitIndex, "snapshot commit indices are different! given: "
-                + commitIndex + " expected: " + this.commitIndex);
-        ((SnapshotAwareService<Object>) service).restoreSnapshot(groupId, commitIndex, snapshot);
+        checkTrue(commitIndex == this.commitIndex,
+                "snapshot commit indices are different! given: "
+                        + commitIndex + " expected: " + this.commitIndex);
+
+        SnapshotAwareService<Object> snapshotAwareService
+                = (SnapshotAwareService<Object>) service;
+        if (service instanceof ChunkedSnapshotAwareService chunked) {
+            chunked.restoreSnapshotChunk(groupId, commitIndex, (DataChunkGroup) snapshot);
+        } else {
+            snapshotAwareService.restoreSnapshot(groupId, commitIndex, snapshot);
+        }
+
         return null;
     }
 

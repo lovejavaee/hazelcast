@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,6 @@ import com.hazelcast.sql.impl.extract.QueryPath;
 import com.hazelcast.sql.impl.extract.QueryTargetDescriptor;
 import com.hazelcast.sql.impl.row.JetSqlRow;
 import com.hazelcast.sql.impl.type.QueryDataType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -45,10 +44,10 @@ import java.util.Properties;
 
 import static java.util.Collections.singletonList;
 
-@SuppressFBWarnings(
-        value = {"SE_BAD_FIELD", "SE_NO_SERIALVERSIONID"},
-        justification = "the class is never java-serialized"
-)
+//@SuppressFBWarnings(
+//        value = {"SE_BAD_FIELD", "SE_NO_SERIALVERSIONID"},
+//        justification = "the class is never java-serialized"
+//)
 final class RowProjectorProcessorSupplier implements ProcessorSupplier, DataSerializable {
 
     private Properties properties;
@@ -109,8 +108,8 @@ final class RowProjectorProcessorSupplier implements ProcessorSupplier, DataSeri
         for (int i = 0; i < count; i++) {
             KvRowProjector projector = projectorSupplier.get(evalContext, extractors);
             Processor processor = new StreamKafkaP<>(
-                    dataConnectionName == null ? StreamKafkaP.kafkaConsumerFn(properties)
-                            : StreamKafkaP.kafkaConsumerFn(new DataConnectionRef(dataConnectionName)),
+                    (dataConnectionName == null) ? StreamKafkaP.kafkaConsumerFn(properties)
+                            : StreamKafkaP.kafkaConsumerFn(new DataConnectionRef(dataConnectionName), properties),
                     singletonList(topic),
                     record -> projector.project(record.key(), record.value()),
                     eventTimePolicy

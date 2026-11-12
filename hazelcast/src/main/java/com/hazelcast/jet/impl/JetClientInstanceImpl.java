@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.serialization.SerializationService;
 import com.hazelcast.internal.util.Sha256Util;
 import com.hazelcast.jet.JetException;
+import com.hazelcast.jet.JetService;
 import com.hazelcast.jet.Job;
 import com.hazelcast.jet.config.JetConfig;
 import com.hazelcast.jet.config.JobConfig;
@@ -38,14 +39,16 @@ import com.hazelcast.jet.impl.operation.GetJobIdsOperation.GetJobIdsResult;
 import com.hazelcast.jet.impl.submitjob.clientside.execute.JobExecuteCall;
 import com.hazelcast.jet.impl.submitjob.clientside.upload.JobUploadCall;
 import com.hazelcast.jet.impl.submitjob.clientside.validator.SubmitJobParametersValidator;
-import com.hazelcast.jet.impl.util.ExceptionUtil;
+import com.hazelcast.jet.impl.util.JetExceptionUtil;
 import com.hazelcast.jet.pipeline.Pipeline;
 import com.hazelcast.logging.ILogger;
 
 import javax.annotation.Nonnull;
-import java.io.File;
-import java.io.FileInputStream;
+import javax.annotation.Nullable;
+import javax.security.auth.Subject;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.NoSuchAlgorithmException;
 import java.util.List;
@@ -53,10 +56,9 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
 
+import static com.hazelcast.internal.util.ExceptionUtil.sneakyThrow;
 import static com.hazelcast.jet.impl.operation.GetJobIdsOperation.ALL_JOBS;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.rethrow;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.sneakyThrow;
-import static com.hazelcast.jet.impl.util.LoggingUtil.logFine;
+import static com.hazelcast.jet.impl.util.JetExceptionUtil.rethrow;
 
 /**
  * Client-side {@code JetInstance} implementation
@@ -71,7 +73,7 @@ public class JetClientInstanceImpl extends AbstractJetInstance<UUID> {
         this.client = hazelcastInstance;
         this.serializationService = client.getSerializationService();
 
-        ExceptionUtil.registerJetExceptions(hazelcastInstance.getClientExceptionFactory());
+        JetExceptionUtil.registerJetExceptions(hazelcastInstance.getClientExceptionFactory());
     }
 
     @Override
@@ -79,14 +81,32 @@ public class JetClientInstanceImpl extends AbstractJetInstance<UUID> {
         return client.getClientClusterService().getMasterMember().getUuid();
     }
 
-    @Override
-    public Map<UUID, GetJobIdsResult> getJobsInt(String onlyName, Long onlyJobId) {
+    private Map<UUID, GetJobIdsResult> getJobsInt(String onlyName, Long onlyJobId) {
         return invokeRequestOnAnyMemberAndDecodeResponse(
                 JetGetJobIdsCodec.encodeRequest(onlyName, onlyJobId == null ? ALL_JOBS : onlyJobId),
                 resp -> {
                     Data responseSerialized = JetGetJobIdsCodec.decodeResponse(resp).response;
                     return serializationService.toObject(responseSerialized);
                 });
+    }
+
+    @Override
+    protected GetJobIdsResult getJobByName(String onlyName) {
+        var result = getJobsInt(onlyName, null);
+        // Only normal jobs can have a name.
+        // Since information about normal jobs is requested from the master node only, a single result is expected.
+        assert result.size() == 1 : "Exactly one result is expected";
+        return result.values().stream().findFirst().orElseThrow();
+    }
+
+    @Override
+    protected Map<UUID, GetJobIdsResult> getJobsById(Long onlyJobId) {
+        return getJobsInt(null, onlyJobId);
+    }
+
+    @Override
+    protected Map<UUID, GetJobIdsResult> getAllJobs() {
+        return getJobsInt(null, null);
     }
 
     @Nonnull
@@ -97,10 +117,10 @@ public class JetClientInstanceImpl extends AbstractJetInstance<UUID> {
 
     /**
      * Returns a list of jobs and a summary of their details.
-     * @deprecated Since 5.3, to be removed in 6.0. Use {@link #getJobAndSqlSummaryList()} instead
+     * @deprecated to be removed in 6.0. Use {@link #getJobAndSqlSummaryList()} instead
      */
     @Nonnull
-    @Deprecated
+    @Deprecated(since = "5.3", forRemoval = true)
     public List<JobSummary> getJobSummaryList() {
         return invokeRequestOnMasterAndDecodeResponse(JetGetJobSummaryListCodec.encodeRequest(),
                 JetGetJobSummaryListCodec::decodeResponse);
@@ -140,7 +160,15 @@ public class JetClientInstanceImpl extends AbstractJetInstance<UUID> {
         return new ClientJobProxy(client, jobId, lightJobCoordinator);
     }
 
-    public Job newJobProxy(long jobId, boolean isLightJob, @Nonnull Object jobDefinition, @Nonnull JobConfig config) {
+    @Override
+    public Job newJobProxy(long jobId,
+                           boolean isLightJob,
+                           @Nonnull Object jobDefinition,
+                           @Nonnull JobConfig config,
+                           @Nullable Subject subject) {
+        if (subject != null) {
+            throw new UnsupportedOperationException("Submitting a job with subject is not allowed for client");
+        }
         return new ClientJobProxy(client, jobId, isLightJob, jobDefinition, config);
     }
 
@@ -162,8 +190,16 @@ public class JetClientInstanceImpl extends AbstractJetInstance<UUID> {
      *     uploaded to a member.
      *     </li>
      * </ul>
+     * <p>
+     * Note : Job submission and job startup are two different things.
+     * The job submission is a synchronous process but job startup is an asynchronous process. This call can only detect
+     * failures during job submission. If you want to check for job startup failures, you need may use one of these
+     * methods and check for Job state
+     * <ul>
+     * <li>{@link JetService#getJob(String)}</li>
+     * <li>{@link JetService#getJobs()} </li>
      *
-     * @throws JetException on error
+     * @throws JetException on submission error.
      */
     public void submitJobFromJar(@Nonnull SubmitJobParameters submitJobParameters) {
         if (submitJobParameters.isJarOnMember()) {
@@ -181,10 +217,9 @@ public class JetClientInstanceImpl extends AbstractJetInstance<UUID> {
             JobExecuteCall jobExecuteCall = initializeJobExecuteCall(submitJobParameters.getJarPath());
 
             // Send only job metadata
-            logFine(getLogger(), "Submitting JobMetaData for jarPath: %s", jarPath);
+            getLogger().fine("Submitting JobMetaData for jarPath: %s", jarPath);
             sendJobMetaDataForExecute(jobExecuteCall, submitJobParameters);
-            logFine(getLogger(), "Job execution from jar '%s' finished successfully",
-                    jarPath);
+            getLogger().fine("Job execution from jar '%s' finished successfully", jarPath);
         } catch (Exception exception) {
             sneakyThrow(exception);
         }
@@ -198,13 +233,12 @@ public class JetClientInstanceImpl extends AbstractJetInstance<UUID> {
             JobUploadCall jobUploadCall = initializeJobUploadCall(submitJobParameters.getJarPath());
 
             // First send job metadata
-            logFine(getLogger(), "Submitting JobMetaData for jarPath: %s", jarPath);
+            getLogger().fine("Submitting JobMetaData for jarPath: %s", jarPath);
             sendJobMetaDataForUpload(jobUploadCall, submitJobParameters);
 
             // Then send job parts
             sendJobMultipart(jobUploadCall, jarPath);
-            logFine(getLogger(), "Job upload from jar '%s' finished successfully",
-                    jarPath);
+            getLogger().fine("Job upload from jar '%s' finished successfully", jarPath);
         } catch (IOException | NoSuchAlgorithmException exception) {
             sneakyThrow(exception);
         }
@@ -257,11 +291,9 @@ public class JetClientInstanceImpl extends AbstractJetInstance<UUID> {
 
     private void sendJobMultipart(JobUploadCall jobUploadCall, Path jarPath)
             throws IOException, NoSuchAlgorithmException {
-        File file = jarPath.toFile();
-
         byte[] partBuffer = jobUploadCall.allocatePartBuffer();
 
-        try (FileInputStream fileInputStream = new FileInputStream(file)) {
+        try (InputStream fileInputStream = Files.newInputStream(jarPath)) {
 
             // Start from part #1
             for (int currentPartNumber = 1; currentPartNumber <= jobUploadCall.getTotalParts(); currentPartNumber++) {
@@ -277,7 +309,7 @@ public class JetClientInstanceImpl extends AbstractJetInstance<UUID> {
                         currentPartNumber,
                         jobUploadCall.getTotalParts(), dataToSend, bytesRead, sha256Hex);
 
-                logFine(getLogger(), "Submitting Job Part for jarPath: %s PartNumber %d/%d",
+                getLogger().fine("Submitting Job Part for jarPath: %s PartNumber %d/%d",
                         jarPath, currentPartNumber, jobUploadCall.getTotalParts());
 
                 invokeRequestNoRetryOnRandom(jobUploadCall.getMemberUuid(), jobMultipartRequest);

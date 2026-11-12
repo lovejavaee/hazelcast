@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,26 +16,94 @@
 
 package com.hazelcast.test.jdbc;
 
-import org.testcontainers.jdbc.ContainerDatabaseDriver;
+import com.mysql.cj.jdbc.MysqlDataSource;
+import com.mysql.cj.jdbc.MysqlXADataSource;
+import org.testcontainers.containers.MySQLContainer;
+import org.testcontainers.containers.Network;
 
-public class MySQLDatabaseProvider implements TestDatabaseProvider {
+import javax.sql.DataSource;
+import java.util.Arrays;
+import java.util.Map;
+import java.util.Objects;
 
-    private static final int LOGIN_TIMEOUT = 120;
+import static com.hazelcast.jet.TestedVersions.TEST_MYSQL_IMAGE;
+import static java.util.stream.Collectors.joining;
 
-    private String jdbcUrl;
+public class MySQLDatabaseProvider extends JdbcDatabaseProvider<MySQLContainer<?>> {
+    private Network network;
+
+    private String networkAlias;
 
     @Override
-    public String createDatabase(String dbName) {
-        jdbcUrl = "jdbc:tc:mysql:8.0.29:///" + dbName + "?TC_DAEMON=true&user=root&password=";
-        waitForDb(jdbcUrl, LOGIN_TIMEOUT);
-        return jdbcUrl;
+    public DataSource createDataSource(boolean xa) {
+        if (xa) {
+            return createXADataSource();
+        } else {
+            return createDataSource();
+        }
+    }
+
+    private MysqlDataSource createDataSource() {
+        MysqlDataSource dataSource = new MysqlDataSource();
+        dataSource.setUrl(url());
+        dataSource.setUser(user());
+        dataSource.setPassword(password());
+        dataSource.setDatabaseName(getDatabaseName());
+        return dataSource;
+    }
+
+    private MysqlXADataSource createXADataSource() {
+        MysqlXADataSource dataSource = new MysqlXADataSource();
+        dataSource.setUrl(url());
+        dataSource.setUser(user());
+        dataSource.setPassword(password());
+        dataSource.setDatabaseName(getDatabaseName());
+        return dataSource;
+    }
+
+    @SuppressWarnings("resource")
+    public static MySQLContainer<?> createContainer() {
+        return new MySQLContainer<>(TEST_MYSQL_IMAGE)
+                .withTmpFs(Map.of(
+                        "/var/lib/mysql/", "rw",
+                        "/tmp/", "rw"
+                ));
+    }
+
+    @SuppressWarnings("resource")
+    @Override
+    MySQLContainer<?> createContainer(String dbName) {
+        MySQLContainer<?> mySQLContainer = createContainer()
+                .withDatabaseName(dbName)
+                .withUsername(user())
+                .withUrlParam("user", user())
+                .withUrlParam("password", password()
+                );
+        if (network != null) {
+            mySQLContainer.withNetwork(network);
+            mySQLContainer.withNetworkAliases(networkAlias);
+        }
+        return mySQLContainer;
     }
 
     @Override
-    public void shutdown() {
-        if (jdbcUrl != null) {
-            ContainerDatabaseDriver.killContainer(jdbcUrl);
-            jdbcUrl = null;
-        }
+    public String noAuthJdbcUrl() {
+        return container.getJdbcUrl()
+                .replaceAll("&?user=" + user(), "")
+                .replaceAll("&?password=" + password(), "");
+    }
+
+
+    @Override
+    public String quote(String[] parts) {
+        return Arrays.stream(parts)
+                .map(part -> '`' + part.replaceAll("`", "``") + '`')
+                .collect(joining("."));
+
+    }
+
+    public void setNetwork(Network network, String networkAlias) {
+        this.network = Objects.requireNonNull(network);
+        this.networkAlias = Objects.requireNonNull(networkAlias);
     }
 }

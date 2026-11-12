@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -158,14 +158,17 @@ public class APortable implements Portable {
     public APortable() {
     }
 
+    @Override
     public int getClassId() {
         return ReferenceObjects.PORTABLE_CLASS_ID;
     }
 
+    @Override
     public int getFactoryId() {
         return ReferenceObjects.PORTABLE_FACTORY_ID;
     }
 
+    @Override
     public void writePortable(PortableWriter writer) throws IOException {
         writer.writeBoolean("bool", bool);
         writer.writeByte("b", b);
@@ -232,7 +235,7 @@ public class APortable implements Portable {
         dataOutput.writeFloatArray(floats);
         dataOutput.writeIntArray(ints);
         dataOutput.writeLongArray(longs);
-        dataOutput.writeUTFArray(strings);
+        dataOutput.writeStringArray(strings);
 
         dataOutput.writeBooleanArray(booleansNull);
         dataOutput.writeByteArray(bytesNull);
@@ -242,7 +245,7 @@ public class APortable implements Portable {
         dataOutput.writeFloatArray(floatsNull);
         dataOutput.writeIntArray(intsNull);
         dataOutput.writeLongArray(longsNull);
-        dataOutput.writeUTFArray(stringsNull);
+        dataOutput.writeStringArray(stringsNull);
 
         byteSize = (byte) bytes.length;
         dataOutput.write(byteSize);
@@ -262,6 +265,7 @@ public class APortable implements Portable {
         writeData(dataOutput, data);
     }
 
+    @Override
     public void readPortable(PortableReader reader) throws IOException {
         bool = reader.readBoolean("bool");
         b = reader.readByte("b");

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import com.hazelcast.internal.locksupport.operations.UnlockOperation;
 import com.hazelcast.instance.impl.Node;
 import com.hazelcast.multimap.impl.MultiMapService;
 import com.hazelcast.internal.nio.Connection;
+import com.hazelcast.security.SecurityInterceptorConstants;
 import com.hazelcast.security.permission.ActionConstants;
 import com.hazelcast.security.permission.MultiMapPermission;
 import com.hazelcast.internal.services.DistributedObjectNamespace;
@@ -33,7 +34,7 @@ import java.security.Permission;
 
 /**
  * Client Protocol Task for handling messages with type ID:
- * {@link com.hazelcast.client.impl.protocol.codec.MultiMapMessageType#MULTIMAP_FORCEUNLOCK}
+ * {@link com.hazelcast.client.impl.protocol.codec.MultiMapForceUnlockCodec#REQUEST_MESSAGE_TYPE}
  */
 public class MultiMapForceUnlockMessageTask
         extends AbstractPartitionMessageTask<MultiMapForceUnlockCodec.RequestParameters> {
@@ -71,7 +72,7 @@ public class MultiMapForceUnlockMessageTask
 
     @Override
     public String getMethodName() {
-        return "forceUnlock";
+        return SecurityInterceptorConstants.FORCE_UNLOCK;
     }
 
     @Override
@@ -79,6 +80,7 @@ public class MultiMapForceUnlockMessageTask
         return new Object[]{parameters.key};
     }
 
+    @Override
     public Permission getRequiredPermission() {
         return new MultiMapPermission(parameters.name, ActionConstants.ACTION_LOCK);
     }
@@ -86,5 +88,11 @@ public class MultiMapForceUnlockMessageTask
     @Override
     public String getDistributedObjectName() {
         return parameters.name;
+    }
+
+    @Override
+    protected String getUserCodeNamespace() {
+        // This task is not Namespace-aware so it doesn't matter
+        return null;
     }
 }

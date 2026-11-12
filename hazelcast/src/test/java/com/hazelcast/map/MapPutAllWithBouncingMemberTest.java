@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,8 +47,8 @@ public class MapPutAllWithBouncingMemberTest extends HazelcastTestSupport {
     public int putAllBatchSize;
 
     @Parameterized.Parameters(name = "putAllBatchSize: {0}")
-    public static Collection<Object> data() {
-        return asList(new Integer[] {0, 2});
+    public static Collection<Integer> data() {
+        return asList(0, 2);
     }
 
     @Override
@@ -62,9 +62,10 @@ public class MapPutAllWithBouncingMemberTest extends HazelcastTestSupport {
 
     @Rule
     public BounceMemberRule bounceMemberRule =
-            BounceMemberRule.with(getConfig())
+            BounceMemberRule.with(this::getConfig)
                     .driverType(BounceTestConfiguration.DriverType.MEMBER)
                     .clusterSize(2)
+                    .driverCount(2)
                     .build();
 
     @Test

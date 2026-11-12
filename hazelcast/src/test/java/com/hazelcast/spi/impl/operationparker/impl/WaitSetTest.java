@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,14 @@
 
 package com.hazelcast.spi.impl.operationparker.impl;
 
+import com.hazelcast.internal.partition.NonFragmentedServiceNamespace;
+import com.hazelcast.internal.services.DistributedObjectNamespace;
+import com.hazelcast.internal.services.ServiceNamespace;
+import com.hazelcast.internal.services.ServiceNamespaceAware;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
-import com.hazelcast.spi.impl.operationservice.BlockingOperation;
 import com.hazelcast.spi.impl.NodeEngine;
+import com.hazelcast.spi.impl.operationservice.BlockingOperation;
 import com.hazelcast.spi.impl.operationservice.Notifier;
 import com.hazelcast.spi.impl.operationservice.Operation;
 import com.hazelcast.spi.impl.operationservice.OperationService;
@@ -41,6 +45,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -52,8 +57,8 @@ import static org.mockito.Mockito.when;
 public class WaitSetTest {
 
     private ILogger logger = Logger.getLogger(WaitSetTest.class);
-    private ConcurrentMap<WaitNotifyKey, WaitSet> waitSetMap = new ConcurrentHashMap<WaitNotifyKey, WaitSet>();
-    private Queue<WaitSetEntry> delayQueue = new LinkedBlockingQueue<WaitSetEntry>();
+    private ConcurrentMap<WaitNotifyKey, WaitSet> waitSetMap = new ConcurrentHashMap<>();
+    private Queue<WaitSetEntry> delayQueue = new LinkedBlockingQueue<>();
     private NodeEngine nodeEngine;
     private OperationService operationService;
 
@@ -118,7 +123,7 @@ public class WaitSetTest {
         BlockedOperation blockedOp = newBlockingOperationWithServiceNameAndObjectId("service1", "1");
         waitSet.park(blockedOp);
 
-        NotifyingOperation notifyOp = newNotifyingOperationWithServiceNameAndObjectId("service1", "1");
+        NotifyingOperation notifyOp = blockedOp.createNotifyingOperation();
         waitSet.unpark(notifyOp, notifyOp.getNotifiedKey());
 
         verify(operationService).run(blockedOp);
@@ -204,7 +209,7 @@ public class WaitSetTest {
 
     private static void assertCancelled(WaitSet waitSet, BlockedOperation operation, Exception cause) {
         WaitSetEntry entry = waitSet.find(operation);
-        assertEquals(null, entry.cancelResponse);
+        assertNull(entry.cancelResponse);
     }
 
     private static BlockedOperation newBlockingOperationWithCallerUuid(UUID callerUuid) {
@@ -218,16 +223,9 @@ public class WaitSetTest {
         return op;
     }
 
-    private NotifyingOperation newNotifyingOperationWithServiceNameAndObjectId(String serviceName, String objectId) {
-        NotifyingOperation op = new NotifyingOperation();
-        op.objectId = objectId;
-        op.setServiceName(serviceName);
-        return op;
-    }
-
-    private static class BlockedOperation extends Operation implements BlockingOperation {
-        private String objectId;
-        private boolean hasRun;
+    static class BlockedOperation extends Operation implements BlockingOperation, ServiceNamespaceAware {
+        String objectId;
+        boolean hasRun;
 
         @Override
         public WaitNotifyKey getWaitKey() {
@@ -247,9 +245,29 @@ public class WaitSetTest {
         public void run() throws Exception {
             hasRun = true;
         }
+
+        /**
+         * Creates operation that will unpark this {@link BlockedOperation}
+         */
+        public NotifyingOperation createNotifyingOperation() {
+            var op = new NotifyingOperation();
+            op.setServiceName(getServiceName());
+            op.objectId = objectId;
+            op.setPartitionId(getPartitionId()).setReplicaIndex(getReplicaIndex());
+            return op;
+        }
+
+        @Override
+        public ServiceNamespace getServiceNamespace() {
+            if (getServiceName() != null) {
+                return new DistributedObjectNamespace(getServiceName(), objectId);
+            } else {
+                return NonFragmentedServiceNamespace.INSTANCE;
+            }
+        }
     }
 
-    private static class NotifyingOperation extends Operation implements Notifier {
+    static class NotifyingOperation extends Operation implements Notifier {
         private String objectId;
 
         @Override
@@ -267,14 +285,8 @@ public class WaitSetTest {
         }
     }
 
-    private static class WaitNotifyKeyImpl implements WaitNotifyKey {
-        private final String serviceName;
-        private final String objectName;
-
-        WaitNotifyKeyImpl(String serviceName, String objectName) {
-            this.serviceName = serviceName;
-            this.objectName = objectName;
-        }
+    private record WaitNotifyKeyImpl(String serviceName,
+                                     String objectName) implements WaitNotifyKey {
 
         @Override
         public String getServiceName() {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,10 @@
 package com.hazelcast.query.impl.predicates;
 
 import com.hazelcast.query.Predicate;
-import com.hazelcast.query.impl.Indexes;
+import com.hazelcast.query.impl.IndexRegistry;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
@@ -30,30 +29,28 @@ import org.junit.runner.RunWith;
 import static com.hazelcast.query.Predicates.equal;
 import static com.hazelcast.query.Predicates.notEqual;
 import static com.hazelcast.query.Predicates.or;
-import static org.hamcrest.Matchers.arrayWithSize;
-import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.instanceOf;
-import static org.junit.Assert.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.assertj.core.api.Assertions.assertThat;
 
+@SuppressWarnings("rawtypes")
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class OrToInVisitorTest {
 
     private OrToInVisitor visitor;
-    private Indexes indexes;
+    private IndexRegistry indexes;
 
     @Before
     public void setUp() {
-        indexes = mock(Indexes.class);
+        indexes = mock(IndexRegistry.class);
         visitor = new OrToInVisitor();
     }
 
     @Test
     public void whenEmptyPredicate_thenReturnItself() {
-        OrPredicate or = new OrPredicate(null);
+        OrPredicate or = new OrPredicate((Predicate[]) null);
         OrPredicate result = (OrPredicate) visitor.visit(or, indexes);
-        assertThat(or, equalTo(result));
+        assertThat(or).isEqualTo(result);
     }
 
     @Test
@@ -62,7 +59,7 @@ public class OrToInVisitorTest {
         Predicate p2 = equal("age", 2);
         OrPredicate or = (OrPredicate) or(p1, p2);
         OrPredicate result = (OrPredicate) visitor.visit(or, indexes);
-        assertThat(or, equalTo(result));
+        assertThat(or).isEqualTo(result);
     }
 
     @Test
@@ -75,7 +72,7 @@ public class OrToInVisitorTest {
         Predicate p5 = notEqual("age", 5);
         OrPredicate or = (OrPredicate) or(p1, p2, p3, p4, p5);
         OrPredicate result = (OrPredicate) visitor.visit(or, indexes);
-        assertThat(or, equalTo(result));
+        assertThat(or).isEqualTo(result);
     }
 
     @Test
@@ -88,7 +85,7 @@ public class OrToInVisitorTest {
         Predicate p5 = notEqual("age", 5);
         OrPredicate or = (OrPredicate) or(p1, p2, p3, p4, p5);
         OrPredicate result = (OrPredicate) visitor.visit(or, indexes);
-        assertThat(or, equalTo(result));
+        assertThat(or).isEqualTo(result);
     }
 
     @Test
@@ -102,8 +99,8 @@ public class OrToInVisitorTest {
         OrPredicate or = (OrPredicate) or(p1, p2, p3, p4, p5);
         InPredicate result = (InPredicate) visitor.visit(or, indexes);
         Comparable[] values = result.values;
-        assertThat(values, arrayWithSize(5));
-        assertThat(values, Matchers.is(Matchers.<Comparable>arrayContainingInAnyOrder(1, 2, 3, 4, 5)));
+        assertThat(values).hasSize(5);
+        assertThat(values).containsExactlyInAnyOrder(1, 2, 3, 4, 5);
     }
 
     @Test
@@ -119,12 +116,12 @@ public class OrToInVisitorTest {
         OrPredicate result = (OrPredicate) visitor.visit(or, indexes);
         Predicate[] predicates = result.predicates;
         for (Predicate predicate : predicates) {
-            if (predicate instanceof InPredicate) {
-                Comparable[] values = ((InPredicate) predicate).values;
-                assertThat(values, arrayWithSize(5));
-                assertThat(values, Matchers.is(Matchers.<Comparable>arrayContainingInAnyOrder(1, 2, 3, 4, 5)));
+            if (predicate instanceof InPredicate inPredicate) {
+                Comparable[] values = inPredicate.values;
+                assertThat(values).hasSize(5);
+                assertThat(values).containsExactlyInAnyOrder(1, 2, 3, 4, 5);
             } else {
-                assertThat(predicate, instanceOf(NotEqualPredicate.class));
+                assertThat(predicate).isInstanceOf(NotEqualPredicate.class);
             }
         }
     }

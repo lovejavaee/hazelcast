@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,21 +16,23 @@
 
 package com.hazelcast.cp.internal.raft.impl.log;
 
+import com.hazelcast.cp.internal.raft.impl.RaftDataSerializerConstants;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
-import com.hazelcast.cp.internal.raft.impl.RaftDataSerializerHook;
 
 import java.io.IOException;
+import java.util.Objects;
 
 /**
- * Represents an entry in the {@link RaftLog}.
+ * Represents an entry in the {@code RaftLog}.
  * Each log entry stores a state machine command along with the term number
  * when the entry was received by the leader. The term numbers in log entries
  * are used to detect inconsistencies between logs. Each log entry also has
  * an integer index identifying its position in the log.
  */
 public class LogEntry implements IdentifiedDataSerializable {
+
     private int term;
     private long index;
     private Object operation;
@@ -42,6 +44,21 @@ public class LogEntry implements IdentifiedDataSerializable {
         this.term = term;
         this.index = index;
         this.operation = operation;
+    }
+
+    public LogEntry setSnapshotTerm(int term) {
+        this.term = term;
+        return this;
+    }
+
+    public LogEntry setIndex(long index) {
+        this.index = index;
+        return this;
+    }
+
+    public LogEntry setOperation(Object operation) {
+        this.operation = operation;
+        return this;
     }
 
     public long index() {
@@ -72,16 +89,33 @@ public class LogEntry implements IdentifiedDataSerializable {
 
     @Override
     public int getFactoryId() {
-        return RaftDataSerializerHook.F_ID;
+        return RaftDataSerializerConstants.F_ID;
     }
 
     @Override
     public int getClassId() {
-        return RaftDataSerializerHook.LOG_ENTRY;
+        return RaftDataSerializerConstants.LOG_ENTRY;
     }
 
     @Override
     public String toString() {
         return "LogEntry{" + "term=" + term + ", index=" + index + ", operation=" + operation + '}';
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        LogEntry logEntry = (LogEntry) o;
+        return term == logEntry.term && index == logEntry.index && Objects.equals(operation, logEntry.operation);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(term, index, operation);
     }
 }

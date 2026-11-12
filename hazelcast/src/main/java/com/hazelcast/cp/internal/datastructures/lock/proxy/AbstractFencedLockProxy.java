@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,12 @@
 
 package com.hazelcast.cp.internal.datastructures.lock.proxy;
 
+import com.hazelcast.cp.exception.NotLeaderException;
 import com.hazelcast.cp.internal.RaftGroupId;
 import com.hazelcast.cp.internal.datastructures.exception.WaitKeyCancelledException;
 import com.hazelcast.cp.internal.datastructures.lock.LockOwnershipState;
 import com.hazelcast.cp.internal.datastructures.lock.LockService;
-import com.hazelcast.cp.internal.session.AbstractProxySessionManager;
+import com.hazelcast.cp.internal.session.ProxySessionManager;
 import com.hazelcast.cp.internal.session.SessionAwareProxy;
 import com.hazelcast.cp.internal.session.SessionExpiredException;
 import com.hazelcast.cp.lock.FencedLock;
@@ -28,7 +29,6 @@ import com.hazelcast.cp.lock.exception.LockAcquireLimitReachedException;
 import com.hazelcast.cp.lock.exception.LockOwnershipLostException;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
 import com.hazelcast.internal.util.Clock;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.annotation.Nonnull;
 import java.util.Map;
@@ -37,7 +37,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 
-import static com.hazelcast.cp.internal.session.AbstractProxySessionManager.NO_SESSION_ID;
+import static com.hazelcast.cp.internal.session.ProxySessionManager.NO_SESSION_ID;
 import static com.hazelcast.internal.util.ExceptionUtil.rethrow;
 import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 import static com.hazelcast.internal.util.ThreadUtil.getThreadId;
@@ -53,10 +53,10 @@ public abstract class AbstractFencedLockProxy extends SessionAwareProxy implemen
     protected final String proxyName;
     protected final String objectName;
     // thread id -> id of the session that has acquired the lock
-    private final Map<Long, Long> lockedSessionIds = new ConcurrentHashMap<Long, Long>();
+    private final Map<Long, Long> lockedSessionIds = new ConcurrentHashMap<>();
 
-    public AbstractFencedLockProxy(AbstractProxySessionManager sessionManager, RaftGroupId groupId, String proxyName,
-                                       String objectName) {
+    protected AbstractFencedLockProxy(ProxySessionManager sessionManager, RaftGroupId groupId, String proxyName,
+                                   String objectName) {
         super(sessionManager, groupId);
         this.proxyName = proxyName;
         this.objectName = objectName;
@@ -102,8 +102,8 @@ public abstract class AbstractFencedLockProxy extends SessionAwareProxy implemen
                         + "on the CP group is cancelled, possibly because of another indeterminate call from the same thread.");
             } catch (Throwable t) {
                 releaseSession(sessionId);
-                if (t instanceof InterruptedException) {
-                    throw (InterruptedException) t;
+                if (t instanceof InterruptedException exception) {
+                    throw exception;
                 } else {
                     throw rethrow(t);
                 }
@@ -200,7 +200,6 @@ public abstract class AbstractFencedLockProxy extends SessionAwareProxy implemen
     }
 
     @Override
-    @SuppressFBWarnings("IMSE_DONT_CATCH_IMSE")
     public final void unlock() {
         long threadId = getThreadId();
         long sessionId = getSession();
@@ -250,7 +249,7 @@ public abstract class AbstractFencedLockProxy extends SessionAwareProxy implemen
             throw newIllegalMonitorStateException();
         }
 
-        LockOwnershipState ownership = doGetLockOwnershipState().joinInternal();
+        LockOwnershipState ownership = getLockOwnershipState();
         if (ownership.isLockedBy(sessionId, threadId)) {
             lockedSessionIds.put(threadId, sessionId);
             return ownership.getFence();
@@ -267,7 +266,7 @@ public abstract class AbstractFencedLockProxy extends SessionAwareProxy implemen
 
         verifyLockedSessionIdIfPresent(threadId, sessionId, false);
 
-        LockOwnershipState ownership = doGetLockOwnershipState().joinInternal();
+        LockOwnershipState ownership = getLockOwnershipState();
         if (ownership.isLockedBy(sessionId, threadId)) {
             lockedSessionIds.put(threadId, sessionId);
             return true;
@@ -285,7 +284,7 @@ public abstract class AbstractFencedLockProxy extends SessionAwareProxy implemen
 
         verifyLockedSessionIdIfPresent(threadId, sessionId, false);
 
-        LockOwnershipState ownership = doGetLockOwnershipState().joinInternal();
+        LockOwnershipState ownership = getLockOwnershipState();
         boolean lockedByCurrentThread = ownership.isLockedBy(sessionId, threadId);
         if (lockedByCurrentThread) {
             lockedSessionIds.put(threadId, sessionId);
@@ -303,7 +302,7 @@ public abstract class AbstractFencedLockProxy extends SessionAwareProxy implemen
 
         verifyLockedSessionIdIfPresent(threadId, sessionId, false);
 
-        LockOwnershipState ownership = doGetLockOwnershipState().joinInternal();
+        LockOwnershipState ownership = getLockOwnershipState();
         if (ownership.isLockedBy(sessionId, threadId)) {
             lockedSessionIds.put(threadId, sessionId);
         } else {
@@ -371,4 +370,13 @@ public abstract class AbstractFencedLockProxy extends SessionAwareProxy implemen
                 + sessionId + "] is closed by server!");
     }
 
+    private LockOwnershipState getLockOwnershipState() {
+        try {
+            return doGetLockOwnershipState().joinInternal();
+        } catch (NotLeaderException e) {
+            throw new NotLeaderException("Lock[" + objectName + "] is no longer valid in the CP group [" + groupId
+                                         + "] as the cluster has no information about the Lock[" + objectName
+                                         + "]. Please recreate the lock or rejoin the cluster to obtain a valid reference.", e);
+        }
+    }
 }

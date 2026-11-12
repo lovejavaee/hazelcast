@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.hazelcast.config.DataConnectionConfig;
 import com.hazelcast.config.EventJournalConfig;
 import com.hazelcast.config.MapConfig;
 import com.hazelcast.jet.SimpleTestInClusterSupport;
+import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.mongodb.ConnectionString;
 import com.mongodb.MongoClientSettings;
 import com.mongodb.client.MongoClient;
@@ -37,6 +38,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.rules.TestName;
+import org.junit.runner.RunWith;
 import org.testcontainers.containers.MongoDBContainer;
 
 import java.util.ArrayList;
@@ -46,25 +48,23 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.hazelcast.internal.nio.IOUtil.closeResource;
+import static com.hazelcast.jet.TestedVersions.MONGO_IMAGE;
 import static com.hazelcast.jet.mongodb.impl.Mappers.defaultCodecRegistry;
 import static com.hazelcast.test.DockerTestUtil.assumeDockerEnabled;
 import static java.util.Arrays.asList;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.assertEquals;
 
+@RunWith(HazelcastSerialClassRunner.class)
 public abstract class AbstractMongoTest extends SimpleTestInClusterSupport {
-    /**
-     * Version of MongoDB Container that will be used in the tests.
-     */
-    public static final String TEST_MONGO_VERSION = System.getProperty("test.mongo.version", "6.0.3");
+
+    public static MongoDBContainer mongoContainer = new MongoDBContainer(MONGO_IMAGE);
 
     static MongoClient mongo;
     static BsonTimestamp startAtOperationTime;
 
     private static final Map<String, String> TEST_NAME_TO_DEFAULT_DB_NAME = new ConcurrentHashMap<>();
     private static final AtomicInteger COUNTER = new AtomicInteger();
-
-    public static MongoDBContainer mongoContainer = new MongoDBContainer("mongo:" + TEST_MONGO_VERSION);
 
     @Rule
     public TestName testName = new TestName();

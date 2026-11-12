@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,13 +25,15 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.io.File;
 import java.io.IOException;
+import java.io.Serial;
 import java.io.Serializable;
 import java.util.Locale;
 import java.util.StringJoiner;
 
 /**
  * Configuration object for the Python service factory, used in a
- * {@link PythonTransforms#mapUsingPython mapUsingPython} stage.
+ * {@link PythonTransforms#mapUsingPython mapUsingPython} stage
+ * and {@link PythonExtension#python() python} extension.
  * <p>
  * Hazelcast Jet expects you to have a Python project in a local directory.
  * It must contain the definition of a {@code transform_list()} function
@@ -49,9 +51,9 @@ import java.util.StringJoiner;
  * like this:
  * <pre>{@code
  * StreamStage<String> inputStage = createInputStage();
- * StreamStage<String> outputStage = inputStage.apply(
- *         mapUsingPython(new PythonServiceConfig()
- *                 .setHandlerFile("path/to/echo.py")));
+ * StreamStage<String> outputStage = inputStage.using(python())
+ *         .setHandlerFile("path/to/echo.py")
+ *         .map();
  * }</pre>
  * In more complex setups you can tell Jet the location of your project
  * {@linkplain #setBaseDir directory} and the name of the Python {@linkplain
@@ -86,8 +88,9 @@ import java.util.StringJoiner;
  * virtual Python environment.
  * <p>
  * To use this stage in a Hazelcast Jet cluster, Python must be installed
- * on every cluster member. Jet supports Python versions 3.5-3.7. If the
- * code has dependencies on non-standard Python modules, these must either
+ * on every cluster member. For the supported Python versions check the
+ * <a href="https://docs.hazelcast.com/hazelcast/latest/pipelines/python">documentation</a> .
+ * If the code has dependencies on non-standard Python modules, these must either
  * be pre-installed or the member machines must have access to the public
  * internet so that Jet can download and install them. A third option is
  * to write {@code init.sh} that uses a different way of installing the
@@ -102,9 +105,10 @@ import java.util.StringJoiner;
  */
 public class PythonServiceConfig implements Serializable {
 
-    private static final long serialVersionUID = 1L;
+    static final String HANDLER_FUNCTION_DEFAULT = "transform_list";
 
-    private static final String HANDLER_FUNCTION_DEFAULT = "transform_list";
+    @Serial
+    private static final long serialVersionUID = 1L;
 
     private File baseDir;
     private File handlerFile;
@@ -112,6 +116,25 @@ public class PythonServiceConfig implements Serializable {
     private String handlerFunction = HANDLER_FUNCTION_DEFAULT;
     private BiFunctionEx<String, Integer, ? extends ManagedChannelBuilder<?>> channelFn =
             NettyChannelBuilder::forAddress;
+
+    /**
+     * Creates empty configuration.
+     */
+    public PythonServiceConfig() {
+    }
+
+    /**
+     * Clones configuration - shallow clone.
+     *
+     * @param prototype original to copy
+     */
+    PythonServiceConfig(PythonServiceConfig prototype) {
+        this.baseDir = prototype.baseDir;
+        this.handlerFile = prototype.handlerFile;
+        this.handlerModule = prototype.handlerModule;
+        this.handlerFunction = prototype.handlerFunction;
+        this.channelFn = prototype.channelFn;
+    }
 
     /**
      * Validates the configuration and throws an exception if a mandatory

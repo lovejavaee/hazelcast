@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.hazelcast.ringbuffer.impl;
 import com.hazelcast.config.InMemoryFormat;
 import com.hazelcast.config.RingbufferConfig;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.spi.impl.NodeEngineThreadLocalContext;
 import com.hazelcast.internal.nio.BufferObjectDataInput;
 import com.hazelcast.internal.nio.BufferObjectDataOutput;
 import com.hazelcast.internal.serialization.Data;
@@ -37,7 +38,6 @@ import java.io.IOException;
 
 import static com.hazelcast.config.InMemoryFormat.BINARY;
 import static com.hazelcast.config.InMemoryFormat.OBJECT;
-import static com.hazelcast.internal.nio.IOUtil.closeResource;
 import static com.hazelcast.test.Accessors.getNodeEngineImpl;
 import static com.hazelcast.test.Accessors.getSerializationService;
 import static org.junit.Assert.assertArrayEquals;
@@ -101,6 +101,7 @@ public class RingbufferContainerSerializationTest extends HazelcastTestSupport {
                 .setTimeToLiveSeconds(ttlSeconds);
 
         final RingbufferContainer rbContainer = getRingbufferContainer(config);
+        NodeEngineThreadLocalContext.declareNodeEngineReference(nodeEngine);
         testSerialization(rbContainer);
 
         for (int k = 0; k < config.getCapacity() * 2; k++) {
@@ -165,8 +166,7 @@ public class RingbufferContainerSerializationTest extends HazelcastTestSupport {
     }
 
     private RingbufferContainer clone(RingbufferContainer original) {
-        BufferObjectDataOutput out = serializationService.createObjectDataOutput(100000);
-        try {
+        try (BufferObjectDataOutput out = serializationService.createObjectDataOutput(100000)) {
             out.writeObject(original);
             byte[] bytes = out.toByteArray();
             sleepMillis(CLOCK_DIFFERENCE_MS);
@@ -175,8 +175,6 @@ public class RingbufferContainerSerializationTest extends HazelcastTestSupport {
             return clone;
         } catch (IOException e) {
             throw new RuntimeException(e);
-        } finally {
-            closeResource(out);
         }
     }
 

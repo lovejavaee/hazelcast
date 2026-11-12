@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,7 +37,6 @@ import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.PartitionSpecificRunnable;
 import com.hazelcast.spi.impl.operationservice.Operation;
 import com.hazelcast.spi.impl.operationservice.OperationService;
-import com.hazelcast.spi.impl.operationservice.impl.OperationServiceImpl;
 import com.hazelcast.spi.properties.ClusterProperty;
 import com.hazelcast.spi.properties.HazelcastProperties;
 
@@ -150,7 +149,7 @@ public final class LockSupportServiceImpl implements LockSupportService, Managed
     }
 
     private void releaseLocksOwnedBy(final UUID uuid) {
-        final OperationServiceImpl operationService = (OperationServiceImpl) nodeEngine.getOperationService();
+        final OperationService operationService = nodeEngine.getOperationService();
         for (final LockStoreContainer container : containers) {
             operationService.execute(new PartitionSpecificRunnable() {
                 @Override

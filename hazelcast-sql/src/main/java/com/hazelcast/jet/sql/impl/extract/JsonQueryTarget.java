@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ import javax.annotation.concurrent.NotThreadSafe;
 import java.io.IOException;
 import java.util.Map;
 
-import static com.hazelcast.jet.impl.util.ExceptionUtil.sneakyThrow;
+import static com.hazelcast.internal.util.ExceptionUtil.sneakyThrow;
 
 @NotThreadSafe
 public class JsonQueryTarget implements QueryTarget {
@@ -37,11 +37,26 @@ public class JsonQueryTarget implements QueryTarget {
     @SuppressWarnings("unchecked")
     public void setTarget(Object target, Data targetData) {
         assert targetData == null;
-        try {
-            json = target instanceof Map ? (Map<String, Object>) target : JsonUtil.mapFrom(target);
-        } catch (IOException e) {
-            throw sneakyThrow(e);
+        if (target instanceof Map<?, ?>) {
+            json = (Map<String, Object>) target;
+        } else {
+            checkTargetAllowed(target);
+            try {
+                json = JsonUtil.mapFrom(target);
+            } catch (IOException e) {
+                throw sneakyThrow(e);
+            }
         }
+    }
+
+    private void checkTargetAllowed(Object target) {
+        if (target instanceof byte[] || target instanceof CharSequence || target instanceof char[]) {
+            return;
+        }
+        String targetClassName = target == null ? "null" : target.getClass().getName();
+        throw new IllegalArgumentException(
+                targetClassName + " is not assignable to any of the supported target classes for " + getClass().getName()
+                        + ". Must be assignable to one of Map, byte[], CharSequence, char[]");
     }
 
     @Override

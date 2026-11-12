@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,10 @@
 
 package com.hazelcast.internal.cluster;
 
+import com.hazelcast.instance.GeneratedBuildProperties;
 import com.hazelcast.version.Version;
+
+import javax.annotation.Nonnull;
 
 public final class Versions {
 
@@ -55,9 +58,41 @@ public final class Versions {
      */
     public static final Version V5_3 = Version.of(5, 3);
 
-    public static final Version PREVIOUS_CLUSTER_VERSION = V5_2;
-    public static final Version CURRENT_CLUSTER_VERSION = V5_3;
+    /**
+     * Cluster version 5.4
+     */
+    public static final Version V5_4 = Version.of(5, 4);
+
+    /**
+     * Cluster version 5.5
+     */
+    public static final Version V5_5 = Version.of(5, 5);
+
+    /**
+     * Cluster version 5.6
+     */
+    public static final Version V5_6 = Version.of(5, 6);
+
+    /**
+     * Cluster version 5.7
+     */
+    public static final Version V5_7 = Version.of(5, 7);
+
+    /**
+     * Cluster version 6.0
+     */
+    public static final Version V6_0 = Version.of(6, 0);
+
+    @Nonnull
+    public static final Version CURRENT_CLUSTER_VERSION = Version.of(GeneratedBuildProperties.VERSION);
 
     private Versions() {
+    }
+
+    /**
+     * When we decide that a version is LTS, we need to update this method's body.
+     */
+    public static boolean isLts(Version version) {
+        return version.isEqualTo(V5_5);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static com.hazelcast.test.HazelcastTestSupport.assertContains;
 import static com.hazelcast.test.HazelcastTestSupport.assertNotContains;
 import static com.hazelcast.test.HazelcastTestSupport.assertOpenEventually;
-import static junit.framework.TestCase.assertTrue;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
@@ -82,7 +82,7 @@ public class ClientLabelTest {
         HazelcastInstance instance = hazelcastFactory.newHazelcastInstance();
         final CountDownLatch clientConnected = new CountDownLatch(1);
 
-        final AtomicReference<Client> clientRef = new AtomicReference<Client>();
+        final AtomicReference<Client> clientRef = new AtomicReference<>();
         instance.getClientService().addClientListener(new ClientListener() {
             @Override
             public void clientConnected(Client client) {
@@ -113,7 +113,7 @@ public class ClientLabelTest {
         HazelcastInstance instance = hazelcastFactory.newHazelcastInstance();
         final CountDownLatch clientDisconnected = new CountDownLatch(1);
 
-        final AtomicReference<Client> clientRef = new AtomicReference<Client>();
+        final AtomicReference<Client> clientRef = new AtomicReference<>();
         instance.getClientService().addClientListener(new ClientListener() {
             @Override
             public void clientConnected(Client client) {

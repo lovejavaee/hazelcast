@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,6 @@
 
 package com.hazelcast.jet.kinesis.impl.sink;
 
-import com.amazonaws.SdkClientException;
-import com.amazonaws.services.kinesis.AmazonKinesisAsync;
-import com.amazonaws.services.kinesis.model.ProvisionedThroughputExceededException;
-import com.amazonaws.services.kinesis.model.PutRecordsRequest;
-import com.amazonaws.services.kinesis.model.PutRecordsRequestEntry;
-import com.amazonaws.services.kinesis.model.PutRecordsResult;
-import com.amazonaws.services.kinesis.model.PutRecordsResultEntry;
 import com.hazelcast.function.FunctionEx;
 import com.hazelcast.internal.metrics.Probe;
 import com.hazelcast.internal.metrics.ProbeUnit;
@@ -38,6 +31,14 @@ import com.hazelcast.jet.kinesis.impl.KinesisUtil;
 import com.hazelcast.jet.kinesis.impl.RetryTracker;
 import com.hazelcast.jet.retry.RetryStrategy;
 import com.hazelcast.logging.ILogger;
+import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.core.exception.SdkException;
+import software.amazon.awssdk.services.kinesis.KinesisAsyncClient;
+import software.amazon.awssdk.services.kinesis.model.ProvisionedThroughputExceededException;
+import software.amazon.awssdk.services.kinesis.model.PutRecordsRequest;
+import software.amazon.awssdk.services.kinesis.model.PutRecordsRequestEntry;
+import software.amazon.awssdk.services.kinesis.model.PutRecordsResponse;
+import software.amazon.awssdk.services.kinesis.model.PutRecordsResultEntry;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -49,7 +50,7 @@ import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
-import static com.hazelcast.jet.impl.util.ExceptionUtil.rethrow;
+import static com.hazelcast.jet.impl.util.JetExceptionUtil.rethrow;
 import static java.lang.System.nanoTime;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
@@ -80,7 +81,7 @@ public class KinesisSinkP<T> implements Processor {
     private static final int MAX_REQUEST_SIZE_IN_BYTES = 5 * 1024 * 1024;
 
     @Nonnull
-    private final AmazonKinesisAsync kinesis;
+    private final KinesisAsyncClient kinesis;
     @Nonnull
     private final String stream;
     @Nonnull
@@ -97,14 +98,14 @@ public class KinesisSinkP<T> implements Processor {
     private int shardCount;
     private int sinkCount;
 
-    private Future<PutRecordsResult> sendResult;
+    private Future<PutRecordsResponse> sendResult;
     private long nextSendTime = nanoTime();
     private final RetryTracker sendRetryTracker;
 
     private final ThroughputController throughputController = new ThroughputController();
 
     public KinesisSinkP(
-            @Nonnull AmazonKinesisAsync kinesis,
+            @Nonnull KinesisAsyncClient kinesis,
             @Nonnull String stream,
             @Nonnull FunctionEx<T, String> keyFn,
             @Nonnull FunctionEx<T, byte[]> valueFn,
@@ -170,10 +171,7 @@ public class KinesisSinkP<T> implements Processor {
 
     @Override
     public boolean saveToSnapshot() {
-        if (sendResult != null) {
-            checkIfSendingFinished();
-        }
-        return sendResult == null;
+        return complete();
     }
 
     private void updateThroughputLimitations() {
@@ -214,23 +212,24 @@ public class KinesisSinkP<T> implements Processor {
         nextSendTime = currentTime;
     }
 
-    private Future<PutRecordsResult> putRecordsAsync(Collection<PutRecordsRequestEntry> entries) {
-        PutRecordsRequest request = new PutRecordsRequest();
-        request.setRecords(entries);
-        request.setStreamName(stream);
-        return kinesis.putRecordsAsync(request);
+    private Future<PutRecordsResponse> putRecordsAsync(Collection<PutRecordsRequestEntry> entries) {
+        PutRecordsRequest request = PutRecordsRequest.builder()
+                .records(entries)
+                .streamName(stream)
+                .build();
+        return kinesis.putRecords(request);
     }
 
     private void checkIfSendingFinished() {
         if (sendResult.isDone()) {
-            PutRecordsResult result;
+            PutRecordsResponse result;
             try {
                 result = KinesisUtil.readResult(this.sendResult);
             } catch (ProvisionedThroughputExceededException pte) {
                 dealWithThroughputExceeded("Data throughput rate exceeded. Backing off and retrying in %d ms");
                 return;
-            } catch (SdkClientException sce) {
-                dealWithSendFailure(sce);
+            } catch (SdkException se) {
+                dealWithSendFailure(se);
                 return;
             } catch (Throwable t) {
                 throw rethrow(t);
@@ -239,9 +238,9 @@ public class KinesisSinkP<T> implements Processor {
             }
 
             pruneSentFromBuffer(result);
-            if (result.getFailedRecordCount() > 0) {
-                dealWithThroughputExceeded("Failed to send " + result.getFailedRecordCount() + " (out of " +
-                        result.getRecords().size() + ") record(s) to stream '" + stream +
+            if (result.failedRecordCount() > 0) {
+                dealWithThroughputExceeded("Failed to send " + result.failedRecordCount() + " (out of " +
+                        result.records().size() + ") record(s) to stream '" + stream +
                         "'. Sending will be retried in %d ms, message reordering is likely.");
             } else {
                 long sleepTimeNanos = throughputController.markSuccess();
@@ -272,13 +271,13 @@ public class KinesisSinkP<T> implements Processor {
         logger.warning(String.format(message, NANOSECONDS.toMillis(sleepTimeNanos)));
     }
 
-    private void pruneSentFromBuffer(@Nullable PutRecordsResult result) {
+    private void pruneSentFromBuffer(@Nullable PutRecordsResponse result) {
         if (result == null) {
             return;
         }
 
-        List<PutRecordsResultEntry> resultEntries = result.getRecords();
-        if (result.getFailedRecordCount() > 0) {
+        List<PutRecordsResultEntry> resultEntries = result.records();
+        if (result.failedRecordCount() > 0) {
             buffer.retainFailedEntries(resultEntries);
         } else {
             buffer.clear();
@@ -351,7 +350,7 @@ public class KinesisSinkP<T> implements Processor {
 
             int startIndex = 0;
             for (int index = 0; index < results.size(); index++) {
-                if (results.get(index).getErrorCode() != null) {
+                if (results.get(index).errorCode() != null) {
                     swap(startIndex++, index);
                 } else {
                     totalEntrySize -= entries[index].encodedSize;
@@ -395,7 +394,7 @@ public class KinesisSinkP<T> implements Processor {
 
         private static BufferEntry[] initEntries() {
             return IntStream.range(0, MAX_RECORDS_IN_REQUEST).boxed()
-                    .map(IGNORED -> new BufferEntry())
+                    .map(ignored -> new BufferEntry())
                     .toArray(BufferEntry[]::new);
         }
     }
@@ -406,28 +405,39 @@ public class KinesisSinkP<T> implements Processor {
         private int encodedSize;
 
         public void set(String partitionKey, byte[] data, int size) {
+            ByteBuffer byteBuffer = null;
+            PutRecordsRequestEntry.Builder builder;
+
             if (putRecordsRequestEntry == null) {
-                putRecordsRequestEntry = new PutRecordsRequestEntry();
+                builder = PutRecordsRequestEntry.builder();
+            } else {
+                SdkBytes sdkBytes = putRecordsRequestEntry.data();
+
+                if (sdkBytes != null) {
+                    byteBuffer = sdkBytes.asByteBuffer();
+                }
+
+                builder = putRecordsRequestEntry.toBuilder();
             }
 
-            putRecordsRequestEntry.setPartitionKey(partitionKey);
+            builder = builder.partitionKey(partitionKey);
 
-            ByteBuffer byteBuffer = putRecordsRequestEntry.getData();
-            if (byteBuffer == null || byteBuffer.capacity() < data.length) {
-                putRecordsRequestEntry.setData(ByteBuffer.wrap(data));
+            if (byteBuffer == null || byteBuffer.isReadOnly() || byteBuffer.capacity() < data.length) {
+                builder = builder.data(SdkBytes.fromByteArray(data));
             } else {
                 ((java.nio.Buffer) byteBuffer).clear(); //cast needed due to JDK 9 breaking compatibility
                 byteBuffer.put(data);
                 ((java.nio.Buffer) byteBuffer).flip(); //cast needed due to JDK 9 breaking compatibility
             }
 
+            putRecordsRequestEntry = builder.build();
             encodedSize = size;
         }
     }
 
     /**
      * Under normal circumstances, when our sinks don't saturate the stream
-     * (ie. they don't send out more data than the sink can ingest), sinks
+     * (i.e. they don't send out more data than the sink can ingest), sinks
      * will not sleep or introduce any kind of delay between two consecutive
      * send operations (as long as there is data to send).
      * <p>
@@ -443,7 +453,7 @@ public class KinesisSinkP<T> implements Processor {
     private static final class ThroughputController extends SleepController {
 
         /**
-         * The ideal sleep duratio after sends, while rate limiting is necessary.
+         * The ideal sleep duration after sends, while rate limiting is necessary.
          */
         private static final int IDEAL_SLEEP_MS = 250;
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.map.impl.query;
 
 import com.hazelcast.cluster.Address;
+import com.hazelcast.cluster.Member;
 import com.hazelcast.core.HazelcastException;
 import com.hazelcast.internal.cluster.ClusterService;
 import com.hazelcast.internal.partition.IPartitionService;
@@ -246,8 +247,7 @@ public class QueryEngineImpl implements QueryEngine {
 
     private IterationType getRetrievalIterationType(Predicate predicate, IterationType iterationType) {
         IterationType retrievalIterationType = iterationType;
-        if (predicate instanceof PagingPredicate) {
-            PagingPredicate pagingPredicate = (PagingPredicate) predicate;
+        if (predicate instanceof PagingPredicate pagingPredicate) {
             if (pagingPredicate.getComparator() != null) {
                 // custom comparators may act on keys and values at the same time
                 retrievalIterationType = IterationType.ENTRY;
@@ -301,7 +301,7 @@ public class QueryEngineImpl implements QueryEngine {
         Collection<Address> members;
         if (query.getPartitionIdSet().size() == partitionService.getPartitionCount()) {
             members = clusterService.getMembers(DATA_MEMBER_SELECTOR).stream()
-                    .map(m -> m.getAddress())
+                    .map(Member::getAddress)
                     .collect(Collectors.toList());
         } else {
             members = new HashSet<>();

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,7 +55,7 @@ public abstract class TransactionalMultiMapProxySupport<K, V>
     protected final String name;
     protected final MultiMapConfig config;
 
-    private final Map<Data, Collection<MultiMapRecord>> txMap = new HashMap<Data, Collection<MultiMapRecord>>();
+    private final Map<Data, Collection<MultiMapRecord>> txMap = new HashMap<>();
 
     private final OperationService operationService;
     private final IPartitionService partitionService;
@@ -106,7 +106,7 @@ public abstract class TransactionalMultiMapProxySupport<K, V>
     }
 
     void checkTransactionActive() {
-        if (!tx.getState().equals(Transaction.State.ACTIVE)) {
+        if (tx.getState() != Transaction.State.ACTIVE) {
             throw new TransactionNotActiveException("Transaction is not active!");
         }
     }
@@ -284,19 +284,19 @@ public abstract class TransactionalMultiMapProxySupport<K, V>
     }
 
     private Collection<MultiMapRecord> createCollection() {
-        if (config.getValueCollectionType().equals(MultiMapConfig.ValueCollectionType.SET)) {
-            return new HashSet<MultiMapRecord>();
-        } else if (config.getValueCollectionType().equals(MultiMapConfig.ValueCollectionType.LIST)) {
-            return new ArrayList<MultiMapRecord>();
+        if (config.getValueCollectionType() == MultiMapConfig.ValueCollectionType.SET) {
+            return new HashSet<>();
+        } else if (config.getValueCollectionType() == MultiMapConfig.ValueCollectionType.LIST) {
+            return new ArrayList<>();
         }
         return null;
     }
 
     private Collection<MultiMapRecord> createCollection(Collection<MultiMapRecord> coll) {
-        if (config.getValueCollectionType().equals(MultiMapConfig.ValueCollectionType.SET)) {
-            return new HashSet<MultiMapRecord>(coll);
-        } else if (config.getValueCollectionType().equals(MultiMapConfig.ValueCollectionType.LIST)) {
-            return new ArrayList<MultiMapRecord>(coll);
+        if (config.getValueCollectionType() == MultiMapConfig.ValueCollectionType.SET) {
+            return new HashSet<>(coll);
+        } else if (config.getValueCollectionType() == MultiMapConfig.ValueCollectionType.LIST) {
+            return new ArrayList<>(coll);
         }
         return null;
     }

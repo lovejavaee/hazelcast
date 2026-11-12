@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,6 +49,11 @@ public enum QueryPolicy {
      * a log entry to Raft log or using the algorithm defined in
      * <i>6.4 Processing read-only queries more efficiently</i>
      * section of Raft dissertation.
+     * <p>
+     * Once a leader has applied its own removal from the group, its own
+     * acknowledgement no longer belongs to the quorum of the new member list,
+     * so it stops serving this policy altogether: new queries are rejected and
+     * the ones waiting for a heartbeat round are failed.
      */
     LINEARIZABLE
 }

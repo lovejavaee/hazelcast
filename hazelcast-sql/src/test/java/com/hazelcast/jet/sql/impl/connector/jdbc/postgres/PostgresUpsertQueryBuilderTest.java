@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,17 +17,13 @@
 package com.hazelcast.jet.sql.impl.connector.jdbc.postgres;
 
 import com.hazelcast.jet.sql.impl.connector.jdbc.JdbcTable;
-import com.hazelcast.test.HazelcastParallelClassRunner;
-import com.hazelcast.test.annotation.ParallelJVMTest;
-import com.hazelcast.test.annotation.QuickTest;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -35,29 +31,25 @@ import java.util.Collections;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
-@RunWith(HazelcastParallelClassRunner.class)
-@Category({QuickTest.class, ParallelJVMTest.class})
-public class PostgresUpsertQueryBuilderTest {
+@ExtendWith(MockitoExtension.class)
+class PostgresUpsertQueryBuilderTest {
 
     @Mock
     JdbcTable jdbcTable;
 
-    SqlDialect sqlDialect = PostgresqlSqlDialect.DEFAULT;
+    SqlDialect dialect = PostgresqlSqlDialect.DEFAULT;
 
-    @Before
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
 
-        when(jdbcTable.getExternalName()).thenReturn(new String[]{"table1"});
+    @BeforeEach
+    void setUp() {
         when(jdbcTable.getExternalNameList()).thenReturn(Collections.singletonList("table1"));
         when(jdbcTable.getPrimaryKeyList()).thenReturn(Arrays.asList("pk1", "pk2"));
         when(jdbcTable.dbFieldNames()).thenReturn(Arrays.asList("field1", "field2"));
-        when(jdbcTable.sqlDialect()).thenReturn(sqlDialect);
     }
 
     @Test
-    public void testAppendInsertClause() {
-        PostgresUpsertQueryBuilder builder = new PostgresUpsertQueryBuilder(jdbcTable);
+    void testAppendInsertClause() {
+        PostgresUpsertQueryBuilder builder = new PostgresUpsertQueryBuilder(jdbcTable, dialect);
         StringBuilder sb = new StringBuilder();
         builder.appendInsertClause(sb);
 
@@ -66,8 +58,8 @@ public class PostgresUpsertQueryBuilderTest {
     }
 
     @Test
-    public void testAppendValuesClause() {
-        PostgresUpsertQueryBuilder builder = new PostgresUpsertQueryBuilder(jdbcTable);
+    void testAppendValuesClause() {
+        PostgresUpsertQueryBuilder builder = new PostgresUpsertQueryBuilder(jdbcTable, dialect);
         StringBuilder sb = new StringBuilder();
         builder.appendValuesClause(sb);
 
@@ -76,8 +68,8 @@ public class PostgresUpsertQueryBuilderTest {
     }
 
     @Test
-    public void testAppendOnConflictClause() {
-        PostgresUpsertQueryBuilder builder = new PostgresUpsertQueryBuilder(jdbcTable);
+    void testAppendOnConflictClause() {
+        PostgresUpsertQueryBuilder builder = new PostgresUpsertQueryBuilder(jdbcTable, dialect);
         StringBuilder sb = new StringBuilder();
         builder.appendOnConflictClause(sb);
 
@@ -91,8 +83,8 @@ public class PostgresUpsertQueryBuilderTest {
     }
 
     @Test
-    public void testQuery() {
-        PostgresUpsertQueryBuilder builder = new PostgresUpsertQueryBuilder(jdbcTable);
+    void testQuery() {
+        PostgresUpsertQueryBuilder builder = new PostgresUpsertQueryBuilder(jdbcTable, dialect);
         String result = builder.query();
         String expected = "INSERT INTO \"table1\" (\"field1\",\"field2\") VALUES (?,?) ON CONFLICT (\"pk1\",\"pk2\") " +
                 "DO UPDATE SET \"field1\" = EXCLUDED.\"field1\",\"field2\" = EXCLUDED.\"field2\"";

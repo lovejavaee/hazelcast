@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,18 +19,22 @@ package com.hazelcast.jet.impl.util;
 import com.hazelcast.client.impl.clientside.HazelcastClientInstanceImpl;
 import com.hazelcast.client.impl.clientside.HazelcastClientProxy;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.dataconnection.HazelcastDataConnection;
 import com.hazelcast.function.FunctionEx;
 import com.hazelcast.instance.impl.HazelcastInstanceImpl;
 import com.hazelcast.instance.impl.HazelcastInstanceProxy;
 import com.hazelcast.internal.cluster.impl.ClusterServiceImpl;
 import com.hazelcast.internal.cluster.impl.MembersView;
+import com.hazelcast.internal.nio.Bits;
 import com.hazelcast.internal.serialization.InternalSerializationService;
+import com.hazelcast.internal.serialization.impl.HeapData;
 import com.hazelcast.jet.JetException;
 import com.hazelcast.jet.JetService;
 import com.hazelcast.jet.config.EdgeConfig;
 import com.hazelcast.jet.config.JobConfig;
 import com.hazelcast.jet.config.ProcessingGuarantee;
 import com.hazelcast.jet.core.DAG;
+import com.hazelcast.jet.core.ProcessorMetaSupplier;
 import com.hazelcast.jet.core.Vertex;
 import com.hazelcast.jet.core.Watermark;
 import com.hazelcast.jet.function.RunnableEx;
@@ -53,6 +57,7 @@ import java.io.InvalidClassException;
 import java.io.NotSerializableException;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
+import java.io.Serial;
 import java.io.Serializable;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -62,17 +67,22 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLongArray;
+import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
+import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -80,23 +90,27 @@ import java.util.function.ToIntFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
+import static com.hazelcast.client.HazelcastClient.newHazelcastClient;
+import static com.hazelcast.internal.util.ExceptionUtil.sneakyThrow;
 import static com.hazelcast.jet.Util.entry;
 import static com.hazelcast.jet.Util.idToString;
+import static com.hazelcast.jet.config.JobConfigArguments.KEY_JOB_IS_SUSPENDABLE;
 import static com.hazelcast.jet.core.Edge.between;
 import static com.hazelcast.jet.core.processor.SinkProcessors.writeMapP;
 import static com.hazelcast.jet.core.processor.SourceProcessors.readMapP;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.rethrow;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.sneakyThrow;
+import static com.hazelcast.jet.impl.util.JetExceptionUtil.rethrow;
+import static com.hazelcast.jet.impl.util.ImdgUtil.asClientConfig;
 import static java.lang.Math.abs;
 import static java.lang.String.format;
 import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
+import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.groupingBy;
 import static java.util.stream.Collectors.mapping;
-import static java.util.stream.IntStream.range;
 
 public final class Util {
     public static final String CONFIG_OVERRIDE_WARNING = "(for Hazelcast embedded, works only when " +
@@ -135,12 +149,9 @@ public final class Util {
     private Util() {
     }
 
-    public static <T> Supplier<T> memoize(Supplier<T> onceSupplier) {
-        return new MemoizingSupplier<>(onceSupplier);
-    }
-
-    public static <T> Supplier<T> memoizeConcurrent(Supplier<T> onceSupplier) {
-        return new ConcurrentMemoizingSupplier<>(onceSupplier);
+    public static boolean isJobSuspendable(JobConfig jobConfig) {
+        Boolean argument = jobConfig.getArgument(KEY_JOB_IS_SUSPENDABLE);
+        return argument == null || argument;
     }
 
     public static <T> T uncheckCall(@Nonnull Callable<T> callable) {
@@ -238,7 +249,7 @@ public final class Util {
         if (!(object instanceof Serializable)) {
             throw new IllegalArgumentException('"' + objectName + "\" must implement Serializable");
         }
-        try (ObjectOutputStream os = new ObjectOutputStream(new NullOutputStream())) {
+        try (ObjectOutputStream os = new ObjectOutputStream(OutputStream.nullOutputStream())) {
             os.writeObject(object);
         } catch (NotSerializableException | InvalidClassException e) {
             throw new IllegalArgumentException("\"" + objectName + "\" must be serializable", e);
@@ -288,7 +299,7 @@ public final class Util {
      * the value
      */
     public static <T> Map<Integer, List<T>> distributeObjects(int count, List<T> objects) {
-        Map<Integer, List<T>> processorToObjects = range(0, objects.size())
+        Map<Integer, List<T>> processorToObjects = IntStream.range(0, objects.size())
                 .mapToObj(i -> entry(i, objects.get(i)))
                 .collect(groupingBy(e -> e.getKey() % count, mapping(Map.Entry::getValue, Collectors.toList())));
 
@@ -346,13 +357,6 @@ public final class Util {
         return res;
     }
 
-    private static class NullOutputStream extends OutputStream {
-        @Override
-        public void write(int b) {
-            // do nothing
-        }
-    }
-
     public static String jobNameAndExecutionId(String jobName, long executionId) {
         return "job '" + jobName + "', execution " + idToString(executionId);
     }
@@ -387,6 +391,33 @@ public final class Util {
     }
 
     /**
+     * An alternative to {@link Stream#reduce(Object, BiFunction, BinaryOperator)
+     * Stream.reduce(identity, accumulator, combiner)}, which is not parallelizable.
+     * It eliminates the need for a combiner by processing elements in the order
+     * they appear in the stream.
+     */
+    public static <T, R> T reduce(T identity, Stream<R> elements, BiFunction<T, R, T> accumulator) {
+        T result = identity;
+        for (R element : (Iterable<R>) elements::iterator) {
+            result = accumulator.apply(result, element);
+        }
+        return result;
+    }
+
+    /**
+     * An alternative to {@link Stream#collect(Supplier, BiConsumer, BiConsumer)
+     * Stream.collect(supplier, accumulator, combiner)}, which is not parallelizable.
+     * It eliminates the need for a combiner by processing elements in the order
+     * they appear in the stream.
+     */
+    public static <T, R> T collect(T container, Stream<R> elements, BiConsumer<T, R> accumulator) {
+        for (R element : (Iterable<R>) elements::iterator) {
+            accumulator.accept(container, element);
+        }
+        return container;
+    }
+
+    /**
      * Returns a future which is already completed with the supplied exception.
      */
     // replace with CompletableFuture.failedFuture(e) once we depend on java9+
@@ -403,8 +434,7 @@ public final class Util {
         if (!logger.isInfoEnabled()) {
             return;
         }
-        if (item instanceof JetEvent) {
-            JetEvent event = (JetEvent) item;
+        if (item instanceof JetEvent event) {
             logger.info(
                     format("Event dropped, late by %d ms. currentWatermark=%s, eventTime=%s, event=%s",
                             currentWm - event.timestamp(), toLocalTime(currentWm), toLocalTime(event.timestamp()),
@@ -451,7 +481,24 @@ public final class Util {
      * if only one thread is updating the value.
      */
     public static void lazyAdd(AtomicLongArray counters, int index, long addend) {
-        counters.lazySet(index, counters.get(index) + addend);
+        counters.lazySet(index, counters.getPlain(index) + addend);
+    }
+
+    /**
+     * Returns list of integers from begin (inclusive) to end (exclusive).
+     */
+    public static List<Integer> range(final int begin, final int end) {
+        return new AbstractList<>() {
+            @Override
+            public Integer get(int index) {
+                return begin + index;
+            }
+
+            @Override
+            public int size() {
+                return end - begin;
+            }
+        };
     }
 
     /**
@@ -571,6 +618,34 @@ public final class Util {
     }
 
     /**
+     * Merge two {@link Properties} instances into one.
+     * {@code newProperties}'s keys has priority over {@code original} keys.
+     */
+    public static Properties mergeProps(Properties original, Properties newProperties) {
+        Properties props = new Properties();
+        props.putAll(original);
+        props.putAll(newProperties);
+        return props;
+    }
+
+    /**
+     * Posix file permissions are not supported on all systems, so this utility method first performs
+     * a support check to see if the attribute is supported, and then applies it if it is. If posix
+     * file permissions are not supported at this {@link Path} then the file is not changed.
+     *
+     * @param path         the {@link Path} to apply the {@code Posix} permissions to
+     * @param permissions  the {@code Posix} permission set to apply
+     * @throws IOException as per {@link Files#setPosixFilePermissions(Path, Set)}
+     */
+    public static void setPosixFilePermissions(@Nonnull Path path, @Nonnull Set<PosixFilePermission> permissions)
+            throws IOException {
+        Set<String> supportedAttr = path.getFileSystem().supportedFileAttributeViews();
+        if (supportedAttr.contains("posix")) {
+            Files.setPosixFilePermissions(path, permissions);
+        }
+    }
+
+    /**
      * Edits the permissions on the file denoted by {@code path} by calling
      * {@code editFn} with the set of that file's current permissions. {@code
      * editFn} should modify that set to the desired permission set, and this
@@ -627,7 +702,7 @@ public final class Util {
     @SuppressWarnings("checkstyle:MagicNumber") // number of hours per day isn't magic :)
     public static String formatJobDuration(long durationMs) {
         if (durationMs == Long.MIN_VALUE) {
-            return "" + Long.MIN_VALUE;
+            return String.valueOf(Long.MIN_VALUE);
         }
         String sign = "";
         if (durationMs < 0) {
@@ -657,7 +732,7 @@ public final class Util {
      * output order. The output field named {@code age} is missing in input, so
      * the value for it is {@code null} for any input.
      *
-     * @param inputFields the input headers
+     * @param inputFields  the input headers
      * @param outputFields the output headers
      * @return the indices to map input to output
      */
@@ -692,14 +767,14 @@ public final class Util {
     }
 
     public static InternalSerializationService getSerializationService(HazelcastInstance instance) {
-        if (instance instanceof HazelcastInstanceImpl) {
-            return ((HazelcastInstanceImpl) instance).getSerializationService();
-        } else if (instance instanceof HazelcastInstanceProxy) {
-            return ((HazelcastInstanceProxy) instance).getSerializationService();
-        } else if (instance instanceof HazelcastClientInstanceImpl) {
-            return  ((HazelcastClientInstanceImpl) instance).getSerializationService();
-        } else if (instance instanceof HazelcastClientProxy) {
-            return ((HazelcastClientProxy) instance).getSerializationService();
+        if (instance instanceof HazelcastInstanceImpl hazelcastInstanceImpl) {
+            return hazelcastInstanceImpl.getSerializationService();
+        } else if (instance instanceof HazelcastInstanceProxy hazelcastInstanceProxy) {
+            return hazelcastInstanceProxy.getSerializationService();
+        } else if (instance instanceof HazelcastClientInstanceImpl hazelcastClientInstanceImpl) {
+            return hazelcastClientInstanceImpl.getSerializationService();
+        } else if (instance instanceof HazelcastClientProxy hazelcastClientProxy) {
+            return hazelcastClientProxy.getSerializationService();
         } else {
             throw new IllegalArgumentException("Could not access serialization service." +
                     " Unsupported HazelcastInstance type:" + instance);
@@ -710,11 +785,20 @@ public final class Util {
         return getHazelcastInstanceImpl(instance).node.nodeEngine;
     }
 
+    /**
+     * Gets {@link JetServiceBackend} for given instance. Throws if Jet is not enabled.
+     */
+    @Nonnull
+    public static JetServiceBackend getJetServiceBackend(@Nonnull HazelcastInstance instance) {
+        return requireNonNull(getHazelcastInstanceImpl(instance).node.getNodeExtension().getJetServiceBackend(),
+                "Jet is not enabled");
+    }
+
     public static HazelcastInstanceImpl getHazelcastInstanceImpl(HazelcastInstance instance) {
-        if (instance instanceof HazelcastInstanceImpl) {
-            return ((HazelcastInstanceImpl) instance);
-        } else if (instance instanceof HazelcastInstanceProxy) {
-            return ((HazelcastInstanceProxy) instance).getOriginal();
+        if (instance instanceof HazelcastInstanceImpl hazelcastInstanceImpl) {
+            return hazelcastInstanceImpl;
+        } else if (instance instanceof HazelcastInstanceProxy hazelcastInstanceProxy) {
+            return hazelcastInstanceProxy.getOriginal();
         } else {
             throw new IllegalArgumentException("This method can be called only with member" +
                     " instances such as HazelcastInstanceImpl and HazelcastInstanceProxy, but not " + instance.getClass());
@@ -755,11 +839,60 @@ public final class Util {
         return nodeEngine.getConfig().getJetConfig().isEnabled();
     }
 
+    /**
+     * Creates heap data payload with deterministic hash which always selects
+     * the same partition if `hash` is smaller than the number of partitions.
+     *
+     * @implNote This method relies on cached hash stored in {@link HeapData} header.
+     * The actual data is 0 length.
+     *
+     * @param hash desired hash
+     * @return heap data payload
+     */
+    public static byte[] heapDataWithHash(int hash) {
+        var data = new byte[HeapData.HEAP_DATA_OVERHEAD];
+        Bits.writeIntB(data, 0, hash);
+        return data;
+    }
+
+    /**
+     * Creates a remote client using {@code dataConnectionName} or
+     * {@code clientXml} in order, depending on availability.
+     */
+    public static HazelcastInstance createRemoteClient(
+            ProcessorMetaSupplier.Context context,
+            @Nullable String dataConnectionName,
+            @Nullable String clientXml
+    ) {
+        if (dataConnectionName != null) {
+            HazelcastDataConnection dataConnection = context
+                    .dataConnectionService()
+                    .getAndRetainDataConnection(dataConnectionName, HazelcastDataConnection.class);
+            try {
+                return dataConnection.getClient();
+            } finally {
+                dataConnection.release();
+            }
+        } else {
+            assert clientXml != null;
+            return newHazelcastClient(asClientConfig(clientXml));
+        }
+    }
+
     public static class Identity<T> implements IdentifiedDataSerializable, FunctionEx<T, T> {
+
         public static final Identity INSTANCE = new Identity<>();
 
+        @Serial
+        private static final long serialVersionUID = 1L;
+
         @Override
-        public T applyEx(T t) throws Exception {
+        public T apply(T t) {
+            return t;
+        }
+
+        @Override
+        public T applyEx(T t) {
             return t;
         }
 

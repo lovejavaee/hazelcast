@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,11 +55,8 @@ import static org.junit.runners.Parameterized.UseParametersRunnerFactory;
 @UseParametersRunnerFactory(HazelcastParallelParametersRunnerFactory.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class QueryCacheListenerTest extends AbstractQueryCacheTestSupport {
-    @SuppressWarnings("unchecked")
     private static final Predicate<Integer, Employee> TRUE_PREDICATE = Predicates.alwaysTrue();
-    @SuppressWarnings("unchecked")
     private static final Predicate<Integer, Employee> SQL_PREDICATE_GT = Predicates.sql("id > 100");
-    @SuppressWarnings("unchecked")
     private static final Predicate<Integer, Employee> SQL_PREDICATE_LT = Predicates.sql("id < 100");
 
     @Parameterized.Parameters(name = "query cache natural filtering: {0}")
@@ -284,7 +281,7 @@ public class QueryCacheListenerTest extends AbstractQueryCacheTestSupport {
 
     private class QueryCacheAdditionListener implements EntryAddedListener {
 
-        private final AtomicInteger addedEventCount = new AtomicInteger(0);
+        private final AtomicInteger addedEventCount = new AtomicInteger();
 
         QueryCacheAdditionListener() {
         }
@@ -301,7 +298,7 @@ public class QueryCacheListenerTest extends AbstractQueryCacheTestSupport {
 
     private class QueryCacheRemovalListener implements EntryRemovedListener {
 
-        private final AtomicInteger removedEventCount = new AtomicInteger(0);
+        private final AtomicInteger removedEventCount = new AtomicInteger();
 
         QueryCacheRemovalListener() {
         }

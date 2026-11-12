@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,8 +38,6 @@ import com.hazelcast.map.impl.operation.MergeOperation;
 import com.hazelcast.map.impl.record.Record;
 import com.hazelcast.map.impl.recordstore.expiry.ExpiryMetadata;
 import com.hazelcast.map.listener.EntryMergedListener;
-import com.hazelcast.nio.serialization.Portable;
-import com.hazelcast.nio.serialization.PortableFactory;
 import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.spi.impl.operationservice.Operation;
 import com.hazelcast.spi.impl.operationservice.impl.OperationServiceImpl;
@@ -50,8 +48,6 @@ import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import com.hazelcast.topic.ITopic;
-import com.hazelcast.topic.Message;
-import com.hazelcast.topic.MessageListener;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -85,14 +81,11 @@ public class ClientListenersTest extends HazelcastTestSupport {
     @Before
     public void setup() {
         ClientConfig config = new ClientConfig();
-        config.getSerializationConfig().addPortableFactory(5, new PortableFactory() {
-            @Override
-            public Portable create(int classId) {
-                if (classId == 6) {
-                    return new ClientRegressionWithMockNetworkTest.SamplePortable();
-                }
-                return null;
+        config.getSerializationConfig().addPortableFactory(5, classId -> {
+            if (classId == 6) {
+                return new ClientRegressionWithMockNetworkTest.SamplePortable();
             }
+            return null;
         });
 
         config.addListenerConfig(new ListenerConfig("com.hazelcast.client.ClientListenersTest$StaticListener"));
@@ -102,11 +95,11 @@ public class ClientListenersTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testEntryListener_withPortableNotRegisteredInNode() throws Exception {
+    public void testEntryListener_withPortableNotRegisteredInNode() {
         final IMap<Object, Object> map = client.getMap(randomMapName());
         final CountDownLatch latch = new CountDownLatch(1);
 
-        map.addEntryListener(new EntryAdapter<Object, Object>() {
+        map.addEntryListener(new EntryAdapter<>() {
             @Override
             public void entryAdded(EntryEvent<Object, Object> event) {
                 latch.countDown();
@@ -118,16 +111,11 @@ public class ClientListenersTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testEntryMergeListener_withPortableNotRegisteredInNode() throws Exception {
+    public void testEntryMergeListener_withPortableNotRegisteredInNode() {
         final IMap<Object, Object> map = client.getMap(randomMapName());
         final CountDownLatch latch = new CountDownLatch(1);
 
-        map.addEntryListener(new EntryMergedListener<Object, Object>() {
-            @Override
-            public void entryMerged(EntryEvent<Object, Object> event) {
-                latch.countDown();
-            }
-        }, true);
+        map.addEntryListener((EntryMergedListener<Object, Object>) event -> latch.countDown(), true);
 
         Node node = getNode(server);
         NodeEngineImpl nodeEngine = node.nodeEngine;
@@ -146,11 +134,11 @@ public class ClientListenersTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testItemListener_withPortableNotRegisteredInNode() throws Exception {
+    public void testItemListener_withPortableNotRegisteredInNode() {
         final IQueue<Object> queue = client.getQueue(randomMapName());
         final CountDownLatch latch = new CountDownLatch(1);
 
-        queue.addItemListener(new ItemListener<Object>() {
+        queue.addItemListener(new ItemListener<>() {
             @Override
             public void itemAdded(ItemEvent<Object> item) {
                 latch.countDown();
@@ -167,11 +155,11 @@ public class ClientListenersTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testSetListener_withPortableNotRegisteredInNode() throws Exception {
+    public void testSetListener_withPortableNotRegisteredInNode() {
         final ISet<Object> set = client.getSet(randomMapName());
         final CountDownLatch latch = new CountDownLatch(1);
 
-        set.addItemListener(new ItemListener<Object>() {
+        set.addItemListener(new ItemListener<>() {
             @Override
             public void itemAdded(ItemEvent<Object> item) {
                 latch.countDown();
@@ -188,11 +176,11 @@ public class ClientListenersTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testListListener_withPortableNotRegisteredInNode() throws Exception {
+    public void testListListener_withPortableNotRegisteredInNode() {
         final IList<Object> list = client.getList(randomMapName());
         final CountDownLatch latch = new CountDownLatch(1);
 
-        list.addItemListener(new ItemListener<Object>() {
+        list.addItemListener(new ItemListener<>() {
             @Override
             public void itemAdded(ItemEvent<Object> item) {
                 latch.countDown();
@@ -209,16 +197,11 @@ public class ClientListenersTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testTopic_withPortableNotRegisteredInNode() throws Exception {
+    public void testTopic_withPortableNotRegisteredInNode() {
         final ITopic<Object> topic = client.getTopic(randomMapName());
         final CountDownLatch latch = new CountDownLatch(1);
 
-        topic.addMessageListener(new MessageListener<Object>() {
-            @Override
-            public void onMessage(Message<Object> message) {
-                latch.countDown();
-            }
-        });
+        topic.addMessageListener(message -> latch.countDown());
 
         topic.publish(new ClientRegressionWithMockNetworkTest.SamplePortable(1));
         assertOpenEventually(latch);

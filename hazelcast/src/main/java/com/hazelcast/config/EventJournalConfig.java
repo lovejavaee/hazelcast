@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,8 @@ import static com.hazelcast.internal.util.Preconditions.checkPositive;
  * map add, update, remove, merge events along with the key, old value, new value and so on.
  * This configuration is not tied to a specific data structure and can be reused.
  * <b>NOTE</b>
- * This config is intended to be used with <a href="http://jet.hazelcast.org">Hazelcast Jet</a>
+ * This config is intended to be used with
+ * <a href="https://docs.hazelcast.com/hazelcast/latest/pipelines/overview">Hazelcast Jet</a>
  * and does not expose any features in Hazelcast IMDG.
  */
 public class EventJournalConfig implements IdentifiedDataSerializable {
@@ -76,7 +77,7 @@ public class EventJournalConfig implements IdentifiedDataSerializable {
      * The capacity is shared equally between all partitions.
      * This is done by assigning each partition {@code getCapacity() / partitionCount}
      * available slots in the event journal. Because of this, the effective total
-     * capacity may be somewhat lower and you must make sure that the
+     * capacity may be somewhat lower, and you must make sure that the
      * configured capacity is at least greater than the partition count.
      *
      * @return the capacity.
@@ -94,7 +95,7 @@ public class EventJournalConfig implements IdentifiedDataSerializable {
      * The capacity is shared equally between all partitions.
      * This is done by assigning each partition {@code getCapacity() / partitionCount}
      * available slots in the event journal. Because of this, the effective total
-     * capacity may be somewhat lower and you must make sure that the
+     * capacity may be somewhat lower, and you must make sure that the
      * configured capacity is at least greater than the partition count.
      *
      * @param capacity the capacity.
@@ -123,7 +124,7 @@ public class EventJournalConfig implements IdentifiedDataSerializable {
      * The events are removed on journal read and write actions, not while the journal is idle.
      * <p>
      * Time to live can be disabled by setting timeToLiveSeconds to 0. This means that the
-     * events never expire but they can be overwritten when the capacity of the journal is exceeded.
+     * events never expire, but they can be overwritten when the capacity of the journal is exceeded.
      *
      * @param timeToLiveSeconds the time to live period in seconds
      * @return the updated config
@@ -193,11 +194,10 @@ public class EventJournalConfig implements IdentifiedDataSerializable {
         if (this == o) {
             return true;
         }
-        if (!(o instanceof EventJournalConfig)) {
+        if (!(o instanceof EventJournalConfig that)) {
             return false;
         }
 
-        EventJournalConfig that = (EventJournalConfig) o;
         if (enabled != that.enabled) {
             return false;
         }

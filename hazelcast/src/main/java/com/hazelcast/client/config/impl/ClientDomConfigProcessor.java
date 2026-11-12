@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,8 +30,11 @@ import com.hazelcast.client.config.ClientSqlConfig;
 import com.hazelcast.client.config.ClientSqlResubmissionMode;
 import com.hazelcast.client.config.ClientUserCodeDeploymentConfig;
 import com.hazelcast.client.config.ConnectionRetryConfig;
+import com.hazelcast.client.config.RoutingStrategy;
 import com.hazelcast.client.config.ProxyFactoryConfig;
 import com.hazelcast.client.config.SocketOptions;
+import com.hazelcast.client.config.ClusterRoutingConfig;
+import com.hazelcast.client.config.RoutingMode;
 import com.hazelcast.client.util.RandomLB;
 import com.hazelcast.client.util.RoundRobinLB;
 import com.hazelcast.config.AliasedDiscoveryConfig;
@@ -65,6 +68,7 @@ import org.w3c.dom.Node;
 import java.util.HashMap;
 import java.util.Map;
 
+import static com.hazelcast.client.config.impl.ClientConfigSections.CP_DIRECT_TO_LEADER_ROUTING;
 import static com.hazelcast.client.config.impl.ClientConfigSections.TPC;
 import static com.hazelcast.client.config.impl.ClientConfigSections.BACKUP_ACK_TO_CLIENT;
 import static com.hazelcast.client.config.impl.ClientConfigSections.CLUSTER_NAME;
@@ -111,6 +115,8 @@ public class ClientDomConfigProcessor extends AbstractDomConfigProcessor {
     protected final ClientConfig clientConfig;
 
     protected final QueryCacheConfigBuilderHelper queryCacheConfigBuilderHelper;
+    // Used to prevent configuring legacy smart-routing with modern cluster-routing
+    protected boolean processedRoutingMode;
 
     public ClientDomConfigProcessor(boolean domLevel3, ClientConfig clientConfig) {
         this(domLevel3, clientConfig, new QueryCacheXmlConfigBuilderHelper(domLevel3));
@@ -128,7 +134,7 @@ public class ClientDomConfigProcessor extends AbstractDomConfigProcessor {
     }
 
     ClientDomConfigProcessor(boolean domLevel3, ClientConfig clientConfig, QueryCacheConfigBuilderHelper
-      queryCacheConfigBuilderHelper, boolean strict) {
+            queryCacheConfigBuilderHelper, boolean strict) {
         super(domLevel3, strict);
         this.clientConfig = clientConfig;
         this.queryCacheConfigBuilderHelper = queryCacheConfigBuilderHelper;
@@ -193,6 +199,8 @@ public class ClientDomConfigProcessor extends AbstractDomConfigProcessor {
             handleSql(node, clientConfig.getSqlConfig());
         } else if (matches(TPC.getName(), nodeName)) {
             handleTpc(node, clientConfig.getTpcConfig());
+        } else if (matches(CP_DIRECT_TO_LEADER_ROUTING.getName(), nodeName)) {
+            clientConfig.setCPDirectToLeaderRoutingEnabled(Boolean.parseBoolean(getTextContent(node)));
         }
     }
 
@@ -274,7 +282,7 @@ public class ClientDomConfigProcessor extends AbstractDomConfigProcessor {
                 userCodeDeploymentConfig.addJar(getTextContent(jarPathNode));
             }
         } else {
-            throw new InvalidConfigurationException("User code deployement can either be className or jarPath. "
+            throw new InvalidConfigurationException("User code deployment can either be className or jarPath. "
                     + childNodeName + " is invalid");
         }
     }
@@ -425,7 +433,9 @@ public class ClientDomConfigProcessor extends AbstractDomConfigProcessor {
             if (matches("cluster-members", nodeName)) {
                 handleClusterMembers(child, clientNetworkConfig);
             } else if (matches("smart-routing", nodeName)) {
-                clientNetworkConfig.setSmartRouting(Boolean.parseBoolean(getTextContent(child)));
+                handleLegacySmartRouting(child, clientNetworkConfig);
+            } else if (matches("cluster-routing", nodeName)) {
+                handleClusterRouting(child, clientNetworkConfig);
             } else if (matches("redo-operation", nodeName)) {
                 clientNetworkConfig.setRedoOperation(Boolean.parseBoolean(getTextContent(child)));
             } else if (matches("connection-timeout", nodeName)) {
@@ -451,6 +461,54 @@ public class ClientDomConfigProcessor extends AbstractDomConfigProcessor {
             }
         }
         clientConfig.setNetworkConfig(clientNetworkConfig);
+    }
+
+    /**
+     * Internal method used to prevent both legacy smart-routing and modern cluster-routing to be configured
+     * in the same config, as this could lead to non-deterministic routing modes being used.
+     */
+    private void checkForAlreadyProcessed() {
+        if (processedRoutingMode) {
+            throw new InvalidConfigurationException("""
+                    "smart-routing" should not be present in configuration when \
+                    "cluster-routing" is present - only "cluster-routing" should be used.
+                    """);
+        }
+    }
+
+    private void handleLegacySmartRouting(Node child, ClientNetworkConfig clientNetworkConfig) {
+        checkForAlreadyProcessed();
+        // since this option has been explicitly defined, we should translate it to the
+        //  modern equivalent to support backwards compatibility
+        boolean enabled = Boolean.parseBoolean(getTextContent(child));
+        clientNetworkConfig.getClusterRoutingConfig().setRoutingMode(enabled
+                ? RoutingMode.ALL_MEMBERS : RoutingMode.SINGLE_MEMBER);
+        processedRoutingMode = true;
+    }
+
+    private void handleClusterRouting(Node child, ClientNetworkConfig clientNetworkConfig) {
+        checkForAlreadyProcessed();
+        String mode = getAttribute(child, "mode");
+        final RoutingMode routingMode;
+        try {
+            routingMode = RoutingMode.valueOf(mode);
+        } catch (IllegalArgumentException e) {
+            throw new InvalidConfigurationException("Invalid RoutingMode '" + mode + "' defined.", e);
+        }
+
+        String attribute = getAttribute(child, "routing-strategy");
+        final RoutingStrategy routingStrategy;
+        try {
+            routingStrategy = attribute == null
+                    ? ClusterRoutingConfig.DEFAULT_ROUTING_STRATEGY : RoutingStrategy.valueOf(attribute);
+        } catch (IllegalArgumentException e) {
+            throw new InvalidConfigurationException("Invalid RoutingStrategy '" + attribute + "' defined.", e);
+        }
+
+        ClusterRoutingConfig clusterRoutingConfig = clientNetworkConfig.getClusterRoutingConfig();
+        clusterRoutingConfig.setRoutingMode(routingMode);
+        clusterRoutingConfig.setRoutingStrategy(routingStrategy);
+        processedRoutingMode = true;
     }
 
     private void handleHazelcastCloud(Node node, ClientNetworkConfig clientNetworkConfig) {
@@ -803,5 +861,12 @@ public class ClientDomConfigProcessor extends AbstractDomConfigProcessor {
         // enabled is a required attribute
         Node enabledNode = getNamedItemNode(node, "enabled");
         tpcConfig.setEnabled(getBooleanValue(getTextContent(enabledNode)));
+
+        for (Node child : childElements(node)) {
+            String nodeName = cleanNodeName(child);
+            if (matches("connection-count", nodeName)) {
+                tpcConfig.setConnectionCount(Integer.parseInt(getTextContent(child)));
+            }
+        }
     }
 }

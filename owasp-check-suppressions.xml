@@ -2,20 +2,6 @@
 <suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
     <suppress>
         <notes><![CDATA[
-      False positive. The hazelcast:hazelcast component vulnerabilities are related to Hazelcast IMDG version and not the integration - hazelcast-gcp.
-      ]]></notes>
-        <packageUrl regex="true">^pkg:maven/com\.hazelcast/hazelcast-gcp@.*$</packageUrl>
-        <cpe>cpe:/a:hazelcast:hazelcast</cpe>
-    </suppress>
-    <suppress>
-        <notes><![CDATA[
-      False positive. The hazelcast:hazelcast component vulnerabilities are related to Hazelcast IMDG version and not the integration - hazelcast-azure.
-      ]]></notes>
-        <packageUrl regex="true">^pkg:maven/com\.hazelcast/hazelcast-azure@.*$</packageUrl>
-        <cpe>cpe:/a:hazelcast:hazelcast</cpe>
-    </suppress>
-    <suppress>
-        <notes><![CDATA[
       False positive. The hazelcast:hazelcast component vulnerabilities are related to Hazelcast IMDG version and not the integration - hazelcast-wm.
       ]]></notes>
         <packageUrl regex="true">^pkg:maven/com\.hazelcast/hazelcast-wm@.*$</packageUrl>
@@ -53,15 +39,8 @@
         <notes><![CDATA[
         False positive. The flaws are relatated to the Hadoop version and not the shaded protobuf.
         ]]></notes>
-        <packageUrl regex="true">^pkg:maven/org\.apache\.hadoop\.thirdparty/hadoop\-shaded\-protobuf_3_7@.*$</packageUrl>
+        <packageUrl regex="true">^pkg:maven/org\.apache\.hadoop\.thirdparty/hadoop\-shaded\-protobuf.*$</packageUrl>
         <cpe>cpe:/a:apache:hadoop</cpe>
-    </suppress>
-    <suppress>
-        <notes><![CDATA[
-        False positive. The flaws are relatated to the MySQL version and not the MySQL Binary Log connector.
-        ]]></notes>
-        <packageUrl regex="true">^pkg:maven/com\.github\.shyiko/mysql\-binlog\-connector\-java@.*$</packageUrl>
-        <cpe>cpe:/a:mysql:mysql</cpe>
     </suppress>
     <suppress>
         <notes><![CDATA[
@@ -74,7 +53,7 @@
         <notes><![CDATA[
         False positive. The flaws are relatated to the MySQL version and not the MySQL Debezium connector.
         ]]></notes>
-        <packageUrl regex="true">^pkg:maven/io\.debezium/debezium\-connector\-mysql@.*$</packageUrl>
+        <packageUrl regex="true">^pkg:maven/io\.debezium/.*mysql.*@.*$</packageUrl>
         <cpe>cpe:/a:mysql:mysql</cpe>
     </suppress>
     <suppress>
@@ -90,22 +69,6 @@
     </suppress>
     <suppress>
         <notes><![CDATA[
-        The memory leak was fixed already in the wildfly-openssl-1.0.11.Final.jar
-        ]]></notes>
-        <packageUrl regex="true">^pkg:maven/org\.wildfly\.openssl/wildfly\-openssl.*@1\.0\.12.*$</packageUrl>
-        <cve>CVE-2020-25644</cve>
-    </suppress>
-    <suppress>
-        <notes><![CDATA[
-        False positive - these log4j CVEs have the fixes present in the version 1.2.17.redhat-00008.
-        ]]></notes>
-        <packageUrl regex="true">^pkg:maven/log4j/log4j@.*$</packageUrl>
-        <cve>CVE-2020-9488</cve>
-        <cve>CVE-2020-9493</cve>
-        <cve>CVE-2022-23307</cve>
-    </suppress>
-    <suppress>
-        <notes><![CDATA[
         False positive - google-http-client-gson-.*.jar incorrectly identified as gson.
         ]]></notes>
         <packageUrl regex="true">^pkg:maven/com\.google\.http\-client/google\-http\-client\-gson@.*$</packageUrl>
@@ -113,9 +76,100 @@
     </suppress>
     <suppress>
         <notes><![CDATA[
-        False positive - json version 20230227 have already fix for listed CVE.
+        False positive - this CVE is not a security issue according to jackson community
         ]]></notes>
-        <packageUrl regex="true">^pkg:maven/org\.json/json@20230227.*$</packageUrl>
-        <cve>CVE-2022-45688</cve>
+        <packageUrl regex="true">^pkg:maven/com\.fasterxml\.jackson\.core/jackson\-databind@.*$</packageUrl>
+        <cve>CVE-2023-35116</cve>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[
+        False positive - CVE-2023-37475 affects Avro Go lib but is falsely linked to Maven lib
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/org\.apache\.avro/avro@.*$</packageUrl>
+        <cpe>cpe:/a:avro_project:avro</cpe>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[
+        False positive - CVE-2023-37475 affects Avro Go lib but is falsely linked to Maven lib
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/org\.apache\.parquet/parquet\-avro@.*$</packageUrl>
+        <cve>CVE-2023-37475</cve>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[
+        False positive - CVE-2023-37475 affects Avro Go lib but is falsely linked to Maven lib
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/org\.apache\.avro/avro\-mapred@.*$</packageUrl>
+        <cve>CVE-2023-37475</cve>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[
+        False positive - misidentifying Hazelcast as MongoDB
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/com\.hazelcast\.jet/hazelcast-jet-mongodb@.*$</packageUrl>
+        <cve>CVE-2014-8180</cve>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[
+        False positive - misidentifying test JAR as platform JAR
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/com\.hazelcast\.jet\.testjob.*$</packageUrl>
+        <cpe>cpe:/a:hazelcast:hazelcast</cpe>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[
+        False positive - only affects `azure-security-keyvault-keys`, not _all_ Azure libraries
+        https://github.com/dependency-check/DependencyCheck/issues/8553
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/com\.microsoft\.azure/azure-data-lake-store-sdk@.*$</packageUrl>
+        <cve>CVE-2026-33117</cve>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[
+        False positive - CPE overmatch for Jetty modules.
+        CVE-2026-2332 affects org.eclipse.jetty:jetty-http, not jetty-util or jetty-util-ajax.
+        CVE-2026-5795 affects org.eclipse.jetty:jetty-jaspi, not jetty-util or jetty-util-ajax.
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/org\.eclipse\.jetty/jetty-util(?:-ajax)?@9\.4\.58\.v20250814$</packageUrl>
+        <cve>CVE-2026-2332</cve>
+        <cve>CVE-2026-5795</cve>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[
+        False positive - CVE-2026-24051, CVE-2026-29181, and CVE-2026-39883 affect OpenTelemetry Go, not this Java Maven artefact.
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/io\.opentelemetry\.contrib/opentelemetry-gcp-resources@1\.37\.0-alpha$</packageUrl>
+        <cve>CVE-2026-24051</cve>
+        <cve>CVE-2026-29181</cve>
+        <cve>CVE-2026-39883</cve>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[
+        False positive - CVE-2026-24051 and CVE-2026-39883 affect OpenTelemetry Go modules, not this Java Maven artefact.
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/io\.opentelemetry\.semconv/opentelemetry-semconv@1\.29\.0-alpha$</packageUrl>
+        <cve>CVE-2026-24051</cve>
+        <cve>CVE-2026-39883</cve>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[
+        CVE-2025-37731 affects the Elasticsearch server PKI realm only. These 7.17.29 artefacts belong to the REST client connector, which does not configure or run the PKI realm. Elastic provides no fixed 7.x release.
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/org\.elasticsearch(?:/(?:elasticsearch|elasticsearch-cli|elasticsearch-core|elasticsearch-geo|elasticsearch-lz4|elasticsearch-plugin-classloader|elasticsearch-secure-sm|elasticsearch-x-content)|\.client/(?:elasticsearch-rest-client|elasticsearch-rest-high-level-client)|\.plugin/(?:aggs-matrix-stats-client|lang-mustache-client|mapper-extras-client|parent-join-client|rank-eval-client))@7\.17\.29$</packageUrl>
+        <cve>CVE-2025-37731</cve>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[
+        False positive - CVE-2026-88032 doesn't impact the synchronous driver. See https://jira.mongodb.org/browse/JAVA-6276
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/org\.mongodb/(?:mongodb-driver-core|mongodb-driver-sync)@.*$</packageUrl>
+        <cve>CVE-2026-88032</cve>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[
+        False positive - CVE-2026-9753 only impacts MongoDB server.
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/com\.hazelcast\.jet/(?:original-)?hazelcast-jet-mongodb@.*$</packageUrl>
+        <cve>CVE-2026-9753</cve>
     </suppress>
 </suppressions>

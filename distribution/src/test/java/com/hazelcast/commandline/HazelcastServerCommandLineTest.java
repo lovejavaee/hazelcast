@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,39 +16,53 @@
 
 package com.hazelcast.commandline;
 
-import com.hazelcast.jet.function.RunnableEx;
-import org.junit.Before;
-import org.junit.Test;
+import com.hazelcast.function.ThrowingRunnable;
+import com.hazelcast.test.SerialTest;
+import com.hazelcast.test.annotation.ParallelJVMTest;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.util.RestoreSystemProperties;
+import org.junit.jupiter.api.util.SetSystemProperty;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import picocli.CommandLine;
 
-import java.io.IOException;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 
+import static com.hazelcast.commandline.HazelcastServerCommandLine.createPrintWriter;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-public class HazelcastServerCommandLineTest {
+@ExtendWith(MockitoExtension.class)
+@ParallelJVMTest
+@SerialTest
+class HazelcastServerCommandLineTest {
     private HazelcastServerCommandLine hazelcastServerCommandLine;
-    private RunnableEx start;
 
-    @Before
-    public void setUp() {
-        start = mock(RunnableEx.class);
+    @Mock
+    private ThrowingRunnable start;
+
+    @BeforeEach
+    void setUp() {
         hazelcastServerCommandLine = new HazelcastServerCommandLine(start);
     }
 
     @Test
-    public void test_start()
-            throws IOException, InterruptedException {
-        //when
+    @RestoreSystemProperties
+    void test_start() {
+        // when
         hazelcastServerCommandLine.start(null, null, null);
-        //then
+        // then
         verify(start, times(1)).run();
     }
 
     @Test
-    public void test_start_withConfigFile()
-            throws Exception {
+    @RestoreSystemProperties
+    void test_start_withConfigFile() {
         // given
         String configFile = "path/to/test-hazelcast.xml";
         // when
@@ -58,8 +72,8 @@ public class HazelcastServerCommandLineTest {
     }
 
     @Test
-    public void test_start_withPort()
-            throws Exception {
+    @RestoreSystemProperties
+    void test_start_withPort() {
         // given
         String port = "9999";
         // when
@@ -69,8 +83,8 @@ public class HazelcastServerCommandLineTest {
     }
 
     @Test
-    public void test_start_withInterface()
-            throws Exception {
+    @RestoreSystemProperties
+    void test_start_withInterface() {
         // given
         String hzInterface = "1.1.1.1";
         // when
@@ -79,4 +93,20 @@ public class HazelcastServerCommandLineTest {
         assertThat(System.getProperties()).containsEntry("hz.network.interfaces.interfaces.interface1", hzInterface);
     }
 
+    @Test
+    @SetSystemProperty(key = "hz.network.port.port", value = "-1")
+    @RestoreSystemProperties
+    void test_exception_stack_traces_are_logged() throws Exception {
+        try (ByteArrayOutputStream outputStreamCaptor = new ByteArrayOutputStream();
+             PrintStream errorPrintStream = new PrintStream(outputStreamCaptor)) {
+            CommandLine cmd = new CommandLine(new HazelcastServerCommandLine())
+                    .setOut(createPrintWriter(System.out)).setErr(createPrintWriter(errorPrintStream))
+                    .setTrimQuotes(true).setExecutionExceptionHandler(new ExceptionHandler());
+
+            cmd.execute("start");
+
+            String string = outputStreamCaptor.toString(StandardCharsets.UTF_8);
+            assertThat(string).contains("IllegalArgumentException: Port out of range: -1. Allowed range [0,65535]");
+        }
+    }
 }

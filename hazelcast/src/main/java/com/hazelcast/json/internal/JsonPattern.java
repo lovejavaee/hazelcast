@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,16 +18,17 @@ package com.hazelcast.json.internal;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * A JsonPattern is a structure that represents a logical path to a
  * terminal value in a Json object. A logical path is a series of numbers
  * that defines the location of a specific item within their parent.
- * If an item is within an object, than the corresponding number is the
+ * If an item is within an object, then the corresponding number is the
  * order of that item within the object. If an item is within an array,
  * then the corresponding number is the index of that item within the
  * array.
- *
+ * <p>
  * For example;
  * A Json object is given:
  * {
@@ -38,7 +39,7 @@ import java.util.List;
  *     ]
  * }
  * The path "attr2[1]" represents "anotherText" JsonString. The logical
- * position of this value is "1.1" because "attr2" is the second attribute
+ * position of this value is "1.1" because "attr2" is the second attribute,
  * and we are looking for the second item in the corresponding array.
  */
 public class JsonPattern {
@@ -50,7 +51,7 @@ public class JsonPattern {
      * Creates an empty JsonPattern.
      */
     public JsonPattern() {
-        this(new ArrayList<Integer>());
+        this(new ArrayList<>());
     }
 
     public JsonPattern(List<Integer> list) {
@@ -59,10 +60,9 @@ public class JsonPattern {
 
     /**
      * Creates a deep copy of a JsonPattern
-     * @param other
      */
     public JsonPattern(JsonPattern other) {
-        this(new ArrayList<Integer>(other.pattern));
+        this(new ArrayList<>(other.pattern));
     }
 
     public int get(int index) {
@@ -74,7 +74,7 @@ public class JsonPattern {
     }
 
     /**
-     * Marks this pattern as having "any" keyword. It is upto the user
+     * Marks this pattern as having "any" keyword. It is up to the user
      * how to use this information.
      * See {@link #hasAny()}
      */
@@ -118,7 +118,7 @@ public class JsonPattern {
         if (containsAny != pattern1.containsAny) {
             return false;
         }
-        return pattern != null ? pattern.equals(pattern1.pattern) : pattern1.pattern == null;
+        return Objects.equals(pattern, pattern1.pattern);
     }
 
     @Override

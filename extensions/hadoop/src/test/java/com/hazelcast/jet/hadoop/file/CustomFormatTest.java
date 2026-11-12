@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,11 +28,13 @@ import com.hazelcast.jet.pipeline.file.FileFormat;
 import com.hazelcast.jet.pipeline.file.FileSourceBuilder;
 import com.hazelcast.jet.pipeline.file.FileSources;
 import com.hazelcast.jet.pipeline.file.impl.ReadFileFnProvider;
+import com.hazelcast.jet.test.IgnoreInJenkinsOnWindows;
+import com.hazelcast.test.annotation.NightlyTest;
+import com.hazelcast.test.annotation.ParallelJVMTest;
 import javassist.bytecode.ClassFile;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.mapreduce.InputSplit;
 import org.apache.hadoop.mapreduce.Job;
@@ -42,11 +44,13 @@ import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.input.FileSplit;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 import javax.annotation.Nonnull;
 import java.io.DataInputStream;
-import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.stream.Stream;
 
@@ -54,6 +58,7 @@ import static com.hazelcast.jet.hadoop.HadoopSources.COPY_ON_READ;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+@Category({NightlyTest.class, ParallelJVMTest.class, IgnoreInJenkinsOnWindows.class})
 public class CustomFormatTest extends BaseFileFormatTest {
 
     @Test
@@ -119,8 +124,8 @@ public class CustomFormatTest extends BaseFileFormatTest {
         @SuppressWarnings("unchecked")
         public <T> FunctionEx<Path, Stream<T>> createReadFileFn(@Nonnull FileFormat<T> format) {
             return path -> {
-                try (FileInputStream fin = new FileInputStream(path.toFile())) {
-                    ClassFile classFile = new ClassFile(new DataInputStream(fin));
+                try (InputStream inputStream = Files.newInputStream(path)) {
+                    ClassFile classFile = new ClassFile(new DataInputStream(inputStream));
                     return (Stream<T>) Stream.of(classFile);
                 } catch (IOException e) {
                     throw new JetException(e);
@@ -159,7 +164,7 @@ public class CustomFormatTest extends BaseFileFormatTest {
 
         @Override
         public RecordReader<NullWritable, Object> createRecordReader(InputSplit split, TaskAttemptContext context) {
-            return new RecordReader<NullWritable, Object>() {
+            return new RecordReader<>() {
 
                 private transient ClassFile current;
                 private FileSplit fileSplit;
@@ -177,12 +182,9 @@ public class CustomFormatTest extends BaseFileFormatTest {
                     if (!processed) {
                         org.apache.hadoop.fs.Path file = fileSplit.getPath();
                         FileSystem fs = file.getFileSystem(conf);
-                        FSDataInputStream in = null;
-                        try {
-                            in = fs.open(file);
+
+                        try (FSDataInputStream in = fs.open(file)) {
                             current = new ClassFile(in);
-                        } finally {
-                            IOUtils.closeStream(in);
                         }
                         processed = true;
                         return true;

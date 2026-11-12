@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,8 @@ import com.hazelcast.cp.internal.raft.exception.MismatchingGroupMembersCommitInd
 import com.hazelcast.cp.internal.raft.impl.dto.AppendFailureResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendRequest;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendSuccessResponse;
-import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshot;
+import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshotRequest;
+import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshotResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.PreVoteRequest;
 import com.hazelcast.cp.internal.raft.impl.dto.PreVoteResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.TriggerLeaderElection;
@@ -143,11 +144,18 @@ public interface RaftNode {
     void handleAppendResponse(AppendFailureResponse response);
 
     /**
-     * Handles {@link InstallSnapshot} sent by leader.
+     * Handles {@link InstallSnapshotRequest} sent by leader.
      */
-    void handleInstallSnapshot(InstallSnapshot request);
+    void handleInstallSnapshotRequest(InstallSnapshotRequest request);
+
+    /**
+     * Handles {@link InstallSnapshotResponse} sent by follower.
+     */
+    void handleInstallSnapshotResponse(InstallSnapshotResponse response);
 
     void handleTriggerLeaderElection(TriggerLeaderElection request);
+
+    void handleTriggerLeadershipRebalance();
 
     /**
      * Replicates the given operation to the Raft group.
@@ -196,7 +204,7 @@ public interface RaftNode {
      * Executes the given operation on Raft group depending
      * on the {@link QueryPolicy}
      *
-     * @param operation operation to query
+     * @param operation   operation to query
      * @param queryPolicy query policy to decide where to execute operation
      * @return future to get notified about result of the query
      */
@@ -216,12 +224,18 @@ public interface RaftNode {
      * transfer and new calls to the {@link #replicate(Object)} method will
      * fail with {@link CannotReplicateException}.
      *
+     * @return future to get notified about result of the leadership transfer
      * @throws IllegalArgumentException if the endpoint is not a group member
      * @throws IllegalStateException    if the local Raft node is not leader,
      *                                  or the Raft node status is not ACTIVE,
      *                                  or the leader transfer has timed out.
-     *
-     * @return future to get notified about result of the leadership transfer
      */
     InternalCompletableFuture transferLeadership(RaftEndpoint endpoint);
+
+
+    /**
+     * Checks if this node is automatically stepping down as leader for the CPGroup.
+     */
+    boolean autoStepDownWhenLeaderForGroup();
+
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,8 +48,8 @@ public class ExecutorServiceCreateDestroyTest extends HazelcastTestSupport {
 
     private static final int INSTANCE_COUNT = 3;
 
-    private TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory();
-    private HazelcastInstance[] instances = new HazelcastInstance[INSTANCE_COUNT];
+    private final TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory();
+    private final HazelcastInstance[] instances = new HazelcastInstance[INSTANCE_COUNT];
 
     @Before
     public void setup() {
@@ -81,7 +81,7 @@ public class ExecutorServiceCreateDestroyTest extends HazelcastTestSupport {
     }
 
     private void test_createUse_thenDestroy(final ExecutorServiceCommand command) throws Exception {
-        Future[] futures = new Future[INSTANCE_COUNT];
+        Future<?>[] futures = new Future[INSTANCE_COUNT];
         for (int i = 0; i < INSTANCE_COUNT; i++) {
             final HazelcastInstance instance = instances[i];
 
@@ -97,7 +97,7 @@ public class ExecutorServiceCreateDestroyTest extends HazelcastTestSupport {
             });
         }
 
-        for (Future future : futures) {
+        for (Future<?> future : futures) {
             try {
                 future.get(ASSERT_TRUE_EVENTUALLY_TIMEOUT, TimeUnit.SECONDS);
             } catch (ExecutionException e) {
@@ -132,7 +132,7 @@ public class ExecutorServiceCreateDestroyTest extends HazelcastTestSupport {
 
     private static class VoidCallableTask implements Callable<Void>, Serializable {
         @Override
-        public Void call() throws Exception {
+        public Void call() {
             return null;
         }
     }

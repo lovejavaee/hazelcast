@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,6 @@ import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.serialization.SerializationService;
 
 import java.util.AbstractSet;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -76,10 +73,10 @@ public class DeferredValue<V> {
      *
      * @param resolved is false, force serialization of the returned copy
      * @param serializationService service to use to serialize
-     * @return
+     * @return a shallow copy of DeferredValue
      */
     public DeferredValue<V> shallowCopy(boolean resolved, SerializationService serializationService) {
-        DeferredValue<V> copy = new DeferredValue<V>();
+        DeferredValue<V> copy = new DeferredValue<>();
         if (serializedValueExists) {
             copy.serializedValueExists = true;
             copy.serializedValue = serializedValue;
@@ -128,7 +125,7 @@ public class DeferredValue<V> {
         if (serializedValue == null || isNullData(serializedValue)) {
             return NULL_VALUE;
         }
-        DeferredValue<V> deferredValue = new DeferredValue<V>();
+        DeferredValue<V> deferredValue = new DeferredValue<>();
         deferredValue.serializedValue = serializedValue;
         deferredValue.serializedValueExists = true;
         return deferredValue;
@@ -138,7 +135,7 @@ public class DeferredValue<V> {
         if (value == null) {
             return NULL_VALUE;
         }
-        DeferredValue<V> deferredValue = new DeferredValue<V>();
+        DeferredValue<V> deferredValue = new DeferredValue<>();
         deferredValue.value = value;
         deferredValue.valueExists = true;
         return deferredValue;
@@ -150,7 +147,7 @@ public class DeferredValue<V> {
     }
 
     public static <V> Set<DeferredValue<V>> concurrentSetOfValues(Set<V> values) {
-        Set<DeferredValue<V>> result = Collections.newSetFromMap(new ConcurrentHashMap<DeferredValue<V>, Boolean>());
+        Set<DeferredValue<V>> result = ConcurrentHashMap.newKeySet();
         for (V value : values) {
             result.add(DeferredValue.withValue(value));
         }
@@ -167,7 +164,7 @@ public class DeferredValue<V> {
      * @return                      a {@code Set<V>} that wraps the {@code deferredValues} set.
      */
     public static <V> Set<V> asPassThroughSet(Set<DeferredValue<V>> deferredValues, SerializationService serializationService) {
-        return new DeferredValueSet<V>(serializationService, deferredValues);
+        return new DeferredValueSet<>(serializationService, deferredValues);
     }
 
     private static class DeferredValueSet<V> extends AbstractSet<V> {
@@ -186,9 +183,10 @@ public class DeferredValue<V> {
 
         @Override
         public Iterator<V> iterator() {
-            return new DeferredValueIterator<V>(serializationService, delegate.iterator());
+            return new DeferredValueIterator<>(serializationService, delegate.iterator());
         }
 
+        @Override
         public boolean add(V v) {
             return delegate.add(DeferredValue.withValue(v));
         }
@@ -201,14 +199,6 @@ public class DeferredValue<V> {
         @Override
         public void clear() {
             delegate.clear();
-        }
-
-        private Collection<DeferredValue<?>> asDeferredValues(Collection<?> collection) {
-            Collection<DeferredValue<?>> deferredValues = new ArrayList<DeferredValue<?>>();
-            for (Object object : collection) {
-                deferredValues.add(DeferredValue.withValue(object));
-            }
-            return deferredValues;
         }
     }
 

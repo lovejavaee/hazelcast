@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -76,6 +76,12 @@ public final class FactoryIdHelper {
 
     public static final String HIBERNATE_DS_FACTORY = "hazelcast.serialization.ds.hibernate";
     public static final String WEB_DS_FACTORY = "hazelcast.serialization.ds.web";
+    /**
+     * Reserved default value is -3000.
+     * Used by <a href="https://github.com/hazelcast/hazelcast-spring-session">Hazelcast Spring Session</a>.
+     * @since 5.7
+     */
+    public static final String HAZELCAST_SPRING_SESSION_DS_FACTORY = "hazelcast.serialization.ds.hazelcast.spring.session";
 
     public static final String WAN_REPLICATION_DS_FACTORY = "hazelcast.serialization.ds.wan_replication";
     public static final int WAN_REPLICATION_DS_FACTORY_ID = -19;
@@ -154,6 +160,12 @@ public final class FactoryIdHelper {
 
     public static final String BASIC_FUNCTIONS_DS_FACTORY = "hazelcast.serialization.lambda";
     public static final int BASIC_FUNCTIONS_DS_FACTORY_ID = -44;
+
+    public static final String ENTERPRISE_MANAGEMENT_DS_FACTORY = "hazelcast.serialization.ds.enterprise.management";
+    public static final int ENTERPRISE_MANAGEMENT_DS_FACTORY_ID = -45;
+
+    public static final String ENTERPRISE_CONFIG_DS_FACTORY = "hazelcast.serialization.ds.enterprise.config";
+    public static final int ENTERPRISE_CONFIG_DS_FACTORY_ID = -46;
 
     // factory ID 0 is reserved for Cluster objects (Data, Address, Member etc)...
 

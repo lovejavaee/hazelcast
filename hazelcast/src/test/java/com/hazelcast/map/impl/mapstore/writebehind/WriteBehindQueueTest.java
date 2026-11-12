@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,8 +39,10 @@ import java.util.List;
 
 import static com.hazelcast.map.impl.mapstore.writebehind.WriteBehindQueues.createBoundedWriteBehindQueue;
 import static com.hazelcast.map.impl.mapstore.writebehind.WriteBehindQueues.createCoalescedWriteBehindQueue;
+import static com.hazelcast.map.impl.mapstore.writebehind.WriteBehindQueues.createCyclicWriteBehindQueue;
 import static com.hazelcast.map.impl.mapstore.writebehind.WriteBehindQueues.createDefaultWriteBehindQueue;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
@@ -67,7 +69,18 @@ public class WriteBehindQueueTest extends HazelcastTestSupport {
         List<DelayedEntry> delayedEntries = createDelayedEntryList(1000);
         queue.addFirst(delayedEntries);
 
-        assertEquals(1000, queue.size());
+        assertEquals(delayedEntries, queue.asList());
+    }
+
+    @Test
+    public void testRemoveFirstOccurrence_doesNotRemoveDifferentHead() {
+        WriteBehindQueue<DelayedEntry> queue = createBoundedCyclicWBQ();
+        DelayedEntry queuedEntry = createDelayedEntryList(1).get(0);
+        DelayedEntry previouslySelectedEntry = createDelayedEntryList(1).get(0);
+        queue.addLast(queuedEntry, false);
+
+        assertFalse(queue.removeFirstOccurrence(previouslySelectedEntry));
+        assertEquals(List.of(queuedEntry), queue.asList());
     }
 
     @Test(expected = ReachedMaxSizeException.class)
@@ -146,7 +159,7 @@ public class WriteBehindQueueTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testGet_onCoalescedWBQ_whenCount_smallerThanQueueSize() throws Exception {
+    public void testGet_onCoalescedWBQ_whenCount_smallerThanQueueSize() {
         int queueSize = 100;
         int fetchNumberOfEntries = 10;
         WriteBehindQueue<DelayedEntry> wbq = createWBQ();
@@ -155,7 +168,7 @@ public class WriteBehindQueueTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testGet_onBoundedWBQ_whenCount_smallerThanQueueSize() throws Exception {
+    public void testGet_onBoundedWBQ_whenCount_smallerThanQueueSize() {
         int queueSize = 100;
         int fetchNumberOfEntries = 10;
         WriteBehindQueue<DelayedEntry> wbq = createBoundedWBQ();
@@ -164,7 +177,7 @@ public class WriteBehindQueueTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testGet_onCoalescedWBQ_whenCount_higherThanQueueSize() throws Exception {
+    public void testGet_onCoalescedWBQ_whenCount_higherThanQueueSize() {
         int queueSize = 100;
         int fetchNumberOfEntries = 10000;
         WriteBehindQueue<DelayedEntry> wbq = createWBQ();
@@ -173,7 +186,7 @@ public class WriteBehindQueueTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testGet_onBoundedWBQ_whenCount_higherThanQueueSize() throws Exception {
+    public void testGet_onBoundedWBQ_whenCount_higherThanQueueSize() {
         int queueSize = 100;
         int fetchNumberOfEntries = 10000;
         WriteBehindQueue<DelayedEntry> wbq = createBoundedWBQ();
@@ -186,8 +199,8 @@ public class WriteBehindQueueTest extends HazelcastTestSupport {
         for (DelayedEntry entry : delayedEntries) {
             queue.addLast(entry, false);
         }
-        List<DelayedEntry> entries = new ArrayList<DelayedEntry>();
-        queue.filter(new IPredicate<DelayedEntry>() {
+        List<DelayedEntry> entries = new ArrayList<>();
+        queue.filter(new IPredicate<>() {
             int count = 0;
 
             @Override
@@ -208,7 +221,7 @@ public class WriteBehindQueueTest extends HazelcastTestSupport {
     }
 
     private List<DelayedEntry> createDelayedEntryList(int numberOfEntriesToCreate) {
-        List<DelayedEntry> list = new ArrayList<DelayedEntry>(numberOfEntriesToCreate);
+        List<DelayedEntry> list = new ArrayList<>(numberOfEntriesToCreate);
         SerializationService ss1 = new DefaultSerializationServiceBuilder().build();
         long storeTime = Clock.currentTimeMillis();
         for (int i = 0; i < numberOfEntriesToCreate; i++) {
@@ -228,6 +241,13 @@ public class WriteBehindQueueTest extends HazelcastTestSupport {
     private static BoundedWriteBehindQueue<DelayedEntry> createBoundedWBQ(NodeWideUsedCapacityCounter counter) {
         WriteBehindQueue<DelayedEntry> boundedWriteBehindQueue
                 = createBoundedWriteBehindQueue(createCoalescedWriteBehindQueue(), counter);
+        return (BoundedWriteBehindQueue<DelayedEntry>) boundedWriteBehindQueue;
+    }
+
+    private static BoundedWriteBehindQueue<DelayedEntry> createBoundedCyclicWBQ() {
+        NodeWideUsedCapacityCounter capacityController = createQueueCapacityController();
+        WriteBehindQueue<DelayedEntry> boundedWriteBehindQueue
+                = createBoundedWriteBehindQueue(createCyclicWriteBehindQueue(), capacityController);
         return (BoundedWriteBehindQueue<DelayedEntry>) boundedWriteBehindQueue;
     }
 

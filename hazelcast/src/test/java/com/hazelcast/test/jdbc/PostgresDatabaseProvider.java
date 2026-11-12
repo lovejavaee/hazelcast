@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,25 +16,91 @@
 
 package com.hazelcast.test.jdbc;
 
-import org.testcontainers.jdbc.ContainerDatabaseDriver;
+import org.postgresql.ds.PGSimpleDataSource;
+import org.postgresql.xa.PGXADataSource;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.containers.wait.strategy.LogMessageWaitStrategy;
+import org.testcontainers.containers.wait.strategy.Wait;
+import org.testcontainers.containers.wait.strategy.WaitAllStrategy;
+import org.testcontainers.containers.wait.strategy.WaitStrategy;
 
-public class PostgresDatabaseProvider implements TestDatabaseProvider {
+import javax.annotation.Nonnull;
+import javax.sql.CommonDataSource;
+import java.time.Duration;
+import java.time.temporal.ChronoUnit;
 
-    private static final int LOGIN_TIMEOUT = 120;
-    private String jdbcUrl;
+import static com.hazelcast.jet.TestedVersions.TEST_POSTGRES_IMAGE;
 
-    @Override
-    public String createDatabase(String dbName) {
-        jdbcUrl = "jdbc:tc:postgresql:10.21:///" + dbName + "?TC_DAEMON=true";
-        waitForDb(jdbcUrl, LOGIN_TIMEOUT);
-        return jdbcUrl;
+public class PostgresDatabaseProvider extends JdbcDatabaseProvider<PostgreSQLContainer<?>> {
+    private String command;
+
+    public PostgresDatabaseProvider withCommand(String command) {
+        this.command = command;
+        return this;
     }
 
     @Override
-    public void shutdown() {
-        if (jdbcUrl != null) {
-            ContainerDatabaseDriver.killContainer(jdbcUrl);
-            jdbcUrl = null;
+    public CommonDataSource createDataSource(boolean xa) {
+        if (xa) {
+            return createXADataSource();
+        } else {
+            return createDataSource();
         }
     }
+
+    @Nonnull
+    private PGSimpleDataSource createDataSource() {
+        PGSimpleDataSource dataSource = new PGSimpleDataSource();
+        dataSource.setUrl(url());
+        dataSource.setUser(user());
+        dataSource.setPassword(password());
+        dataSource.setDatabaseName(getDatabaseName());
+        return dataSource;
+    }
+
+    @Nonnull
+    private PGXADataSource createXADataSource() {
+        PGXADataSource dataSource = new PGXADataSource();
+        dataSource.setUrl(url());
+        dataSource.setUser(user());
+        dataSource.setPassword(password());
+        dataSource.setDatabaseName(getDatabaseName());
+        return dataSource;
+    }
+
+    private static final WaitStrategy PG_DEFAULT_WAIT = new LogMessageWaitStrategy()
+                .withRegEx(".*database system is ready to accept connections.*\\s")
+                .withTimes(2)
+                .withStartupTimeout(Duration.of(60, ChronoUnit.SECONDS));
+
+    @SuppressWarnings("resource")
+    @Override
+    PostgreSQLContainer<?> createContainer(String dbName) {
+        PostgreSQLContainer<?> postgreSQLContainer = new PostgreSQLContainer<>(TEST_POSTGRES_IMAGE)
+                .withDatabaseName(dbName)
+                // On MacOS there seems to be some delay before the port is available for connections (maybe only with colima?).
+                // As a result, container is reported started based only on logs earlier that it can be connected to.
+                // If we wait for both conditions (port and log) we should get robust behavior.
+                .waitingFor(new WaitAllStrategy().withStrategy(PG_DEFAULT_WAIT).withStrategy(Wait.defaultWaitStrategy()))
+                .withUrlParam("user", user())
+                .withUrlParam("password", password());
+        if (command != null) {
+            postgreSQLContainer.withCommand(command);
+        }
+        return postgreSQLContainer;
+    }
+
+    @Override
+    public String noAuthJdbcUrl() {
+        return container.getJdbcUrl()
+                .replaceAll("&?user=" + user(), "")
+                .replaceAll("&?password=" + password(), "");
+    }
+
+
+    @Override
+    public String user() {
+        return "test";
+    }
+
 }

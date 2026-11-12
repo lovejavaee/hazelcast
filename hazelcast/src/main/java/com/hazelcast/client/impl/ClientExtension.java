@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,9 +18,14 @@ package com.hazelcast.client.impl;
 
 import com.hazelcast.client.config.SocketOptions;
 import com.hazelcast.client.impl.clientside.HazelcastClientInstanceImpl;
+import com.hazelcast.client.impl.spi.ClientClusterService;
 import com.hazelcast.client.impl.spi.ClientProxyFactory;
+import com.hazelcast.client.impl.spi.impl.listener.ClientCPGroupViewService;
+import com.hazelcast.config.InvalidConfigurationException;
 import com.hazelcast.config.SSLConfig;
 import com.hazelcast.config.SocketInterceptorConfig;
+import com.hazelcast.cp.CPSubsystem;
+import com.hazelcast.cp.internal.session.ProxySessionManager;
 import com.hazelcast.internal.nearcache.NearCacheManager;
 import com.hazelcast.internal.networking.ChannelInitializer;
 import com.hazelcast.internal.serialization.InternalSerializationService;
@@ -112,4 +117,29 @@ public interface ClientExtension {
      * Returns a JetService.
      */
     JetService getJet();
+
+    /**
+     * Creates the relevant CP subsystem implementation.
+     */
+    CPSubsystem createCPSubsystem(HazelcastClientInstanceImpl hazelcastClientInstance);
+
+    ProxySessionManager createProxySessionManager(HazelcastClientInstanceImpl hazelcastClientInstance);
+
+    /**
+     * Creates the relevant ClientClusterService implementation.
+     *
+     * @param clientInstance the client instance.
+     * @throws InvalidConfigurationException if the service cannot be created due to an invalid configuration.
+     * @return the ClientClusterService implementation.
+     */
+    ClientClusterService createClientClusterService(HazelcastClientInstanceImpl clientInstance);
+
+    /**
+     * Creates the correct implementation of {@link ClientCPGroupViewService}.
+     *
+     * @param hazelcastClientInstance the client instance
+     * @return the concrete {@link ClientCPGroupViewService} implementation.
+     */
+    ClientCPGroupViewService createClientCPGroupViewService(HazelcastClientInstanceImpl hazelcastClientInstance,
+                                                            boolean directToLeaderRoutingEnabled);
 }

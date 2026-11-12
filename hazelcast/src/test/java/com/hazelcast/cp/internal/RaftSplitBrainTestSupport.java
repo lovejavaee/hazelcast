@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ package com.hazelcast.cp.internal;
 
 import com.hazelcast.config.Config;
 import com.hazelcast.test.SplitBrainTestSupport;
+import com.hazelcast.test.TestEnvironment;
+import org.junit.Assume;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 
@@ -36,12 +38,18 @@ public abstract class RaftSplitBrainTestSupport extends SplitBrainTestSupport {
     public boolean withSessionTimeout;
 
     @Override
+    protected void onBeforeSetup() {
+        Assume.assumeTrue("Split-brain tests require mock network", TestEnvironment.isMockNetwork());
+    }
+
+    @Override
     protected int[] brains() {
         return new int[]{3, 2};
     }
 
     @Override
     protected Config config() {
+        setLicense();
         Config config = super.config();
         config.getCPSubsystemConfig()
                 .setCPMemberCount(getCPMemberCount())
@@ -53,6 +61,9 @@ public abstract class RaftSplitBrainTestSupport extends SplitBrainTestSupport {
                     .setSessionTimeToLiveSeconds(5);
         }
         return config;
+    }
+
+    protected void setLicense() {
     }
 
     protected int getGroupSize() {

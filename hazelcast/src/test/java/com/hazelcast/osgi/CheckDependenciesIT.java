@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package com.hazelcast.osgi;
 
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.instance.BuildInfoProvider;
-import com.hazelcast.internal.nio.IOUtil;
 import com.hazelcast.internal.util.StringUtil;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
@@ -33,6 +32,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.util.Enumeration;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 
@@ -50,7 +51,6 @@ public class CheckDependenciesIT extends HazelcastTestSupport {
 
             // everything from the Java package is OK - it's part of the Java SE platform
             "java.",
-
             // with the "javax" package we have to be more specific - do not use just "javax."
             // as it contains e.g. javax.servlet which is not part of the SE platform!
             "javax.annotation",
@@ -79,10 +79,15 @@ public class CheckDependenciesIT extends HazelcastTestSupport {
 
 
         Clause[] clauses = Parser.parseHeader(packages);
+        Set<String> failures = new TreeSet<>();
         for (Clause clause : clauses) {
             String name = clause.getName();
             String resolution = clause.getDirective("resolution");
-            checkImport(name, resolution);
+            checkImport(name, resolution, failures);
+        }
+
+        if (!failures.isEmpty()) {
+            fail("The following imports are not declared as optional: " + failures);
         }
     }
 
@@ -103,16 +108,12 @@ public class CheckDependenciesIT extends HazelcastTestSupport {
 
     protected Manifest getHazelcastManifest() throws IOException {
         URL hazelcastAllManifestUrl = findHazelcastManifestURL();
-        InputStream inputStream = null;
-        try {
-            inputStream = hazelcastAllManifestUrl.openStream();
+        try (InputStream inputStream = hazelcastAllManifestUrl.openStream()) {
             return new Manifest(inputStream);
-        } finally {
-            IOUtil.closeResource(inputStream);
         }
     }
 
-    private void checkImport(String name, String resolution) {
+    private void checkImport(String name, String resolution, Set<String> failures) {
         if ("optional".equals(resolution)) {
             return;
         }
@@ -120,7 +121,7 @@ public class CheckDependenciesIT extends HazelcastTestSupport {
             return;
         }
 
-        fail("Import " + name + " is not declared as optional");
+        failures.add(name);
     }
 
     private boolean isWhitelisted(String name) {

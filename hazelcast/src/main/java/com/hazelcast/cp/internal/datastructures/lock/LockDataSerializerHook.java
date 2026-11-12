@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,29 +48,17 @@ public class LockDataSerializerHook implements DataSerializerHook {
 
     @Override
     public DataSerializableFactory createFactory() {
-        return typeId -> {
-            switch (typeId) {
-                case RAFT_LOCK_REGISTRY:
-                    return new LockRegistry();
-                case RAFT_LOCK:
-                    return new Lock();
-                case LOCK_ENDPOINT:
-                    return new LockEndpoint();
-                case LOCK_INVOCATION_KEY:
-                    return new LockInvocationKey();
-                case RAFT_LOCK_OWNERSHIP_STATE:
-                    return new LockOwnershipState();
-                case LOCK_OP:
-                    return new LockOp();
-                case TRY_LOCK_OP:
-                    return new TryLockOp();
-                case UNLOCK_OP:
-                    return new UnlockOp();
-                case GET_RAFT_LOCK_OWNERSHIP_STATE_OP:
-                    return new GetLockOwnershipStateOp();
-                default:
-                    throw new IllegalArgumentException("Undefined type: " + typeId);
-            }
+        return typeId -> switch (typeId) {
+            case RAFT_LOCK_REGISTRY -> new LockRegistry();
+            case RAFT_LOCK -> new Lock();
+            case LOCK_ENDPOINT -> new LockEndpoint();
+            case LOCK_INVOCATION_KEY -> new LockInvocationKey();
+            case RAFT_LOCK_OWNERSHIP_STATE -> new LockOwnershipState();
+            case LOCK_OP -> new LockOp();
+            case TRY_LOCK_OP -> new TryLockOp();
+            case UNLOCK_OP -> new UnlockOp();
+            case GET_RAFT_LOCK_OWNERSHIP_STATE_OP -> new GetLockOwnershipStateOp();
+            default -> throw new IllegalArgumentException("Undefined type: " + typeId);
         };
     }
 }

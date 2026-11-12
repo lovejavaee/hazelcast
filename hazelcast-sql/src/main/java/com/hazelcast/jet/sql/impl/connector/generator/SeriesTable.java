@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,7 +49,7 @@ class SeriesTable extends JetTable {
             String name,
             List<Expression<?>> argumentExpressions
     ) {
-        super(sqlConnector, fields, schemaName, name, new ConstantTableStatistics(0));
+        super(sqlConnector, fields, schemaName, name, new ConstantTableStatistics(0), null, false);
 
         this.argumentExpressions = argumentExpressions;
     }

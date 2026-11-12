@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,6 +58,12 @@ public abstract class RaftReplicateOp extends Operation implements IdentifiedDat
     @Override
     public final void run() {
         RaftService service = getService();
+
+        if (service.isStaleGroup(groupId)) {
+            sendResponse(new CPGroupDestroyedException(groupId));
+            return;
+        }
+
         RaftNode raftNode = service.getOrInitRaftNode(groupId);
         if (raftNode == null) {
             onNullRaftNode(service);

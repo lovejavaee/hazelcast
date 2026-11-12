@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,7 +32,6 @@ import com.hazelcast.internal.management.dto.WanReplicationConfigDTO;
 import com.hazelcast.map.IMap;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.TestAwareInstanceFactory;
-import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.After;
 import org.junit.Before;
@@ -50,7 +49,6 @@ import java.util.UUID;
 
 import static com.hazelcast.internal.ascii.rest.HttpCommand.CONTENT_TYPE_JSON;
 import static com.hazelcast.internal.nio.IOUtil.readFully;
-import static com.hazelcast.internal.util.StringUtil.bytesToString;
 import static com.hazelcast.internal.util.StringUtil.stringToBytes;
 import static com.hazelcast.test.Accessors.getAddress;
 import static com.hazelcast.test.Accessors.getNode;
@@ -70,7 +68,7 @@ import static org.junit.Assert.assertTrue;
  * Tests HTTP REST API.
  */
 @RunWith(HazelcastParallelClassRunner.class)
-@Category({QuickTest.class, ParallelJVMTest.class})
+@Category(QuickTest.class)
 public class RestTest {
 
     private static final String MAP_WITH_TTL = "mapWithTtl";
@@ -148,7 +146,7 @@ public class RestTest {
         instance.getMap(mapName).put(key, new HazelcastJsonValue(jsonValue));
         HTTPCommunicator.ConnectionResponse response = communicator.mapGet(mapName, key);
 
-        assertContains(response.responseHeaders.get("Content-Type").iterator().next(), bytesToString(CONTENT_TYPE_JSON));
+        assertContains(response.responseHeaders.get("Content-Type").iterator().next(), new String(CONTENT_TYPE_JSON, StandardCharsets.UTF_8));
         assertEquals(jsonValue, response.response);
     }
 
@@ -239,7 +237,7 @@ public class RestTest {
         instance.getQueue(queueName).offer(new HazelcastJsonValue(jsonValue));
         HTTPCommunicator.ConnectionResponse response = communicator.queuePoll(queueName, 10);
 
-        assertContains(response.responseHeaders.get("Content-Type").iterator().next(), bytesToString(CONTENT_TYPE_JSON));
+        assertContains(response.responseHeaders.get("Content-Type").iterator().next(), new String(CONTENT_TYPE_JSON, StandardCharsets.UTF_8));
         assertEquals(jsonValue, response.response);
     }
 
@@ -417,7 +415,7 @@ public class RestTest {
             String expectedResponseHead = "HTTP/1.1 200";
             byte[] responseCode = new byte[expectedResponseHead.length()];
             readFully(socket.getInputStream(), responseCode);
-            assertEquals(expectedResponseHead, bytesToString(responseCode));
+            assertEquals(expectedResponseHead, new String(responseCode, StandardCharsets.UTF_8));
         } finally {
             socket.close();
         }

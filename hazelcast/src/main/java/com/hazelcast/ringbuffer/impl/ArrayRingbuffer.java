@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 package com.hazelcast.ringbuffer.impl;
 
 import com.hazelcast.ringbuffer.StaleSequenceException;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Arrays;
 import java.util.Iterator;
@@ -26,7 +25,7 @@ import java.util.Iterator;
  * The ArrayRingbuffer is responsible for storing the actual contents of a
  * ringbuffer.
  * <p>
- * Currently the Ringbuffer is not a partitioned data-structure. So all
+ * Currently, the Ringbuffer is not a partitioned data-structure. So all
  * data of a ringbuffer is stored in a single partition and replicated to
  * the replicas. No thread safety is needed since a partition can only be
  * accessed by a single thread at any given moment.
@@ -157,11 +156,10 @@ public class ArrayRingbuffer<E> implements Ringbuffer<E> {
 
     @Override
     public Iterator<E> iterator() {
-        return new ReadOnlyRingbufferIterator<E>(this);
+        return new ReadOnlyRingbufferIterator<>(this);
     }
 
     @Override
-    @SuppressFBWarnings("EI_EXPOSE_REP")
     public E[] getItems() {
         return ringItems;
     }

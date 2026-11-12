@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@ import com.hazelcast.internal.networking.OutboundHandler;
 import com.hazelcast.internal.nio.ConnectionType;
 import com.hazelcast.internal.server.ServerConnection;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.nio.ByteBuffer;
 
@@ -30,7 +29,6 @@ import static com.hazelcast.internal.networking.HandlerStatus.DIRTY;
 import static com.hazelcast.internal.nio.IOUtil.compactOrClear;
 import static com.hazelcast.internal.nio.Protocols.CLUSTER;
 import static com.hazelcast.internal.nio.Protocols.PROTOCOL_LENGTH;
-import static com.hazelcast.internal.util.JVMUtil.upcast;
 import static com.hazelcast.internal.util.StringUtil.stringToBytes;
 
 /**
@@ -45,7 +43,6 @@ public class MemberProtocolEncoder extends OutboundHandler<Void, ByteBuffer> {
      * @param next the {@link OutboundHandler} to replace this one in the outbound pipeline
      *             upon match of protocol bytes
      */
-    @SuppressFBWarnings("EI_EXPOSE_REP2")
     public MemberProtocolEncoder(OutboundHandler... next) {
         this.outboundHandlers = next;
     }
@@ -70,13 +67,13 @@ public class MemberProtocolEncoder extends OutboundHandler<Void, ByteBuffer> {
 
             return DIRTY;
         } finally {
-            upcast(dst).flip();
+            dst.flip();
         }
     }
 
     /**
      * Checks if the protocol bytes have been drained.
-     *
+     * <p>
      * The protocol buffer is in write mode, so if position is 0, the protocol
      * buffer has been drained.
      *

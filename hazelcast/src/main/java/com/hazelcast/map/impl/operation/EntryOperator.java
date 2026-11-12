@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.map.impl.operation;
 
 import com.hazelcast.cluster.Address;
 import com.hazelcast.config.InMemoryFormat;
+import com.hazelcast.core.EntryEvent;
 import com.hazelcast.core.EntryEventType;
 import com.hazelcast.core.ReadOnly;
 import com.hazelcast.internal.monitor.impl.LocalMapStatsImpl;
@@ -28,14 +29,17 @@ import com.hazelcast.internal.util.Clock;
 import com.hazelcast.internal.util.Timer;
 import com.hazelcast.map.EntryProcessor;
 import com.hazelcast.map.ExtendedMapEntry;
+import com.hazelcast.map.LockAware;
 import com.hazelcast.map.impl.LazyMapEntry;
 import com.hazelcast.map.impl.LocalMapStatsProvider;
 import com.hazelcast.map.impl.LockAwareLazyMapEntry;
 import com.hazelcast.map.impl.MapContainer;
 import com.hazelcast.map.impl.MapServiceContext;
 import com.hazelcast.map.impl.event.MapEventPublisher;
+import com.hazelcast.map.impl.mapstore.MapStoreContext;
 import com.hazelcast.map.impl.record.Record;
 import com.hazelcast.map.impl.recordstore.RecordStore;
+import com.hazelcast.map.listener.EntryUpdatedListener;
 import com.hazelcast.query.Predicate;
 import com.hazelcast.query.Predicates;
 import com.hazelcast.query.impl.QueryableEntry;
@@ -61,11 +65,11 @@ import static com.hazelcast.wan.impl.CallerProvenance.NOT_WAN;
 
 @SuppressWarnings("checkstyle:methodcount")
 public final class EntryOperator {
-
     private final boolean shouldClone;
     private final boolean backup;
     private final boolean readOnly;
     private final boolean wanReplicationEnabled;
+    /** Are any listeners (e.g. {@link EntryUpdatedListener} registered to events */
     private final boolean hasEventRegistration;
     private final int partitionId;
     private final long startTimeNanos = Timer.nanos();
@@ -89,6 +93,14 @@ public final class EntryOperator {
     private boolean didMatchPredicate;
     private Data dataKey;
     private Object oldValue;
+    /**
+     * A clone of {@link #oldValue} that can be passed to the {@link #mapEventPublisher} to ensure isolation from any subsequent
+     * mutations (e.g. in an {@link EntryProcessor})
+     *
+     * @see <a href="https://hazelcast.atlassian.net/browse/HZOLD-2837">HZOLD-2837 - Field level mutation being taken by listener
+     *      as old value but not being considered by interceptor - Strange Behaviour</a>
+     */
+    private Object oldValueClone;
     private EntryEventType eventType;
     private Data result;
     private LockAwareLazyMapEntry entry;
@@ -104,7 +116,7 @@ public final class EntryOperator {
         this.mapContainer = recordStore.getMapContainer();
         this.inMemoryFormat = mapContainer.getMapConfig().getInMemoryFormat();
         this.mapName = mapContainer.getName();
-        this.wanReplicationEnabled = mapContainer.isWanReplicationEnabled();
+        this.wanReplicationEnabled = mapContainer.getWanContext().isWanReplicationEnabled();
         this.shouldClone = mapContainer.shouldCloneOnEntryProcessing(mapOperation.getPartitionId());
         this.mapServiceContext = mapContainer.getMapServiceContext();
         LocalMapStatsProvider localMapStatsProvider = mapServiceContext.getLocalMapStatsProvider();
@@ -150,6 +162,7 @@ public final class EntryOperator {
                               EntryEventType eventType, Boolean locked, boolean changeExpiryOnUpdate, long ttl) {
         this.dataKey = dataKey;
         this.oldValue = oldValue;
+        this.oldValueClone = oldValue;
         this.eventType = eventType;
         this.result = result;
         this.didMatchPredicate = true;
@@ -175,8 +188,9 @@ public final class EntryOperator {
         }
 
         oldValue = recordStore.get(dataKey, backup, callerAddress, false);
+
         // predicated entry processors can only be applied to existing entries
-        // so if we have a predicate and somehow(due to expiration or split-brain healing)
+        // so if we have a predicate and somehow (due to expiration or split-brain healing)
         // we found value null, we should skip that entry.
         if (predicate != null && oldValue == null) {
             return this;
@@ -194,7 +208,7 @@ public final class EntryOperator {
         }
 
         // predicated entry processors can only be applied to existing entries
-        // so if we have a predicate and somehow(due to expiration or split-brain healing)
+        // so if we have a predicate and somehow (due to expiration or split-brain healing)
         // we found value null, we should skip that entry.
         if (predicate != null && oldValue == null) {
             return false;
@@ -208,10 +222,47 @@ public final class EntryOperator {
         return operateOnKeyValueInternal();
     }
 
+    /**
+     * This is a variant of {@link #operateOnKey(Data)} which is used during scan.
+     * The differences are:
+     * <ol>
+     *     <li>It gets value from the scan, so does not have to look it up again</li>
+     *     <li>It does not expire entries</li>
+     *     <li>It will not load entry from MapStore</li>
+     * </ol>
+     *
+     * This method sets {@link LockAware#isLocked()} correctly (unlike {@link #operateOnKeyValue(Data, Object)}
+     * so it can be queried by the users according to contract of scanning entry processor methods.
+     */
+    public EntryOperator operateOnKeyValueDuringScan(Data dataKey, Object oldValue) {
+        // use the same sequence of operations as in operateOnKey
+        init(dataKey, null, null, null, null,
+                null, true, UNSET);
+
+        if (belongsAnotherPartition(dataKey)) {
+            return this;
+        }
+
+        this.oldValue = mapServiceContext.interceptGet(mapContainer.getInterceptorRegistry(), oldValue);
+
+        Boolean locked = recordStore.isLocked(dataKey);
+        init(dataKey, clonedOrRawOldValue(), null, null, null,
+                locked, true, UNSET);
+        return operateOnKeyValueInternal();
+    }
+
     public EntryOperator operateOnKeyValueInternal() {
         if (outOfPredicateScope(entry)) {
             this.didMatchPredicate = false;
             return this;
+        }
+
+        // Not required for OBJECT as #getOrNullOldValue() would
+        // return null in any case where mutation would be problematic
+        if (!readOnly && hasEventRegistration && inMemoryFormat != OBJECT) {
+            oldValueClone = mapServiceContext.toData(oldValue);
+        } else {
+            oldValueClone = oldValue;
         }
 
         process(entry);
@@ -238,6 +289,10 @@ public final class EntryOperator {
 
     public Object getOldValue() {
         return oldValue;
+    }
+
+    public Object getOldValueClone() {
+        return oldValueClone;
     }
 
     public Data getResult() {
@@ -291,7 +346,7 @@ public final class EntryOperator {
     private void onAddedOrUpdated() {
         Object newValue = extractNewValue();
         if (backup) {
-            recordStore.putBackup(dataKey, newValue, entry.isChangeExpiryOnUpdate(),
+            recordStore.putBackupForEntryProcessor(dataKey, newValue, entry.isChangeExpiryOnUpdate(),
                     entry.getNewTtl(), UNSET, UNSET, NOT_WAN);
         } else {
             recordStore.setWithUncountedAccess(dataKey, newValue, entry.isChangeExpiryOnUpdate(),
@@ -394,8 +449,30 @@ public final class EntryOperator {
         if (eventType == REMOVED) {
             mapOperation.publishWanRemove(dataKey);
         } else {
-            mapOperation.publishWanUpdate(dataKey, entry.getByPrioritizingDataValue());
+            Object newValue = entry.getByPrioritizingDataValue();
+            if (inMemoryFormat == OBJECT && mapOperation.isWanPublishingEnabled()) {
+                // OBJECT entry processor results are not measured when stored, so
+                // reuse the serialization the WAN event needs to record their size
+                Data newDataValue = mapServiceContext.toData(newValue);
+                if (!isMeasuredByWriteBehindStore()) {
+                    recordStore.recordEntrySize(dataKey, newDataValue, backup);
+                }
+                newValue = newDataValue;
+            }
+            mapOperation.publishWanUpdate(dataKey, newValue);
         }
+    }
+
+    /**
+     * Without write coalescing, the write-behind store serializes OBJECT values
+     * and, on primary replicas, passes them to the record store, so they are
+     * already measured when stored.
+     */
+    private boolean isMeasuredByWriteBehindStore() {
+        MapStoreContext mapStoreContext = mapContainer.getMapStoreContext();
+        return !backup
+                && mapStoreContext.isWriteBehindMapStoreEnabled()
+                && !mapStoreContext.getMapStoreConfig().isWriteCoalescing();
     }
 
     private void publishEntryEvent() {
@@ -405,15 +482,15 @@ public final class EntryOperator {
     }
 
     /**
-     * Nullify old value if in memory format is object and operation is not removal
-     * since old and new value in fired event {@link com.hazelcast.core.EntryEvent}
-     * may be same due to the object in memory format.
+     * @return {@code null} {@code oldValue} if in memory format is {@link InMemoryFormat#OBJECT} and operation is not
+     *         {@link EntryEventType#REMOVED}, since old and new value in fired {@link EntryEvent} may reference the same object
+     *         due to {@link InMemoryFormat#OBJECT}.
      */
     private Object getOrNullOldValue() {
         if (inMemoryFormat == OBJECT && eventType != REMOVED) {
             return null;
         } else {
-            return oldValue;
+            return oldValueClone;
         }
     }
 }

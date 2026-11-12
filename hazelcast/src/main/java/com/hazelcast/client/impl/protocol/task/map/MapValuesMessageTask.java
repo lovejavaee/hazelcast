@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,13 +23,12 @@ import com.hazelcast.internal.nio.Connection;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.util.IterationType;
 import com.hazelcast.map.impl.MapService;
+import com.hazelcast.map.impl.MapServiceContext;
 import com.hazelcast.map.impl.query.QueryResultRow;
 import com.hazelcast.query.Predicate;
 import com.hazelcast.query.Predicates;
-import com.hazelcast.security.permission.ActionConstants;
-import com.hazelcast.security.permission.MapPermission;
+import com.hazelcast.security.SecurityInterceptorConstants;
 
-import java.security.Permission;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -45,11 +44,18 @@ public class MapValuesMessageTask
 
     @Override
     protected Object reduce(Collection<QueryResultRow> result) {
-        List<Data> values = new ArrayList<Data>(result.size());
+        List<Data> values = new ArrayList<>(result.size());
         for (QueryResultRow resultEntry : result) {
             values.add(resultEntry.getValue());
         }
-        incrementOtherOperationsCount((MapService) getService(MapService.SERVICE_NAME), parameters);
+        MapService mapService = (MapService) getService(MapService.SERVICE_NAME);
+        incrementOtherOperationsCount(mapService, parameters);
+        incrementMapMetric(mapService, parameters);
+
+        if (result.size() >= mapService.getMapServiceContext().getExpensiveInvocationReportingThreshold()) {
+            logger.info("Client " + endpoint.getUuid() + " invoked values() on map " + parameters
+                    + " with " + values.size() + " returned values.");
+        }
         return values;
     }
 
@@ -74,23 +80,27 @@ public class MapValuesMessageTask
     }
 
     @Override
-    public Permission getRequiredPermission() {
-        return new MapPermission(parameters, ActionConstants.ACTION_READ);
-    }
-
-    @Override
     public String getDistributedObjectName() {
         return parameters;
     }
 
     @Override
     public String getMethodName() {
-        return "values";
+        return SecurityInterceptorConstants.VALUES;
     }
 
     @Override
     public Object[] getParameters() {
         return null;
+    }
+
+    private void incrementMapMetric(MapService service, String mapName) {
+        MapServiceContext mapServiceContext = service.getMapServiceContext();
+        if (mapServiceContext.getMapContainer(mapName).getMapConfig().isStatisticsEnabled()) {
+            mapServiceContext.getLocalMapStatsProvider()
+                    .getLocalMapStatsImpl(mapName)
+                    .incrementValuesCallCount();
+        }
     }
 
 }

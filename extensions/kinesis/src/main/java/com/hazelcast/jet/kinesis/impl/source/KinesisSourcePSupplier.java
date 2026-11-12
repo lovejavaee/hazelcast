@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,6 @@
 
 package com.hazelcast.jet.kinesis.impl.source;
 
-import com.amazonaws.services.kinesis.AmazonKinesisAsync;
-import com.amazonaws.services.kinesis.model.Record;
-import com.amazonaws.services.kinesis.model.Shard;
 import com.hazelcast.function.BiFunctionEx;
 import com.hazelcast.jet.core.EventTimePolicy;
 import com.hazelcast.jet.core.Processor;
@@ -26,9 +23,13 @@ import com.hazelcast.jet.core.ProcessorSupplier;
 import com.hazelcast.jet.kinesis.impl.AwsConfig;
 import com.hazelcast.jet.retry.RetryStrategy;
 import com.hazelcast.logging.ILogger;
+import software.amazon.awssdk.services.kinesis.KinesisAsyncClient;
+import software.amazon.awssdk.services.kinesis.model.Record;
+import software.amazon.awssdk.services.kinesis.model.Shard;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.io.Serial;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.stream.IntStream;
@@ -37,6 +38,7 @@ import static java.util.stream.Collectors.toList;
 
 public class KinesisSourcePSupplier<T> implements ProcessorSupplier {
 
+    @Serial
     private static final long serialVersionUID = 2L;
 
     @Nonnull
@@ -56,7 +58,7 @@ public class KinesisSourcePSupplier<T> implements ProcessorSupplier {
 
     private transient int memberCount;
     private transient ILogger logger;
-    private transient AmazonKinesisAsync client;
+    private transient KinesisAsyncClient client;
 
     public KinesisSourcePSupplier(
             @Nonnull AwsConfig awsConfig,
@@ -129,9 +131,8 @@ public class KinesisSourcePSupplier<T> implements ProcessorSupplier {
     }
 
     @Override
-    public void close(@Nullable Throwable error) {
-        if (client != null) {
-            client.shutdown();
-        }
+    public void close(@Nullable Throwable error) throws Exception {
+        // no-op
+        // See CTT-661 and KinesisStressIntegrationTest for more context
     }
 }

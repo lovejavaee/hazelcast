@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.hazelcast.config.tpc.TpcSocketConfig;
 import com.hazelcast.config.tpc.TpcConfig;
 import com.hazelcast.instance.EndpointQualifier;
 import com.hazelcast.instance.ProtocolType;
+import com.hazelcast.internal.util.Preconditions;
 import com.hazelcast.spi.annotation.Beta;
 import com.hazelcast.spi.annotation.PrivateApi;
 
@@ -32,8 +33,8 @@ import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 
 /**
  * Endpoint configuration that defines communication/networking properties common to both incoming/outgoing connections
- * eg.
- *
+ * e.g.
+ * <p>
  * - Encryption / Security
  * - Hazelcast protocol type
  *
@@ -77,6 +78,21 @@ public class EndpointConfig implements NamedConfig {
      */
     public static final int DEFAULT_SOCKET_KEEP_COUNT = 8;
 
+    /**
+     * Maximum configurable number of seconds for {@link #socketKeepIdleSeconds}
+     */
+    private static final int MAX_SOCKET_KEEP_IDLE_SECONDS = 32767;
+
+    /**
+     * Maximum configurable number of seconds for {@link #socketKeepIntervalSeconds}
+     */
+    private static final int MAX_SOCKET_KEEP_INTERVAL_SECONDS = 32767;
+
+    /**
+     * Maximum configurable number of keep alive probes for {@link #socketKeepCount}
+     */
+    private static final int MAX_SOCKET_KEEP_COUNT = 127;
+
     protected String name;
     protected ProtocolType protocolType;
     protected InterfacesConfig interfaces = new InterfacesConfig();
@@ -101,10 +117,12 @@ public class EndpointConfig implements NamedConfig {
         return protocolType;
     }
 
+    @Override
     public String getName() {
         return name;
     }
 
+    @Override
     public EndpointConfig setName(String name) {
         this.name = name;
         return this;
@@ -114,11 +132,11 @@ public class EndpointConfig implements NamedConfig {
      * Gets the {@link SymmetricEncryptionConfig}. The value can be {@code null} which means that no symmetric encryption should
      * be used.
      *
-     * @deprecated since 4.2
+     * @deprecated Symmetric encryption is deprecated in favor of TLS.
      *
      * @return the SymmetricEncryptionConfig
      */
-    @Deprecated
+    @Deprecated(since = "5.0", forRemoval = true)
     public SymmetricEncryptionConfig getSymmetricEncryptionConfig() {
         return symmetricEncryptionConfig;
     }
@@ -126,13 +144,13 @@ public class EndpointConfig implements NamedConfig {
     /**
      * Sets the {@link SymmetricEncryptionConfig}. The value can be {@code null} if no symmetric encryption should be used.
      *
-     * @deprecated since 4.2
+     * @deprecated Symmetric encryption is deprecated in favor of TLS.
      *
      * @param symmetricEncryptionConfig the SymmetricEncryptionConfig to set
      * @return the updated NetworkConfig
      * @see #getSymmetricEncryptionConfig()
      */
-    @Deprecated
+    @Deprecated(since = "5.0", forRemoval = true)
     public EndpointConfig setSymmetricEncryptionConfig(SymmetricEncryptionConfig symmetricEncryptionConfig) {
         this.symmetricEncryptionConfig = symmetricEncryptionConfig;
         return this;
@@ -153,7 +171,7 @@ public class EndpointConfig implements NamedConfig {
 
     public EndpointConfig addOutboundPortDefinition(String portDef) {
         if (outboundPortDefinitions == null) {
-            outboundPortDefinitions = new HashSet<String>();
+            outboundPortDefinitions = new HashSet<>();
         }
         outboundPortDefinitions.add(portDef);
         return this;
@@ -170,7 +188,7 @@ public class EndpointConfig implements NamedConfig {
 
     public EndpointConfig addOutboundPort(int port) {
         if (outboundPorts == null) {
-            outboundPorts = new HashSet<Integer>();
+            outboundPorts = new HashSet<>();
         }
         outboundPorts.add(port);
         return this;
@@ -339,7 +357,7 @@ public class EndpointConfig implements NamedConfig {
      * <a href="https://bugs.openjdk.org/browse/JDK-8194298">JDK support</a>.
      *
      * @return the configured value of Keep-Alive idle time.
-     * @since 5.3.0
+     * @since 5.3
      * @see <a href="https://docs.oracle.com/en/java/javase/11/docs/api/jdk.net/jdk/net/ExtendedSocketOptions.html#TCP_KEEPIDLE">
      *     jdk.net.ExtendedSocketOptions#TCP_KEEPIDLE</a>
      */
@@ -349,15 +367,20 @@ public class EndpointConfig implements NamedConfig {
 
     /**
      * Set the number of seconds a connection needs to be idle before TCP begins sending out keep-alive probes.
+     * Valid values are 1 to 32767.
+     * <p/>
      * This option is only applicable when {@link #setSocketKeepAlive(boolean) keep alive is true}.
      * Requires a recent JDK 8, JDK 11 or greater version that includes the required
      * <a href="https://bugs.openjdk.org/browse/JDK-8194298">JDK support</a>.
      *
-     * @since 5.3.0
+     * @since 5.3
      * @see <a href="https://docs.oracle.com/en/java/javase/11/docs/api/jdk.net/jdk/net/ExtendedSocketOptions.html#TCP_KEEPIDLE">
      *      jdk.net.ExtendedSocketOptions#TCP_KEEPIDLE</a>
      */
     public EndpointConfig setSocketKeepIdleSeconds(int socketKeepIdleSeconds) {
+        Preconditions.checkPositive("socketKeepIdleSeconds", socketKeepIdleSeconds);
+        Preconditions.checkTrue(socketKeepIdleSeconds < MAX_SOCKET_KEEP_IDLE_SECONDS,
+                "socketKeepIdleSeconds value " + socketKeepIdleSeconds + " is outside valid range 1 - 32767");
         this.socketKeepIdleSeconds = socketKeepIdleSeconds;
         return this;
     }
@@ -369,28 +392,31 @@ public class EndpointConfig implements NamedConfig {
      * <a href="https://bugs.openjdk.org/browse/JDK-8194298">JDK support</a>.
      *
      * @return the configured value of Keep-Alive interval time.
-     * @since 5.3.0
-     * @see <a href="https://docs.oracle.com/en/java/javase/11/docs/api/jdk.net/jdk/net/
-     ExtendedSocketOptions.html#TCP_KEEPINTERVAL">
-     *     jdk.net.ExtendedSocketOptions#TCP_KEEPINTERVAL</a>
+     * @since 5.3
+     * @see <a href=
+     *      "https://docs.oracle.com/en/java/javase/11/docs/api/jdk.net/jdk/net/ExtendedSocketOptions.html#TCP_KEEPINTERVAL">
+     *      jdk.net.ExtendedSocketOptions#TCP_KEEPINTERVAL</a>
      */
     public int getSocketKeepIntervalSeconds() {
         return socketKeepIntervalSeconds;
     }
 
     /**
-     * Set the number of seconds between keep-alive probes. Notice that this is the number of seconds between probes
-     * after the initial {@link #setSocketKeepIdleSeconds(int) keep-alive idle time} has passed.
-     * This option is only applicable when {@link #setSocketKeepAlive(boolean) keep alive is true}.
-     * Requires a recent JDK 8, JDK 11 or greater version that includes the required
-     * <a href="https://bugs.openjdk.org/browse/JDK-8194298">JDK support</a>.
+     * Set the number of seconds between keep-alive probes. Notice that this is the number of seconds between probes after the
+     * initial {@link #setSocketKeepIdleSeconds(int) keep-alive idle time} has passed. Valid values are 1 to 32767.
+     * <p/>
+     * This option is only applicable when {@link #setSocketKeepAlive(boolean) keep alive is true}. Requires a recent JDK 8, JDK
+     * 11 or greater version that includes the required <a href="https://bugs.openjdk.org/browse/JDK-8194298">JDK support</a>.
      *
-     * @since 5.3.0
-     * @see <a href="https://docs.oracle.com/en/java/javase/11/docs/api/jdk.net/jdk/net/
-     ExtendedSocketOptions.html#TCP_KEEPINTERVAL">
-     *     jdk.net.ExtendedSocketOptions#TCP_KEEPINTERVAL</a>
+     * @since 5.3
+     * @see <a href=
+     *      "https://docs.oracle.com/en/java/javase/11/docs/api/jdk.net/jdk/net/ExtendedSocketOptions.html#TCP_KEEPINTERVAL">
+     *      jdk.net.ExtendedSocketOptions#TCP_KEEPINTERVAL</a>
      */
     public EndpointConfig setSocketKeepIntervalSeconds(int socketKeepIntervalSeconds) {
+        Preconditions.checkPositive("socketKeepIntervalSeconds", socketKeepIntervalSeconds);
+        Preconditions.checkTrue(socketKeepIntervalSeconds < MAX_SOCKET_KEEP_INTERVAL_SECONDS,
+                "socketKeepIntervalSeconds value " + socketKeepIntervalSeconds + " is outside valid range 1 - 32767");
         this.socketKeepIntervalSeconds = socketKeepIntervalSeconds;
         return this;
     }
@@ -403,7 +429,7 @@ public class EndpointConfig implements NamedConfig {
      * <a href="https://bugs.openjdk.org/browse/JDK-8194298">JDK support</a>.
      *
      * @return the configured value of Keep-Alive probe count.
-     * @since 5.3.0
+     * @since 5.3
      * @see <a href="https://docs.oracle.com/en/java/javase/11/docs/api/jdk.net/jdk/net/ExtendedSocketOptions.html#TCP_KEEPCOUNT">
      *     jdk.net.ExtendedSocketOptions#TCP_KEEPCOUNT</a>
      */
@@ -413,16 +439,20 @@ public class EndpointConfig implements NamedConfig {
 
     /**
      * Set the maximum number of TCP keep-alive probes to send before giving up and closing the connection if no
-     * response is obtained from the other side.
+     * response is obtained from the other side. Valid values are 1 to 127.
+     * <p/>
      * This option is only applicable when {@link #setSocketKeepAlive(boolean) keep alive is true}.
      * Requires a recent JDK 8, JDK 11 or greater version that includes the required
      * <a href="https://bugs.openjdk.org/browse/JDK-8194298">JDK support</a>.
      *
-     * @since 5.3.0
+     * @since 5.3
      * @see <a href="https://docs.oracle.com/en/java/javase/11/docs/api/jdk.net/jdk/net/ExtendedSocketOptions.html#TCP_KEEPCOUNT">
      *     jdk.net.ExtendedSocketOptions#TCP_KEEPCOUNT</a>
      */
     public EndpointConfig setSocketKeepCount(int socketKeepCount) {
+        Preconditions.checkPositive("socketKeepCount", socketKeepCount);
+        Preconditions.checkTrue(socketKeepCount < MAX_SOCKET_KEEP_COUNT,
+                "socketKeepCount value " + socketKeepCount + " is outside valid range 1 - 127");
         this.socketKeepCount = socketKeepCount;
         return this;
     }

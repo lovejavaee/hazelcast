@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package com.hazelcast.test.starter;
 
-import com.hazelcast.internal.util.ConcurrentReferenceHashMap;
 import com.hazelcast.internal.util.ConstructorFunction;
 import com.hazelcast.test.starter.constructor.EnumConstructor;
 import net.bytebuddy.ByteBuddy;
@@ -38,7 +37,6 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -48,7 +46,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static com.hazelcast.internal.nio.ClassLoaderUtil.getAllInterfaces;
-import static com.hazelcast.internal.util.ConcurrentReferenceHashMap.ReferenceType.STRONG;
 import static com.hazelcast.test.starter.HazelcastAPIDelegatingClassloader.DELEGATION_WHITE_LIST;
 import static com.hazelcast.test.starter.HazelcastProxyFactory.ProxyPolicy.RETURN_SAME;
 import static com.hazelcast.test.starter.HazelcastStarterUtils.debug;
@@ -76,18 +73,16 @@ public class HazelcastProxyFactory {
 
     // <Class toProxy, ClassLoader targetClassLoader> -> Class<?> proxy mapping for subclass proxies
     // java.lang.reflect.Proxy already maintains its own cache
-    private static final ConcurrentReferenceHashMap<ProxySource, Class<?>> PROXIES
-            = new ConcurrentReferenceHashMap<ProxySource, Class<?>>(16, STRONG, STRONG);
+    private static final Map<ProxySource, Class<?>> PROXIES = new ConcurrentHashMap<>();
 
     // <Class targetClass, ClassLoader targetClassLoader> -> ConstructorFunction<?>
-    private static final ConcurrentReferenceHashMap<Class<?>, ConstructorFunction<Object, Object>> CONSTRUCTORS
-            = new ConcurrentReferenceHashMap<Class<?>, ConstructorFunction<Object, Object>>(16, STRONG, STRONG);
+    private static final Map<Class<?>, ConstructorFunction<Object, Object>> CONSTRUCTORS = new ConcurrentHashMap<>();
 
     static {
         Map<String, Constructor<ConstructorFunction<Object, Object>>> notProxiedClasses
-                = new HashMap<String, Constructor<ConstructorFunction<Object, Object>>>();
-        Set<String> subclassProxiedClasses = new HashSet<String>();
-        Map<String, String> refactoredInterfaces = new HashMap<String, String>();
+                = new HashMap<>();
+        Set<String> subclassProxiedClasses = new HashSet<>();
+        Map<String, String> refactoredInterfaces = new HashMap<>();
 
         Reflections reflections = getReflectionsForTestPackage("com.hazelcast.test.starter.constructor");
         Set<Class<?>> constructorClasses = reflections.getTypesAnnotatedWith(HazelcastStarterConstructor.class);
@@ -164,7 +159,7 @@ public class HazelcastProxyFactory {
             }
             return targetCollection;
         } else if (isJDKClass(arg.getClass()) && Map.class.isAssignableFrom(arg.getClass())) {
-            Map<Object, Object> targetMap = new ConcurrentHashMap<Object, Object>();
+            Map<Object, Object> targetMap = new ConcurrentHashMap<>();
             Map mapArg = (Map) arg;
             for (Object entry : mapArg.entrySet()) {
                 Object key = proxyObjectForStarter(targetClassLoader, ((Map.Entry) entry).getKey());
@@ -236,11 +231,11 @@ public class HazelcastProxyFactory {
         return (T) Proxy.newProxyInstance(proxyTargetClassloader, expectedInterfaces, myInvocationHandler);
     }
 
-    private static boolean isJDKClass(Class clazz) {
+    private static boolean isJDKClass(Class<?> clazz) {
         return clazz.getClassLoader() == String.class.getClassLoader();
     }
 
-    private static boolean isHazelcastAPIDelegatingClassloader(Class clazz) {
+    private static boolean isHazelcastAPIDelegatingClassloader(Class<?> clazz) {
         return HazelcastAPIDelegatingClassloader.class.equals(clazz);
     }
 
@@ -277,7 +272,7 @@ public class HazelcastProxyFactory {
 
     private static Object proxyWithSubclass(ClassLoader targetClassLoader, final Object delegate) {
         ProxySource proxySource = ProxySource.of(delegate.getClass(), targetClassLoader);
-        Class<?> targetClass = PROXIES.applyIfAbsent(proxySource,
+        Class<?> targetClass = PROXIES.computeIfAbsent(proxySource,
                 input -> new ByteBuddy().subclass(input.getToProxy(), AllAsPublicConstructorStrategy.INSTANCE)
                         .method(ElementMatchers.isDeclaredBy(input.getToProxy()))
                         .intercept(InvocationHandlerAdapter.of(new ProxyInvocationHandler(delegate)))
@@ -288,7 +283,7 @@ public class HazelcastProxyFactory {
     }
 
     private static Object construct(Class<?> clazz, Object delegate) {
-        ConstructorFunction<Object, Object> constructorFunction = CONSTRUCTORS.applyIfAbsent(clazz, input -> {
+        ConstructorFunction<Object, Object> constructorFunction = CONSTRUCTORS.computeIfAbsent(clazz, input -> {
             String className = input.getName();
             Constructor<ConstructorFunction<Object, Object>> constructor = NO_PROXYING_WHITELIST.get(className);
             if (constructor != null) {
@@ -308,22 +303,22 @@ public class HazelcastProxyFactory {
     }
 
     private static Object toArray(ClassLoader targetClassLoader, Object arg) throws ClassNotFoundException {
-        if (arg instanceof byte[]) {
-            return copyOf((byte[]) arg, ((byte[]) arg).length);
-        } else if (arg instanceof int[]) {
-            return copyOf((int[]) arg, ((int[]) arg).length);
-        } else if (arg instanceof long[]) {
-            return copyOf((long[]) arg, ((long[]) arg).length);
-        } else if (arg instanceof boolean[]) {
-            return copyOf((boolean[]) arg, ((boolean[]) arg).length);
-        } else if (arg instanceof short[]) {
-            return copyOf((short[]) arg, ((short[]) arg).length);
-        } else if (arg instanceof float[]) {
-            return copyOf((float[]) arg, ((float[]) arg).length);
-        } else if (arg instanceof double[]) {
-            return copyOf((double[]) arg, ((double[]) arg).length);
-        } else if (arg instanceof char[]) {
-            return copyOf((char[]) arg, ((char[]) arg).length);
+        if (arg instanceof byte[] bytes) {
+            return copyOf(bytes, bytes.length);
+        } else if (arg instanceof int[] ints) {
+            return copyOf(ints, ints.length);
+        } else if (arg instanceof long[] longs) {
+            return copyOf(longs, longs.length);
+        } else if (arg instanceof boolean[] booleans) {
+            return copyOf(booleans, booleans.length);
+        } else if (arg instanceof short[] shorts) {
+            return copyOf(shorts, shorts.length);
+        } else if (arg instanceof float[] floats) {
+            return copyOf(floats, floats.length);
+        } else if (arg instanceof double[] doubles) {
+            return copyOf(doubles, doubles.length);
+        } else if (arg instanceof char[] chars) {
+            return copyOf(chars, chars.length);
         }
         Object[] srcArray = ((Object[]) arg);
         Class<?> targetClass = targetClassLoader.loadClass(srcArray.getClass().getComponentType().getName());
@@ -339,7 +334,7 @@ public class HazelcastProxyFactory {
      * {@code type} itself if it's an interface.
      */
     private static Class<?>[] getAllInterfacesIncludingSelf(Class<?> type) {
-        Set<Class<?>> interfaces = new HashSet<Class<?>>(Arrays.asList(getAllInterfaces(type)));
+        Set<Class<?>> interfaces = Set.of(getAllInterfaces(type));
         //if the return type itself is an interface then we have to add it
         //to the list of interfaces implemented by the proxy
         if (type.isInterface()) {
@@ -429,7 +424,7 @@ public class HazelcastProxyFactory {
 
         @Override
         public MethodRegistry inject(TypeDescription instrumentedType, MethodRegistry methodRegistry) {
-            return methodRegistry.append(new LatentMatcher.Resolved<MethodDescription>(isConstructor()),
+            return methodRegistry.append(new LatentMatcher.Resolved<>(isConstructor()),
                     new MethodRegistry.Handler.ForImplementation(SuperMethodCall.INSTANCE),
                     MethodAttributeAppender.NoOp.INSTANCE,
                     Transformer.NoOp.<MethodDescription>make());
@@ -438,7 +433,7 @@ public class HazelcastProxyFactory {
         @Override
         public List<MethodDescription.Token> extractConstructors(TypeDescription instrumentedType) {
             List<MethodDescription.Token> tokens = doExtractConstructors(instrumentedType);
-            List<MethodDescription.Token> stripped = new ArrayList<MethodDescription.Token>(tokens.size());
+            List<MethodDescription.Token> stripped = new ArrayList<>(tokens.size());
             for (MethodDescription.Token token : tokens) {
                 stripped.add(new MethodDescription.Token(token.getName(),
                         ACC_PUBLIC,

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,23 +48,14 @@ public final class AtomicRefDataSerializerHook implements DataSerializerHook {
 
     @Override
     public DataSerializableFactory createFactory() {
-        return typeId -> {
-            switch (typeId) {
-                case SNAPSHOT:
-                    return new AtomicRefSnapshot();
-                case APPLY_OP:
-                    return new ApplyOp();
-                case COMPARE_AND_SET_OP:
-                    return new CompareAndSetOp();
-                case CONTAINS_OP:
-                    return new ContainsOp();
-                case GET_OP:
-                    return new GetOp();
-                case SET_OP:
-                    return new SetOp();
-                default:
-                    throw new IllegalArgumentException("Undefined type: " + typeId);
-            }
+        return typeId -> switch (typeId) {
+            case SNAPSHOT -> new AtomicRefSnapshot();
+            case APPLY_OP -> new ApplyOp();
+            case COMPARE_AND_SET_OP -> new CompareAndSetOp();
+            case CONTAINS_OP -> new ContainsOp();
+            case GET_OP -> new GetOp();
+            case SET_OP -> new SetOp();
+            default -> throw new IllegalArgumentException("Undefined type: " + typeId);
         };
     }
 }

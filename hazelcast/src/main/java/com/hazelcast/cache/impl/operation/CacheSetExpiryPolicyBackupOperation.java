@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,8 +58,8 @@ public class CacheSetExpiryPolicyBackupOperation
         super.afterRun();
         if (recordStore.isWanReplicationEnabled()) {
             for (Data key : keys) {
-                CacheRecord record = recordStore.getRecord(key);
-                publishWanUpdate(key, record);
+                CacheRecord cacheRecord = recordStore.getRecord(key);
+                publishWanUpdate(key, cacheRecord);
             }
         }
     }
@@ -88,7 +88,7 @@ public class CacheSetExpiryPolicyBackupOperation
     protected void readInternal(ObjectDataInput in) throws IOException {
         super.readInternal(in);
         int s = in.readInt();
-        keys = new ArrayList<Data>(s);
+        keys = new ArrayList<>(s);
         while (s-- > 0) {
             keys.add(IOUtil.readData(in));
         }

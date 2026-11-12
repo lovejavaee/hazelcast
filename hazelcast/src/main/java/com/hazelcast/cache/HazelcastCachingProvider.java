@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -169,7 +169,7 @@ public final class HazelcastCachingProvider implements CachingProvider {
      * Same value as {@link #MEMBER_CACHING_PROVIDER}. This field is maintained for backwards compatibility.
      * Its use is discouraged and will be removed in a future version.
      */
-    @Deprecated
+    @Deprecated(since = "4.1", forRemoval = true)
     public static final String SERVER_CACHING_PROVIDER = HazelcastMemberCachingProvider.class.getName();
 
     /**
@@ -191,7 +191,7 @@ public final class HazelcastCachingProvider implements CachingProvider {
     private final CachingProvider delegate;
 
     public HazelcastCachingProvider() {
-        CachingProvider cp = null;
+        CachingProvider cp;
         String providerType = ClusterProperty.JCACHE_PROVIDER_TYPE.getSystemProperty();
         if (providerType != null) {
             if (PROVIDER_TYPE_CLIENT.equals(providerType)) {

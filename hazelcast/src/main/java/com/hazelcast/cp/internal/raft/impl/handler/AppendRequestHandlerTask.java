@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static com.hazelcast.cp.internal.raft.impl.RaftRole.FOLLOWER;
+import static com.hazelcast.cp.internal.raft.impl.dto.AppendFailureResponse.SKIPPED_FOLLOWER_NEXT_INDEX;
 import static java.lang.Math.min;
 
 /**
@@ -50,6 +51,7 @@ import static java.lang.Math.min;
  * @see AppendFailureResponse
  */
 public class AppendRequestHandlerTask extends RaftNodeStatusAwareTask implements Runnable {
+
     private final AppendRequest req;
 
     public AppendRequestHandlerTask(RaftNodeImpl raftNode, AppendRequest req) {
@@ -63,7 +65,7 @@ public class AppendRequestHandlerTask extends RaftNodeStatusAwareTask implements
     // Justification: It is easier to follow the AppendEntriesRPC logic in a single method
     protected void innerRun() {
         if (logger.isFineEnabled()) {
-            logger.fine("Received " + req);
+            logger.fine("Received %s", req);
         }
 
         RaftState state = raftNode.state();
@@ -74,7 +76,7 @@ public class AppendRequestHandlerTask extends RaftNodeStatusAwareTask implements
                 logger.warning("Stale " + req + " received in current term: " + state.term());
             }
 
-            raftNode.send(createFailureResponse(state.term()), req.leader());
+            raftNode.send(createFailureResponse(state.term(), SKIPPED_FOLLOWER_NEXT_INDEX), req.leader());
             return;
         }
 
@@ -101,6 +103,8 @@ public class AppendRequestHandlerTask extends RaftNodeStatusAwareTask implements
             int prevLogTerm;
             if (req.prevLogIndex() == lastLogIndex) {
                 prevLogTerm = lastLogTerm;
+            } else if (req.prevLogIndex() <= raftLog.snapshotIndex()) {
+                prevLogTerm = raftLog.snapshot().term();
             } else {
                 // Reply false if log does not contain an entry at prevLogIndex whose term matches prevLogTerm (§5.3)
                 LogEntry prevLog = raftLog.getLogEntry(req.prevLogIndex());
@@ -109,7 +113,7 @@ public class AppendRequestHandlerTask extends RaftNodeStatusAwareTask implements
                         logger.warning("Failed to get previous log index for " + req + ", last log index: " + lastLogIndex);
                     }
 
-                    raftNode.send(createFailureResponse(req.term()), req.leader());
+                    raftNode.send(createFailureResponse(req.term(), lastLogIndex + 1), req.leader());
                     return;
                 }
                 prevLogTerm = prevLog.term();
@@ -120,7 +124,7 @@ public class AppendRequestHandlerTask extends RaftNodeStatusAwareTask implements
                     logger.warning("Previous log term of " + req + " is different than ours: " + prevLogTerm);
                 }
 
-                raftNode.send(createFailureResponse(req.term()), req.leader());
+                raftNode.send(createFailureResponse(req.term(), SKIPPED_FOLLOWER_NEXT_INDEX), req.leader());
                 return;
             }
         }
@@ -177,7 +181,7 @@ public class AppendRequestHandlerTask extends RaftNodeStatusAwareTask implements
 
                 // Append any new entries not already in the log
                 if (logger.isFineEnabled()) {
-                    logger.fine("Appending " + newEntries.length + " entries: " + Arrays.toString(newEntries));
+                    logger.fine("Appending %s entries: %s", newEntries.length, Arrays.toString(newEntries));
                 }
 
                 raftLog.appendEntries(newEntries);
@@ -196,7 +200,7 @@ public class AppendRequestHandlerTask extends RaftNodeStatusAwareTask implements
             // If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
             long newCommitIndex = min(req.leaderCommitIndex(), lastLogIndex);
             if (logger.isFineEnabled()) {
-                logger.fine("Setting commit index: " + newCommitIndex);
+                logger.fine("Setting commit index: %s", newCommitIndex);
             }
             state.commitIndex(newCommitIndex);
         }
@@ -204,7 +208,8 @@ public class AppendRequestHandlerTask extends RaftNodeStatusAwareTask implements
         raftNode.updateLastAppendEntriesTimestamp();
 
         try {
-            AppendSuccessResponse resp = new AppendSuccessResponse(localMember(), state.term(), lastLogIndex, req.queryRound());
+            AppendSuccessResponse resp = new AppendSuccessResponse(localMember(), state.term(), lastLogIndex,
+                    req.queryRound(), req.flowControlSequenceNumber());
             raftNode.send(resp, req.leader());
         } finally {
             if (state.commitIndex() > oldCommitIndex) {
@@ -227,9 +232,8 @@ public class AppendRequestHandlerTask extends RaftNodeStatusAwareTask implements
 
             if (operation instanceof DestroyRaftGroupCmd) {
                 raftNode.setStatus(RaftNodeStatus.TERMINATING);
-            } else if (operation instanceof UpdateRaftGroupMembersCmd) {
+            } else if (operation instanceof UpdateRaftGroupMembersCmd op) {
                 raftNode.setStatus(RaftNodeStatus.UPDATING_GROUP_MEMBER_LIST);
-                UpdateRaftGroupMembersCmd op = (UpdateRaftGroupMembersCmd) operation;
                 raftNode.updateGroupMembers(entry.index(), op.getMembers());
             } else {
                 assert false : "Invalid command: " + operation + " in " + raftNode.getGroupId();
@@ -260,7 +264,8 @@ public class AppendRequestHandlerTask extends RaftNodeStatusAwareTask implements
         }
     }
 
-    private AppendFailureResponse createFailureResponse(int term) {
-        return new AppendFailureResponse(localMember(), term, req.prevLogIndex() + 1);
+    private AppendFailureResponse createFailureResponse(int term, long followerNextIndex) {
+        return new AppendFailureResponse(localMember(), term, req.prevLogIndex() + 1,
+                req.flowControlSequenceNumber(), followerNextIndex);
     }
 }

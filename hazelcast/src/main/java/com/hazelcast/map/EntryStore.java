@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,17 @@
 package com.hazelcast.map;
 
 import com.hazelcast.map.EntryLoader.MetadataAwareValue;
+import com.hazelcast.spi.annotation.NamespacesSupported;
 
 /**
  * This is an extension to {@link MapStore}. Implementing classes can
  * retrieve expiration dates of entries stored if there is any.
- *
+ * <p>
  * See {@link MapStore}.
  *
  * @param <K> type of the EntryStore key
  * @param <V> type of the EntryStore value
  */
+@NamespacesSupported
 public interface EntryStore<K, V> extends EntryLoader<K, V>, MapStore<K, MetadataAwareValue<V>> {
 }

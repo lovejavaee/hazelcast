@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package com.hazelcast.instance.impl;
 import com.hazelcast.config.AdvancedNetworkConfig;
 import com.hazelcast.config.Config;
 import com.hazelcast.config.EndpointConfig;
-import com.hazelcast.config.InterfacesConfig;
 import com.hazelcast.config.ServerSocketEndpointConfig;
 import com.hazelcast.config.TcpIpConfig;
 import com.hazelcast.instance.AddressPicker;
@@ -46,19 +45,9 @@ class AdvancedNetworkAddressPicker
         this.advancedNetworkConfig = config.getAdvancedNetworkConfig();
 
         for (EndpointConfig endpointConfig : advancedNetworkConfig.getEndpointConfigs().values()) {
-            if (endpointConfig instanceof ServerSocketEndpointConfig) {
-                ServerSocketEndpointConfig serverSocketEndpointConfig = (ServerSocketEndpointConfig) endpointConfig;
-                EndpointQualifier endpointQualifier = serverSocketEndpointConfig.getQualifier();
+            if (endpointConfig instanceof ServerSocketEndpointConfig serverSocketEndpointConfig) {
                 TcpIpConfig tcpIpConfig = advancedNetworkConfig.getJoin().getTcpIpConfig();
-                InterfacesConfig interfacesConfig = serverSocketEndpointConfig.getInterfaces();
-                String publicAddressConfig = serverSocketEndpointConfig.getPublicAddress();
-                boolean isReuseAddress = serverSocketEndpointConfig.isReuseAddress();
-                boolean isPortAutoIncrement = serverSocketEndpointConfig.isPortAutoIncrement();
-                int port = serverSocketEndpointConfig.getPort();
-                int portCount = serverSocketEndpointConfig.getPortCount();
-
-                AddressPicker picker = new DefaultAddressPicker(config, endpointQualifier, interfacesConfig, tcpIpConfig,
-                        isReuseAddress, isPortAutoIncrement, port, portCount, publicAddressConfig, logger);
+                AddressPicker picker = new DefaultAddressPicker(config, serverSocketEndpointConfig, tcpIpConfig, logger);
                 pickers.put(endpointConfig.getQualifier(), picker);
             }
         }
@@ -85,7 +74,7 @@ class AdvancedNetworkAddressPicker
     @Override
     public Map<EndpointQualifier, Address> getPublicAddressMap() {
         Map<EndpointQualifier, Address> pubAddressMap = new HashMap<>(pickers.size());
-        for (Map.Entry<EndpointQualifier, AddressPicker>  entry : pickers.entrySet()) {
+        for (Map.Entry<EndpointQualifier, AddressPicker> entry : pickers.entrySet()) {
             pubAddressMap.put(entry.getKey(), entry.getValue().getPublicAddress(entry.getKey()));
         }
 
@@ -95,7 +84,7 @@ class AdvancedNetworkAddressPicker
     @Override
     public Map<EndpointQualifier, Address> getBindAddressMap() {
         Map<EndpointQualifier, Address> bindAddressMap = new HashMap<>(pickers.size());
-        for (Map.Entry<EndpointQualifier, AddressPicker>  entry : pickers.entrySet()) {
+        for (Map.Entry<EndpointQualifier, AddressPicker> entry : pickers.entrySet()) {
             bindAddressMap.put(entry.getKey(), entry.getValue().getBindAddress(entry.getKey()));
         }
 
@@ -110,7 +99,7 @@ class AdvancedNetworkAddressPicker
     @Override
     public Map<EndpointQualifier, ServerSocketChannel> getServerSocketChannels() {
         Map<EndpointQualifier, ServerSocketChannel> channels = new HashMap<>(pickers.size());
-        for (Map.Entry<EndpointQualifier, AddressPicker>  entry : pickers.entrySet()) {
+        for (Map.Entry<EndpointQualifier, AddressPicker> entry : pickers.entrySet()) {
             channels.put(entry.getKey(), entry.getValue().getServerSocketChannel(entry.getKey()));
         }
 

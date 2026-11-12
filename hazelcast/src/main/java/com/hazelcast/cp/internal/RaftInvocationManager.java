@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,9 +24,6 @@ import com.hazelcast.cp.internal.operation.ChangeRaftGroupMembershipOp;
 import com.hazelcast.cp.internal.operation.DefaultRaftReplicateOp;
 import com.hazelcast.cp.internal.operation.DestroyRaftGroupOp;
 import com.hazelcast.cp.internal.operation.RaftQueryOp;
-import com.hazelcast.cp.internal.operation.unsafe.AbstractUnsafeRaftOp;
-import com.hazelcast.cp.internal.operation.unsafe.UnsafeRaftQueryOp;
-import com.hazelcast.cp.internal.operation.unsafe.UnsafeRaftReplicateOp;
 import com.hazelcast.cp.internal.raft.MembershipChangeMode;
 import com.hazelcast.cp.internal.raft.QueryPolicy;
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
@@ -70,10 +67,11 @@ public class RaftInvocationManager {
 
     private static final int RANDOM_RAFT_GROUP_INDEX_RANGE = 10000;
 
-    private final NodeEngineImpl nodeEngine;
+    protected final NodeEngineImpl nodeEngine;
+    protected final RaftService raftService;
+    protected final ILogger logger;
+
     private final OperationServiceImpl operationService;
-    private final RaftService raftService;
-    private final ILogger logger;
     private final RaftInvocationContext raftInvocationContext;
     private final long operationCallTimeout;
     private final int invocationMaxRetryCount;
@@ -137,7 +135,7 @@ public class RaftInvocationManager {
             }
 
             long groupIndex = generateRandomGroupIndex(groupIds);
-            List<RaftEndpoint> groupEndpoints = generateRandomGroupMembers(cpMembers, groupSize);
+            List<CPMemberInfo> groupEndpoints = generateGroupMembers(cpMembers, groupSize);
             invokeCreateRaftGroup(groupName, groupSize, groupIndex, groupEndpoints, resultFuture);
             return null;
         }, internalAsyncExecutor).exceptionally(t -> {
@@ -148,32 +146,46 @@ public class RaftInvocationManager {
 
     private long generateRandomGroupIndex(Collection<RaftGroupId> groupIds) {
         long groupIndex = RandomPicker.getInt(RANDOM_RAFT_GROUP_INDEX_RANGE);
-        if (groupIds.size() > 0) {
+        if (!groupIds.isEmpty()) {
             groupIndex += groupIds.stream().mapToLong(RaftGroupId::getId).max().getAsLong();
         }
 
         return groupIndex;
     }
 
-    private List<RaftEndpoint> generateRandomGroupMembers(List<CPMemberInfo> cpMembers, int groupSize) {
+    // overriden in ee
+    protected List<CPMemberInfo> generateGroupMembers(List<CPMemberInfo> cpMembers, int groupSize) {
         cpMembers = new ArrayList<>(cpMembers);
         shuffle(cpMembers);
-
         return cpMembers.stream()
-                        .sorted(new CPMemberReachabilityComparator())
-                        .limit(groupSize)
-                        .map(CPMemberInfo::toRaftEndpoint)
-                        .collect(Collectors.toList());
+                .sorted(new CPMemberReachabilityComparator())
+                .limit(groupSize)
+                .collect(Collectors.toList());
     }
 
     /**
      * This method needs to be public to allow to create CP groups in
      * integration tests deterministically
      */
-    public void invokeCreateRaftGroup(String groupName, int groupSize, long groupIndex, List<RaftEndpoint> members,
+    public void invokeCreateRaftGroup(String groupName, int groupSize, long groupIndex, List<CPMemberInfo> members,
                                        InternalCompletableFuture<RaftGroupId> resultFuture) {
+
+        // This method is public for access of the testing, but in case it is mistakenly
+        // used in production, we need to validate some conditions.
+        if (groupSize != members.size()) {
+            throw new IllegalArgumentException("Group size must be equal to the number of members");
+        }
+
+        if (members.stream().allMatch(CPMemberInfo::isAutoStepDownWhenLeader)) {
+            throw new IllegalStateException("Cannot create CP group with only members "
+                    + "which automatically step down from leadership.");
+        }
+
+
         InternalCompletableFuture<CPGroupSummary> f =
-                invoke(raftService.getMetadataGroupId(), new CreateRaftGroupOp(groupName, members, groupIndex));
+                invoke(raftService.getMetadataGroupId(), new CreateRaftGroupOp(groupName,
+                        members.stream().map(CPMemberInfo::toRaftEndpoint).collect(Collectors.toList()),
+                        groupIndex));
 
         f.whenCompleteAsync((group, t) -> {
             if (t == null) {
@@ -222,27 +234,18 @@ public class RaftInvocationManager {
     }
 
     public <T> InternalCompletableFuture<T> invoke(CPGroupId groupId, RaftOp raftOp, boolean deserializeResponse) {
-        if (cpSubsystemEnabled) {
-            Operation operation = new DefaultRaftReplicateOp(groupId, raftOp);
-            Invocation invocation =
-                    new RaftInvocation(operationService.getInvocationContext(), raftInvocationContext, groupId, operation,
-                            invocationMaxRetryCount, invocationRetryPauseMillis, operationCallTimeout, deserializeResponse);
-            return invocation.invoke();
-        }
-        return invokeOnPartition(new UnsafeRaftReplicateOp(groupId, raftOp), deserializeResponse);
+        Operation operation = new DefaultRaftReplicateOp(groupId, raftOp);
+        Invocation invocation =
+                new RaftInvocation(operationService.getInvocationContext(), raftInvocationContext, groupId, operation,
+                        invocationMaxRetryCount, invocationRetryPauseMillis, operationCallTimeout, deserializeResponse);
+        return invocation.invoke();
     }
 
-    public <T> InternalCompletableFuture<T> invokeOnPartition(AbstractUnsafeRaftOp operation) {
-        return invokeOnPartition(operation, DEFAULT_DESERIALIZE_RESULT);
-    }
-
-    public <T> InternalCompletableFuture<T> invokeOnPartition(AbstractUnsafeRaftOp operation, boolean deserializeResponse) {
-        int partitionId = raftService.getCPGroupPartitionId(operation.getGroupId());
-        return nodeEngine.getOperationService().createInvocationBuilder(operation.getServiceName(), operation, partitionId)
-                .setCallTimeout(operationCallTimeout)
-                .setTryCount(invocationMaxRetryCount)
-                .setTryPauseMillis(invocationRetryPauseMillis)
-                .setResultDeserialized(deserializeResponse).invoke();
+    protected void invokeOnGroupAsync(CPGroupId groupId, Operation operation) {
+        Invocation invocation = new RaftInvocation(operationService.getInvocationContext(),
+                raftInvocationContext, groupId, operation,
+                invocationMaxRetryCount, invocationRetryPauseMillis, operationCallTimeout);
+        invocation.invokeAsync();
     }
 
     public <T> InternalCompletableFuture<T> query(CPGroupId groupId, RaftOp raftOp, QueryPolicy queryPolicy) {
@@ -251,27 +254,22 @@ public class RaftInvocationManager {
 
     public <T> InternalCompletableFuture<T> query(CPGroupId groupId, RaftOp raftOp, QueryPolicy queryPolicy,
             boolean deserializeResponse) {
-        if (cpSubsystemEnabled) {
             RaftQueryOp operation = new RaftQueryOp(groupId, raftOp, queryPolicy);
             Invocation invocation = new RaftInvocation(operationService.getInvocationContext(), raftInvocationContext,
                     groupId, operation, invocationMaxRetryCount, invocationRetryPauseMillis,
                     operationCallTimeout, deserializeResponse);
             return invocation.invoke();
-        }
-        return invokeOnPartition(new UnsafeRaftQueryOp(groupId, raftOp), deserializeResponse);
     }
 
     public <T> InternalCompletableFuture<T> queryLocally(CPGroupId groupId, RaftOp raftOp, QueryPolicy queryPolicy) {
         Operation operation;
-        if (cpSubsystemEnabled) {
-            operation = new RaftQueryOp(groupId, raftOp, queryPolicy);
-        } else {
-            operation = new UnsafeRaftQueryOp(groupId, raftOp);
-        }
+        operation = new RaftQueryOp(groupId, raftOp, queryPolicy);
+
         operation.setPartitionId(raftService.getCPGroupPartitionId(groupId));
         return nodeEngine.getOperationService().invokeOnTarget(RaftService.SERVICE_NAME, operation, nodeEngine.getThisAddress());
     }
 
+    // this method will not trigger group destruction on the calling member, but will propigate to other group members
     public InternalCompletableFuture<Object> destroy(CPGroupId groupId) {
         InternalCompletableFuture<Object> completedFuture = completeExceptionallyIfCPSubsystemNotAvailable();
         if (completedFuture != null) {
@@ -291,7 +289,7 @@ public class RaftInvocationManager {
         return endpoint != null ? raftInvocationContext.getCPMember(endpoint.getUuid()) : null;
     }
 
-    private class CPMemberReachabilityComparator implements Comparator<CPMemberInfo> {
+    class CPMemberReachabilityComparator implements Comparator<CPMemberInfo> {
         final ClusterService clusterService = nodeEngine.getClusterService();
 
         @Override

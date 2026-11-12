@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,9 @@
 
 package com.hazelcast.jet.kinesis.impl;
 
-import com.amazonaws.services.kinesis.model.Shard;
 import com.hazelcast.jet.JetException;
 import com.hazelcast.jet.kinesis.impl.source.HashRange;
+import software.amazon.awssdk.services.kinesis.model.Shard;
 
 import javax.annotation.Nonnull;
 import java.math.BigInteger;
@@ -45,7 +45,7 @@ public final class KinesisUtil {
     }
 
     public static boolean shardBelongsToRange(@Nonnull Shard shard, @Nonnull HashRange range) {
-        BigInteger startingHashKey = new BigInteger(shard.getHashKeyRange().getStartingHashKey());
+        BigInteger startingHashKey = new BigInteger(shard.hashKeyRange().startingHashKey());
         return shardBelongsToRange(startingHashKey, range);
     }
 }

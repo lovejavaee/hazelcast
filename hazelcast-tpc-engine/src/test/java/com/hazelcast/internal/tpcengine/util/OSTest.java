@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,17 +69,12 @@ public class OSTest {
     }
 
     @Test
-    public void test_linuxMinorVersion0_whenisLinux() {
+    public void test_linuxMinorVersion0_whenIsLinux() {
         assertEquals(16, OS.linuxMinorVersion0("5.16.12-200.fc35.x86_64", true));
     }
 
     @Test
     public void test_linuxMinorVersion0_whenNotIsLinux() {
         assertEquals(-1, OS.linuxMinorVersion0("5.16.12-200.fc35.x86_64", false));
-    }
-
-    @Test
-    public void test_pageSize() {
-        assertEquals(UnsafeLocator.UNSAFE.pageSize(), OS.pageSize());
     }
 }

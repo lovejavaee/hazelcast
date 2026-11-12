@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,23 +26,27 @@ import com.hazelcast.function.SupplierEx;
 import com.hazelcast.jet.core.Processor;
 import com.hazelcast.jet.core.Processor.Context;
 import com.hazelcast.jet.core.ProcessorMetaSupplier;
+import com.hazelcast.jet.core.ProcessorSupplier;
 import com.hazelcast.jet.impl.connector.HazelcastWriters;
+import com.hazelcast.jet.impl.connector.MapSinkConfiguration;
+import com.hazelcast.jet.impl.connector.MapSinkEntryProcessorConfiguration;
 import com.hazelcast.jet.impl.connector.WriteBufferedP;
 import com.hazelcast.jet.impl.connector.WriteFileP;
 import com.hazelcast.jet.impl.connector.WriteJdbcP;
 import com.hazelcast.jet.impl.connector.WriteJmsP;
+import com.hazelcast.jet.impl.util.ImdgUtil;
 import com.hazelcast.jet.pipeline.DataConnectionRef;
 import com.hazelcast.jet.pipeline.Sinks;
 import com.hazelcast.map.EntryProcessor;
 import com.hazelcast.security.impl.function.SecuredFunctions;
 import com.hazelcast.security.permission.ConnectorPermission;
 import com.hazelcast.spi.annotation.Beta;
+import jakarta.jms.Connection;
+import jakarta.jms.Message;
+import jakarta.jms.Session;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import javax.jms.Connection;
-import javax.jms.Message;
-import javax.jms.Session;
 import javax.sql.CommonDataSource;
 import java.io.BufferedWriter;
 import java.nio.charset.Charset;
@@ -54,6 +58,7 @@ import static com.hazelcast.internal.util.Preconditions.checkNotNull;
 import static com.hazelcast.internal.util.Preconditions.checkPositive;
 import static com.hazelcast.jet.core.ProcessorMetaSupplier.preferLocalParallelismOne;
 import static com.hazelcast.jet.impl.util.Util.checkSerializable;
+import static com.hazelcast.security.impl.function.SecuredFunctions.validateContext;
 import static com.hazelcast.security.permission.ActionConstants.ACTION_WRITE;
 
 /**
@@ -73,7 +78,10 @@ public final class SinkProcessors {
      */
     @Nonnull
     public static <K, V> ProcessorMetaSupplier writeMapP(@Nonnull String mapName) {
-        return writeMapP(mapName, Map.Entry::getKey, Map.Entry<K, V>::getValue);
+        MapSinkConfiguration<Map.Entry<K, V>, K, V> params = new MapSinkConfiguration<>(mapName);
+        params.setToKeyFn(Map.Entry::getKey);
+        params.setToValueFn(Map.Entry::getValue);
+        return writeMapP(params);
     }
 
     /**
@@ -126,7 +134,11 @@ public final class SinkProcessors {
             @Nonnull FunctionEx<? super T, ? extends V> toValueFn,
             @Nonnull BinaryOperatorEx<V> mergeFn
     ) {
-        return HazelcastWriters.mergeMapSupplier(mapName, null, toKeyFn, toValueFn, mergeFn);
+        MapSinkConfiguration<T, K, V> config = new MapSinkConfiguration<>(mapName);
+        config.setToKeyFn(toKeyFn);
+        config.setToValueFn(toValueFn);
+        config.setMergeFn(mergeFn);
+        return HazelcastWriters.mergeMapSupplier(config);
     }
 
     /**
@@ -142,7 +154,12 @@ public final class SinkProcessors {
             @Nonnull FunctionEx<? super T, ? extends V> toValueFn,
             @Nonnull BinaryOperatorEx<V> mergeFn
     ) {
-        return HazelcastWriters.mergeMapSupplier(mapName, clientConfig, toKeyFn, toValueFn, mergeFn);
+        MapSinkConfiguration<T, K, V> config = new MapSinkConfiguration<>(mapName);
+        config.setClientXml(ImdgUtil.asXmlString(clientConfig));
+        config.setToKeyFn(toKeyFn);
+        config.setToValueFn(toValueFn);
+        config.setMergeFn(mergeFn);
+        return HazelcastWriters.mergeMapSupplier(config);
     }
 
     /**
@@ -199,7 +216,11 @@ public final class SinkProcessors {
             @Nonnull FunctionEx<? super T, ? extends EntryProcessor<K, V, R>> toEntryProcessorFn
 
     ) {
-        return HazelcastWriters.updateMapSupplier(maxParallelAsyncOps, mapName, null, toKeyFn, toEntryProcessorFn);
+        MapSinkEntryProcessorConfiguration<T, K, V, R> config = new MapSinkEntryProcessorConfiguration<>(mapName);
+        config.setMaxParallelAsyncOps(maxParallelAsyncOps);
+        config.setToKeyFn(toKeyFn);
+        config.setToEntryProcessorFn(toEntryProcessorFn);
+        return HazelcastWriters.updateMapSupplier(config);
     }
 
     /**
@@ -215,6 +236,19 @@ public final class SinkProcessors {
             @Nonnull FunctionEx<? super T, ? extends EntryProcessor<K, V, R>> toEntryProcessorFn
     ) {
         return HazelcastWriters.updateMapSupplier(mapName, clientConfig, toKeyFn, toEntryProcessorFn);
+    }
+
+    /**
+     * Returns a supplier of processors
+     */
+    @Nonnull
+    public static <T, K, V> ProcessorMetaSupplier writeMapP(MapSinkConfiguration<T, K, V> configuration) {
+        return HazelcastWriters.writeMapSupplier(configuration);
+    }
+
+    @Nonnull
+    public static <T, K, V> ProcessorMetaSupplier updateMapP(MapSinkConfiguration<T, K, V> configuration) {
+        return HazelcastWriters.updateMapSupplier(configuration);
     }
 
     /**
@@ -270,7 +304,7 @@ public final class SinkProcessors {
         String charsetName = charset.name();
         return preferLocalParallelismOne(
                 ConnectorPermission.socket(host, port, ACTION_WRITE),
-                writeBufferedP(
+                ProcessorSupplier.of(writeBufferedP(
                         SecuredFunctions.createBufferedWriterFn(host, port, charsetName),
                         (bufferedWriter, item) -> {
                             @SuppressWarnings("unchecked")
@@ -280,7 +314,7 @@ public final class SinkProcessors {
                         },
                         BufferedWriter::flush,
                         BufferedWriter::close
-                ));
+                )));
     }
 
     /**
@@ -392,7 +426,10 @@ public final class SinkProcessors {
         checkNotNull(dataSourceSupplier, "dataSourceSupplier");
         checkNotNull(bindFn, "bindFn");
         checkPositive(batchLimit, "batchLimit");
-        return WriteJdbcP.metaSupplier(jdbcUrl, updateQuery, ctx -> dataSourceSupplier.get(),
+        return WriteJdbcP.metaSupplier(jdbcUrl, updateQuery, ctx -> {
+                    validateContext(ctx);
+                    return dataSourceSupplier.get();
+                },
                 bindFn, exactlyOnce, batchLimit);
     }
 

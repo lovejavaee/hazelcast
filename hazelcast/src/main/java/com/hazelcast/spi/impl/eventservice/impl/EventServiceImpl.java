@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,16 +18,17 @@ package com.hazelcast.spi.impl.eventservice.impl;
 
 import com.hazelcast.cluster.Address;
 import com.hazelcast.cluster.impl.MemberImpl;
+import com.hazelcast.core.HazelcastInstanceNotActiveException;
 import com.hazelcast.internal.cluster.ClusterService;
 import com.hazelcast.internal.metrics.MetricDescriptor;
 import com.hazelcast.internal.metrics.MetricsRegistry;
 import com.hazelcast.internal.metrics.Probe;
 import com.hazelcast.internal.metrics.StaticMetricsProvider;
 import com.hazelcast.internal.nio.Connection;
-import com.hazelcast.internal.server.ServerConnectionManager;
 import com.hazelcast.internal.nio.Packet;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.serialization.InternalSerializationService;
+import com.hazelcast.internal.server.ServerConnectionManager;
 import com.hazelcast.internal.util.UuidUtil;
 import com.hazelcast.internal.util.counters.MwCounter;
 import com.hazelcast.internal.util.executor.StripedExecutor;
@@ -38,6 +39,7 @@ import com.hazelcast.spi.impl.eventservice.EventRegistration;
 import com.hazelcast.spi.impl.eventservice.EventService;
 import com.hazelcast.spi.impl.eventservice.impl.operations.DeregistrationOperationSupplier;
 import com.hazelcast.spi.impl.eventservice.impl.operations.OnJoinRegistrationOperation;
+import com.hazelcast.spi.impl.eventservice.impl.operations.RegistrationOperation;
 import com.hazelcast.spi.impl.eventservice.impl.operations.RegistrationOperationSupplier;
 import com.hazelcast.spi.impl.eventservice.impl.operations.SendEventOperation;
 import com.hazelcast.spi.impl.operationservice.Operation;
@@ -89,14 +91,14 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
  * Service responsible for routing and dispatching local and remote events and keeping track of listener
  * registrations. Local events are events published on a local subscriber (the subscriber is on this node)
  * and remote events are published on a remote subscriber (the subscriber is on a different node and the
- * event is sent to that node). The remote events are generally asnychronous meaning that we send the event
+ * event is sent to that node). The remote events are generally asynchronous meaning that we send the event
  * and don't wait for the response. The exception to this is that every {@link #eventSyncFrequency} remote
- * event is sent as an operation and we wait for it to be submitted to the remote queue.
+ * event is sent as an operation, and we wait for it to be submitted to the remote queue.
  * <p>
  * This implementation keeps registrations grouped into {@link EventServiceSegment}s. Each segment is
  * responsible for a single service (e.g. map service, cluster service, proxy service).
  * <p>
- * The events are processed on a {@link StripedExecutor}. The executor has a fixed queue and thread size
+ * The events are processed on a {@link StripedExecutor}. The executor has a fixed queue and thread size,
  * and it is shared between all events meaning that it is important to configure it correctly. Inadequate thread
  * count sizing can lead to wasted threads or low throughput. Inadequate queue size can lead
  * to {@link OutOfMemoryError} or events being dropped when the queue is full.
@@ -104,7 +106,7 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
  * define your custom ordering. Events with the same order key will be processed by the same thread on
  * the executor.
  * <p>
- * This order can still be broken in some cases. This is possible because remote events are asynchronous
+ * This order can still be broken in some cases. This is possible because remote events are asynchronous,
  * and we don't wait for the response before publishing the next event. The previously published
  * event can be retransmitted causing it to be received by the target node at a later time.
  */
@@ -137,7 +139,7 @@ public class EventServiceImpl implements EventService, StaticMetricsProvider {
      */
     private static final int SEND_RETRY_COUNT = 50;
     /**
-     * How often failures are logged with {@link Level#WARNING}. Otherwise the failures are
+     * How often failures are logged with {@link Level#WARNING}. Otherwise, the failures are
      * logged with a lower log level.
      */
     private static final int WARNING_LOG_FREQUENCY = 1000;
@@ -179,6 +181,8 @@ public class EventServiceImpl implements EventService, StaticMetricsProvider {
 
     private final InternalSerializationService serializationService;
     private final int eventSyncFrequency;
+
+    private final ConcurrentMap<UUID, Object> listenerCache = new ConcurrentHashMap<>();
 
     public EventServiceImpl(NodeEngineImpl nodeEngine) {
         this.nodeEngine = nodeEngine;
@@ -354,12 +358,11 @@ public class EventServiceImpl implements EventService, StaticMetricsProvider {
                 .thenApplyAsync(result -> reg, CALLER_RUNS);
     }
 
-    public boolean handleRegistration(Registration reg) {
-        if (nodeEngine.getThisAddress().equals(reg.getSubscriber())) {
-            return false;
-        }
-        EventServiceSegment segment = getSegment(reg.getServiceName(), true);
-        return segment.addRegistration(reg.getTopic(), reg);
+    private CompletableFuture<EventRegistration> invokeOnSubscriber(Registration reg, Supplier<Operation> operationSupplier) {
+        return nodeEngine.getOperationService().createInvocationBuilder(
+                        reg.getServiceName(), operationSupplier.get(), reg.getSubscriber())
+                .setTryCount(MAX_RETRIES).invoke()
+                .thenApplyAsync(result -> reg, CALLER_RUNS);
     }
 
     @Override
@@ -421,6 +424,47 @@ public class EventServiceImpl implements EventService, StaticMetricsProvider {
                 }
             }
         }
+    }
+
+    public void cacheListener(Registration registration) {
+        listenerCache.put(registration.getId(), registration.getListener());
+    }
+
+    /**
+     * Adds a {@link Registration} to the corresponding {@link EventServiceSegment} by
+     * avoiding duplicate local registrations.
+     * @implNote There are three code paths for this method: <ol>
+     * <li> {@link #registerListener0} → invokeOnAllMembers({@link RegistrationOperation}).
+     *      In this case, the local registration is already done in {@code registerListener0}
+     *      and thus need to be ignored.
+     * <li> {@code JobProxy.addStatusListener} → {@code AddJobStatusListenerOperation} →
+     *      {@code MasterContext} → {@link #handleAllRegistrations} →
+     *      invokeOnAllMembers({@link RegistrationOperation}). In this case, the local
+     *      registration is new and thus need to be performed.
+     * <li> {@link OnJoinRegistrationOperation}. In this case, no local registration is
+     *      expected. </ol>
+     * The distinction between cases 1 and 2 is made by checking the {@link #listenerCache}
+     * and the local registration is made only if there is an entry in the cache. This,
+     * however, makes it impossible to diagnose {@linkplain #cacheListener caching} failures.
+     */
+    public void handleRegistration(Registration registration) {
+        if (isLocal(registration)) {
+            Object listener = listenerCache.remove(registration.getId());
+            if (listener == null) {
+                return;
+            }
+            registration.setListener(listener);
+        }
+        EventServiceSegment segment = getSegment(registration.getServiceName(), true);
+        segment.addRegistration(registration.getTopic(), registration);
+    }
+
+    public EventRegistration handleAllRegistrations(Registration registration, int orderKey) {
+        ClusterService clusterService = nodeEngine.getClusterService();
+        Supplier<Operation> op = new RegistrationOperationSupplier(registration, orderKey, clusterService);
+        return getValue(registration.isLocalOnly()
+                ? invokeOnSubscriber(registration, op)
+                : invokeOnAllMembers(registration, op));
     }
 
     public StripedExecutor getEventExecutor() {
@@ -559,8 +603,8 @@ public class EventServiceImpl implements EventService, StaticMetricsProvider {
         Registration reg = (Registration) registration;
         try {
             if (reg.getListener() != null) {
-                eventExecutor.execute(new LocalEventDispatcher(this, serviceName, event, reg.getListener()
-                        , orderKey, eventQueueTimeoutMs));
+                eventExecutor.execute(new LocalEventDispatcher(this, serviceName, event, reg.getListener(),
+                        orderKey, eventQueueTimeoutMs));
             } else {
                 logger.warning("Something seems wrong! Listener instance is null! -> " + reg);
             }
@@ -657,7 +701,23 @@ public class EventServiceImpl implements EventService, StaticMetricsProvider {
      */
     @Override
     public void executeEventCallback(@Nonnull Runnable callback) {
+        executeEventCallback(callback, false);
+    }
+
+    /**
+     * Same as {@link #executeEventCallback(Runnable)} but optionally throws exceptions if
+     * the callback was not accepted for execution.
+     *
+     * @param callback the callback to execute on a random event thread
+     * @param shouldThrow if the exceptions should be thrown
+     * @throws HazelcastInstanceNotActiveException when instance is not active
+     * @throws RejectedExecutionException if the worker is the overloaded
+     */
+    public void executeEventCallback(@Nonnull Runnable callback, boolean shouldThrow) {
         if (!nodeEngine.isRunning()) {
+            if (shouldThrow) {
+                throw new HazelcastInstanceNotActiveException();
+            }
             return;
         }
         try {
@@ -667,6 +727,10 @@ public class EventServiceImpl implements EventService, StaticMetricsProvider {
 
             if (eventExecutor.isLive()) {
                 logFailure("EventQueue overloaded! Failed to execute event callback: %s", callback);
+            }
+
+            if (shouldThrow) {
+                throw e;
             }
         }
     }
@@ -753,7 +817,7 @@ public class EventServiceImpl implements EventService, StaticMetricsProvider {
         long total = totalFailures.get();
 
         // it can happen that 2 threads at the same conclude that the level should be warn because of the
-        // non atomic int/get. This is an acceptable trade of since it is unlikely to happen and you only get
+        // non-atomic int/get. This is an acceptable trade of since it is unlikely to happen, and you only get
         // additional warning under log as a side effect.
         Level level = total % WARNING_LOG_FREQUENCY == 0
                 ? Level.WARNING : Level.FINEST;

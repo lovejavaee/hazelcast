@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ~ Copyright 2023 Hazelcast Inc.
+  ~ Copyright 2026 Hazelcast Inc.
   ~
   ~ Licensed under the Hazelcast Community License (the "License");
   ~ you may not use this file except in compliance with the License.
@@ -30,25 +30,24 @@
     <parent>
         <groupId>com.hazelcast</groupId>
         <artifactId>hazelcast-root</artifactId>
-        <version>5.3.0-SNAPSHOT</version>
+        <version>6.0.0-SNAPSHOT</version>
     </parent>
 
     <modules>
         <module>avro</module>
-        <module>cdc-debezium</module>
-        <module>cdc-mysql</module>
-        <module>cdc-postgres</module>
         <module>csv</module>
-        <module>elasticsearch/elasticsearch-6</module>
+        <module>cdc-debezium</module>
+        <module>cdc-postgres</module>
+        <module>cdc-mysql</module>
         <module>elasticsearch/elasticsearch-7</module>
         <module>hadoop</module>
         <module>hadoop-dist</module>
-        <module>hazelcast-3-connector</module>
         <module>kafka</module>
         <module>kafka-connect</module>
         <module>kinesis</module>
         <module>mapstore</module>
         <module>mongodb</module>
+        <module>pulsar</module>
         <module>s3</module>
     </modules>
 
@@ -70,23 +69,23 @@
 
     <properties>
         <argLine> <!-- surefire parameters -->
+            ${commonArgLine}
+            ${vmHeapSettings}
+            ${javaModuleArgs}
             -Xmx1G
             -Xms1G
             -XX:+AlwaysPreTouch
-            -Dhazelcast.phone.home.enabled=false
-            -Dhazelcast.logging.type=log4j2
             -Dhazelcast.logging.details.enabled=true
             -Dhazelcast.test.use.network=false
-            -Djava.net.preferIPv4Stack=true
             -XX:+HeapDumpOnOutOfMemoryError
             -XX:HeapDumpPath=${project.build.directory}
+            ${extraVmArgs}
         </argLine>
+        <dependenciesToScan>${project.parent.groupId}:hazelcast-archunit-rules</dependenciesToScan>
 
         <!-- needed for CheckStyle -->
-        <main.basedir>${project.basedir}/../..</main.basedir>
+        <main.basedir>${project.parent.basedir}</main.basedir>
         <checkstyle.headerLocation>${main.basedir}/checkstyle/ClassHeaderHazelcastCommunity.txt</checkstyle.headerLocation>
-        <checkstyle.configLocation>${main.basedir}/checkstyle/checkstyle_jet.xml</checkstyle.configLocation>
-        <checkstyle.supressionsLocation>${main.basedir}/checkstyle/suppressions_jet.xml</checkstyle.supressionsLocation>
     </properties>
 
     <licenses>
@@ -96,6 +95,18 @@
             <distribution>repo</distribution>
         </license>
     </licenses>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws.sdk2.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <dependency>
@@ -118,6 +129,11 @@
             <version>${project.parent.version}</version>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-slf4j2-impl</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -133,24 +149,40 @@
                             <goals>
                                 <goal>shade</goal>
                             </goals>
+                            <configuration>
+                                <createSourcesJar>${maven.shade.createSourcesJar}</createSourcesJar>
+                                <shadeSourcesContent>${maven.shade.createSourcesJar}</shadeSourcesContent>
+                                <createDependencyReducedPom>false</createDependencyReducedPom>
+                                <shadedArtifactAttached>true</shadedArtifactAttached>
+                                <shadedClassifierName>jar-with-dependencies</shadedClassifierName>
+                            </configuration>
                         </execution>
                     </executions>
                     <configuration>
-                        <createSourcesJar>true</createSourcesJar>
-                        <shadeSourcesContent>true</shadeSourcesContent>
-                        <createDependencyReducedPom>true</createDependencyReducedPom>
-                        <shadedArtifactAttached>true</shadedArtifactAttached>
-                        <shadedClassifierName>jar-with-dependencies</shadedClassifierName>
                         <transformers>
                             <transformer
-                                    implementation="com.hazelcast.buildutils.HazelcastLicenseResourceTransformer" />
+                                implementation="com.hazelcast.buildutils.HazelcastLicenseResourceTransformer" />
                             <transformer
-                                    implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer" />
+                                implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer" />
                             <transformer
-                                    implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
-                            <transformer
-                                    implementation="com.hazelcast.buildutils.HazelcastManifestTransformer"/>
+                                implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
+                            <transformer implementation="com.hazelcast.buildutils.HazelcastManifestTransformer">
+                                <manifestEntries>
+                                    <Multi-Release>true</Multi-Release>
+                                </manifestEntries>
+                            </transformer>
                         </transformers>
+                        <filters>
+                            <filter>
+                                <artifact>*:*</artifact>
+                                <excludes>
+                                    <exclude>module-info.class</exclude>
+                                    <exclude>META-INF/*.SF</exclude>
+                                    <exclude>META-INF/*.DSA</exclude>
+                                    <exclude>META-INF/*.RSA</exclude>
+                                </excludes>
+                            </filter>
+                        </filters>
                     </configuration>
                     <dependencies>
                         <dependency>
@@ -162,5 +194,16 @@
                 </plugin>
             </plugins>
         </pluginManagement>
+
+        <plugins>
+            <!-- needed to take argLine into consideration and avoid picking log4j2.yml from Kafka -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>${argLine}</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
     </build>
 </project>

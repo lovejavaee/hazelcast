@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ package com.hazelcast.jet.mongodb;
 
 import com.google.common.collect.Sets;
 import com.hazelcast.collection.IList;
+import com.hazelcast.function.BiFunctionEx;
+import com.hazelcast.function.FunctionEx;
 import com.hazelcast.jet.Job;
 import com.hazelcast.jet.config.JobConfig;
 import com.hazelcast.jet.mongodb.MongoSourceBuilder.Batch;
@@ -27,9 +29,10 @@ import com.hazelcast.jet.pipeline.DataConnectionRef;
 import com.hazelcast.jet.pipeline.Pipeline;
 import com.hazelcast.jet.pipeline.Sinks;
 import com.hazelcast.test.HazelcastParametrizedRunner;
-import com.hazelcast.test.annotation.QuickTest;
+import com.hazelcast.test.annotation.NightlyTest;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
+import com.mongodb.client.model.changestream.ChangeStreamDocument;
 import org.bson.BsonTimestamp;
 import org.bson.Document;
 import org.junit.Test;
@@ -39,21 +42,20 @@ import org.junit.runners.Parameterized.Parameter;
 import org.junit.runners.Parameterized.Parameters;
 
 import javax.annotation.Nonnull;
+import java.io.Serializable;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 import static com.hazelcast.jet.config.ProcessingGuarantee.EXACTLY_ONCE;
 import static com.hazelcast.jet.mongodb.MongoSources.batch;
 import static com.hazelcast.jet.mongodb.MongoSources.stream;
-import static com.hazelcast.jet.mongodb.impl.Mappers.streamToClass;
+import static com.hazelcast.jet.mongodb.impl.Mappers.map;
 import static com.mongodb.client.model.Filters.and;
 import static com.mongodb.client.model.Filters.eq;
 import static com.mongodb.client.model.Filters.gte;
 import static com.mongodb.client.model.Projections.include;
 import static com.mongodb.client.model.Sorts.ascending;
-import static java.util.Arrays.asList;
 import static java.util.Comparator.comparingInt;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.IntStream.range;
@@ -61,7 +63,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 
 @RunWith(HazelcastParametrizedRunner.class)
-@Category({QuickTest.class})
+@Category(NightlyTest.class)
 public class MongoSourceTest extends AbstractMongoTest {
 
     private static final int COUNT_IN_BATCH = 10;
@@ -77,7 +79,7 @@ public class MongoSourceTest extends AbstractMongoTest {
 
     @Parameters(name = "filter:{0} | projection: {1} | sort: {2} | map: {3}")
     public static Object[] filterProjectionSortMatrix() {
-        Set<Boolean> booleans = new HashSet<>(asList(true, false));
+        Set<Boolean> booleans = Set.of(true, false);
         return Sets.cartesianProduct(booleans, booleans, booleans, booleans).stream()
                    .map(tuple -> tuple.toArray(new Object[0]))
                    .toArray(Object[]::new);
@@ -130,8 +132,9 @@ public class MongoSourceTest extends AbstractMongoTest {
         Batch<?> sourceBuilder = batch(() -> mongoClient(connectionString))
                                                .database(defaultDatabase())
                                                .collection(testName.getMethodName())
+                                               .forceReadTotalParallelismOne(true)
                                                .sort(ascending("key"))
-                                               .throwOnNonExisting(false);
+                                               .checkResourceExistence(ResourceChecks.ONCE_PER_JOB);
         sourceBuilder = batchFilters(sourceBuilder);
         pipeline.readFrom(sourceBuilder.build())
                 .setLocalParallelism(2)
@@ -188,7 +191,7 @@ public class MongoSourceTest extends AbstractMongoTest {
             sourceBuilder.sort(ascending("val"));
         }
         if (map) {
-            sourceBuilder.mapFn(Mappers.toClass(KV.class));
+            sourceBuilder.mapFn(toClass(KV.class));
         }
         return sourceBuilder;
     }
@@ -223,7 +226,7 @@ public class MongoSourceTest extends AbstractMongoTest {
 
         IList<Object> list = instance().getList(collectionName);
         String connectionString = mongoContainer.getConnectionString();
-        Stream<?> sourceBuilder = stream("customName", () -> mongoClient(connectionString))
+        Stream<?> sourceBuilder = stream(() -> mongoClient(connectionString))
                                               .database(defaultDatabase())
                                               .collection(collectionName, Document.class);
         sourceBuilder = streamFilters(sourceBuilder);
@@ -298,7 +301,8 @@ public class MongoSourceTest extends AbstractMongoTest {
         String connectionString = mongoContainer.getConnectionString();
 
         Stream<?> builder = MongoSourceBuilder.stream(() -> MongoClients.create(connectionString));
-        builder = streamFilters(builder);
+        builder = streamFilters(builder)
+                .checkResourceExistence(ResourceChecks.ON_EACH_CONNECT);
 
         Pipeline pipeline = Pipeline.create();
         pipeline.readFrom(builder.build())
@@ -388,7 +392,7 @@ public class MongoSourceTest extends AbstractMongoTest {
     }
 
     @SuppressWarnings("unused") // getters/setters are for Mongo converter
-    public static class KV {
+    public static class KV implements Serializable {
         private Integer key;
         private Integer val;
         private String testName;
@@ -421,4 +425,22 @@ public class MongoSourceTest extends AbstractMongoTest {
         }
     }
 
+    /**
+     * Serializable variant of {@link Mappers#toClass(Class)} - only for tests
+     */
+    @Nonnull
+    public static <T> FunctionEx<Document, T> toClass(Class<T> type) {
+        return doc -> map(doc, type);
+    }
+
+    /**
+     * Serializable variant of {@link Mappers#streamToClass(Class)} - only for tests
+     */
+    @Nonnull
+    public static <T> BiFunctionEx<ChangeStreamDocument<Document>, Long, T> streamToClass(Class<T> type) {
+        return (doc, ts) -> {
+            assert doc.getFullDocument() != null;
+            return map(doc.getFullDocument(), type);
+        };
+    }
 }

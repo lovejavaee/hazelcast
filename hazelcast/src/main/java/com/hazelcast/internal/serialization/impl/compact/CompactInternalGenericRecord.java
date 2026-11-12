@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.function.Function;
+import java.util.function.IntFunction;
 
 import static com.hazelcast.internal.nio.Bits.INT_SIZE_IN_BYTES;
 import static com.hazelcast.internal.nio.Bits.NULL_ARRAY_LENGTH;
@@ -89,6 +89,7 @@ import static com.hazelcast.nio.serialization.FieldKind.TIMESTAMP_WITH_TIMEZONE;
  * <p>
  * See the javadoc of {@link InternalGenericRecord} for GenericRecord class hierarchy.
  */
+@SuppressWarnings("MethodCount")
 public class CompactInternalGenericRecord extends CompactGenericRecord implements InternalGenericRecord {
 
     private final OffsetReader offsetReader;
@@ -101,6 +102,7 @@ public class CompactInternalGenericRecord extends CompactGenericRecord implement
     private final @Nullable
     Class associatedClass;
 
+    @SuppressWarnings("ExecutableStatementCount")
     protected CompactInternalGenericRecord(CompactStreamSerializer serializer, BufferObjectDataInput in, Schema schema,
                                            @Nullable Class associatedClass, boolean schemaIncludedInBinary) {
         this.in = in;
@@ -763,7 +765,7 @@ public class CompactInternalGenericRecord extends CompactGenericRecord implement
     }
 
     private <T> T[] getArrayOfNullable(@Nonnull String fieldName, Reader<T> reader,
-                                       Function<Integer, T[]> constructor, FieldKind primitiveKind,
+                                       IntFunction<T[]> constructor, FieldKind primitiveKind,
                                        FieldKind nullableKind) {
         FieldDescriptor fd = getFieldDescriptor(fieldName);
         FieldKind fieldKind = fd.getKind();
@@ -787,7 +789,7 @@ public class CompactInternalGenericRecord extends CompactGenericRecord implement
     }
 
     private <T> T[] getPrimitiveArrayAsNullableArray(FieldDescriptor fieldDescriptor,
-                                                     Function<Integer, T[]> constructor,
+                                                     IntFunction<T[]> constructor,
                                                      Reader<T> reader) {
         int currentPos = in.position();
         try {
@@ -811,7 +813,7 @@ public class CompactInternalGenericRecord extends CompactGenericRecord implement
     }
 
     private <T> T[] getArrayOfVariableSize(FieldDescriptor fieldDescriptor,
-                                           Function<Integer, T[]> constructor,
+                                           IntFunction<T[]> constructor,
                                            Reader<T> reader) {
         int currentPos = in.position();
         try {
@@ -842,10 +844,8 @@ public class CompactInternalGenericRecord extends CompactGenericRecord implement
         }
     }
 
-
     private <T> T[] getArrayOfVariableSize(@Nonnull String fieldName, FieldKind fieldKind,
-                                           Function<Integer, T[]> constructor,
-                                           Reader<T> reader) {
+            IntFunction<T[]> constructor, Reader<T> reader) {
         FieldDescriptor fieldDefinition = getFieldDescriptor(fieldName, fieldKind);
         return getArrayOfVariableSize(fieldDefinition, constructor, reader);
     }
@@ -898,10 +898,12 @@ public class CompactInternalGenericRecord extends CompactGenericRecord implement
         }
     }
 
+    @Override
     public Byte getInt8FromArray(@Nonnull String fieldName, int index) {
         return getFixedSizeFieldFromArray(fieldName, ARRAY_OF_INT8, ObjectDataInput::readByte, index);
     }
 
+    @Override
     public Boolean getBooleanFromArray(@Nonnull String fieldName, int index) {
         FieldDescriptor fd = getFieldDescriptor(fieldName, ARRAY_OF_BOOLEAN);
         int position = readVariableSizeFieldPosition(fd);
@@ -924,26 +926,32 @@ public class CompactInternalGenericRecord extends CompactGenericRecord implement
         }
     }
 
+    @Override
     public Character getCharFromArray(@Nonnull String fieldName, int index) {
         throw new UnsupportedOperationException("Compact format does not support reading from an array of chars field");
     }
 
+    @Override
     public Integer getInt32FromArray(@Nonnull String fieldName, int index) {
         return getFixedSizeFieldFromArray(fieldName, ARRAY_OF_INT32, ObjectDataInput::readInt, index);
     }
 
+    @Override
     public Long getInt64FromArray(@Nonnull String fieldName, int index) {
         return getFixedSizeFieldFromArray(fieldName, ARRAY_OF_INT64, ObjectDataInput::readLong, index);
     }
 
+    @Override
     public Double getFloat64FromArray(@Nonnull String fieldName, int index) {
         return getFixedSizeFieldFromArray(fieldName, ARRAY_OF_FLOAT64, ObjectDataInput::readDouble, index);
     }
 
+    @Override
     public Float getFloat32FromArray(@Nonnull String fieldName, int index) {
         return getFixedSizeFieldFromArray(fieldName, ARRAY_OF_FLOAT32, ObjectDataInput::readFloat, index);
     }
 
+    @Override
     public Short getInt16FromArray(@Nonnull String fieldName, int index) {
         return getFixedSizeFieldFromArray(fieldName, ARRAY_OF_INT16, ObjectDataInput::readShort, index);
     }

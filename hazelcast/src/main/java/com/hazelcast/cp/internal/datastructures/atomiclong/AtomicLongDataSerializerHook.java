@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,27 +51,16 @@ public final class AtomicLongDataSerializerHook implements DataSerializerHook {
 
     @Override
     public DataSerializableFactory createFactory() {
-        return typeId -> {
-            switch (typeId) {
-                case ADD_AND_GET_OP:
-                    return new AddAndGetOp();
-                case COMPARE_AND_SET_OP:
-                    return new CompareAndSetOp();
-                case GET_AND_ADD_OP:
-                    return new GetAndAddOp();
-                case GET_AND_SET_OP:
-                    return new GetAndSetOp();
-                case ALTER_OP:
-                    return new AlterOp();
-                case APPLY_OP:
-                    return new ApplyOp();
-                case LOCAL_GET_OP:
-                    return new LocalGetOp();
-                case SNAPSHOT:
-                    return new AtomicLongSnapshot();
-                default:
-                    throw new IllegalArgumentException("Undefined type: " + typeId);
-            }
+        return typeId -> switch (typeId) {
+            case ADD_AND_GET_OP -> new AddAndGetOp();
+            case COMPARE_AND_SET_OP -> new CompareAndSetOp();
+            case GET_AND_ADD_OP -> new GetAndAddOp();
+            case GET_AND_SET_OP -> new GetAndSetOp();
+            case ALTER_OP -> new AlterOp();
+            case APPLY_OP -> new ApplyOp<>();
+            case LOCAL_GET_OP -> new LocalGetOp();
+            case SNAPSHOT -> new AtomicLongSnapshot();
+            default -> throw new IllegalArgumentException("Undefined type: " + typeId);
         };
     }
 }

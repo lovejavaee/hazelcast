@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,12 +34,13 @@ import org.junit.runner.RunWith;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotSame;
 
 @RunWith(HazelcastSerialClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class QueryCacheCreateDestroyTest extends HazelcastTestSupport {
 
-    private TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory();
+    private final TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory();
 
     @After
     public void tearDown() throws Exception {
@@ -60,7 +61,7 @@ public class QueryCacheCreateDestroyTest extends HazelcastTestSupport {
         queryCache.destroy();
         QueryCache newQueryCache = map.getQueryCache(queryCacheName);
 
-        assertFalse(queryCache == newQueryCache);
+        assertNotSame(queryCache, newQueryCache);
     }
 
     @Test

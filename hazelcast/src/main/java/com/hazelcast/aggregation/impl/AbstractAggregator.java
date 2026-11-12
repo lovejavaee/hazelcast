@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,9 @@ import com.hazelcast.internal.json.NonTerminalJsonValue;
 import com.hazelcast.query.impl.Extractable;
 import com.hazelcast.query.impl.getters.MultiResult;
 
+import javax.annotation.Nullable;
+
+import java.io.Serial;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -44,14 +47,16 @@ import java.util.Objects;
  * @param <R> result type
  */
 public abstract class AbstractAggregator<I, E, R> implements Aggregator<I, R> {
-
+    @Serial
+    private static final long serialVersionUID = -728859352647481983L;
+    @Nullable
     protected String attributePath;
 
-    public AbstractAggregator() {
+    protected AbstractAggregator() {
         this(null);
     }
 
-    public AbstractAggregator(String attributePath) {
+    protected AbstractAggregator(@Nullable String attributePath) {
         this.attributePath = attributePath;
     }
 
@@ -86,11 +91,11 @@ public abstract class AbstractAggregator<I, E, R> implements Aggregator<I, R> {
     @SuppressWarnings("unchecked")
     private <T> T extract(I input) {
         if (attributePath == null) {
-            if (input instanceof Map.Entry) {
-                return (T) ((Map.Entry) input).getValue();
+            if (input instanceof Map.Entry entry) {
+                return (T) entry.getValue();
             }
-        } else if (input instanceof Extractable) {
-            return (T) ((Extractable) input).getAttributeValue(attributePath);
+        } else if (input instanceof Extractable extractable) {
+            return (T) extractable.getAttributeValue(attributePath);
         }
         throw new IllegalArgumentException("Can't extract " + attributePath + " from the given input");
     }
@@ -114,7 +119,7 @@ public abstract class AbstractAggregator<I, E, R> implements Aggregator<I, R> {
             return false;
         }
         AbstractAggregator<?, ?, ?> that = (AbstractAggregator<?, ?, ?>) o;
-        return attributePath.equals(that.attributePath);
+        return Objects.equals(attributePath, that.attributePath);
     }
 
     @Override

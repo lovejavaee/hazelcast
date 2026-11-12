@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ public class NodeStateImpl implements NodeState {
 
     public NodeStateImpl(ClusterState clusterState, com.hazelcast.instance.impl.NodeState nodeState,
                          Version clusterVersion, MemberVersion memberVersion) {
-        this(clusterState, nodeState, clusterVersion, memberVersion, Collections.<String, List<String>>emptyMap());
+        this(clusterState, nodeState, clusterVersion, memberVersion, Collections.emptyMap());
     }
 
     public NodeStateImpl(ClusterState clusterState, com.hazelcast.instance.impl.NodeState nodeState,
@@ -75,6 +75,7 @@ public class NodeStateImpl implements NodeState {
         return clusterVersion;
     }
 
+    @Override
     public MemberVersion getMemberVersion() {
         return memberVersion;
     }
@@ -99,7 +100,7 @@ public class NodeStateImpl implements NodeState {
         return root;
     }
 
-    @SuppressWarnings({"checkstyle:npathcomplexity"})
+    @SuppressWarnings("checkstyle:npathcomplexity")
     @Override
     public void fromJson(JsonObject json) {
         String jsonClusterState = getString(json, "clusterState", null);
@@ -119,12 +120,12 @@ public class NodeStateImpl implements NodeState {
             memberVersion = MemberVersion.of(jsonNodeVersion);
         }
 
-        weakSecretsConfigs = new HashMap<String, List<String>>();
+        weakSecretsConfigs = new HashMap<>();
         JsonValue jsonWeakConfigs = json.get("weakConfigs");
         if (jsonWeakConfigs != null) {
             JsonObject weakConfigsJsObj = jsonWeakConfigs.asObject();
             for (JsonObject.Member member : weakConfigsJsObj) {
-                List<String> weaknesses = new ArrayList<String>();
+                List<String> weaknesses = new ArrayList<>();
                 for (JsonValue value : member.getValue().asArray()) {
                     weaknesses.add(value.asString());
                 }

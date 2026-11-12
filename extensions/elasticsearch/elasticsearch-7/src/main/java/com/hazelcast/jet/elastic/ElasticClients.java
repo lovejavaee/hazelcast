@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,7 +36,10 @@ import static org.apache.http.auth.AuthScope.ANY;
  * <pre>{@code
  * builder.clientFn(() -> client());
  * }</pre>
+ *
+ * @deprecated <a href="https://www.elastic.co/support/eol"> Elasticsearch 7 is no longer supported</a>
  */
+@Deprecated(forRemoval = true, since = "5.7")
 public final class ElasticClients {
 
     private static final int DEFAULT_PORT = 9200;
@@ -56,7 +59,7 @@ public final class ElasticClients {
     /**
      * Convenience method to create {@link RestClientBuilder} with given string, it must contain host, and optionally
      * the scheme and a port.
-     *
+     * <p>
      * Valid examples:
      * <pre>{@code elastic-host
      * elastic-host:9200

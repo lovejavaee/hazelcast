@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.hazelcast.cache.impl.CacheEventData;
 import com.hazelcast.cache.impl.CacheEventListener;
 import com.hazelcast.cache.impl.CacheEventSet;
 import com.hazelcast.cache.impl.CacheService;
+import com.hazelcast.cache.impl.ICacheService;
 import com.hazelcast.client.impl.ClientEndpoint;
 import com.hazelcast.client.impl.protocol.ClientMessage;
 import com.hazelcast.client.impl.protocol.codec.CacheAddEntryListenerCodec;
@@ -31,6 +32,7 @@ import com.hazelcast.internal.serialization.impl.HeapData;
 import com.hazelcast.internal.services.ListenerWrapperEventFilter;
 import com.hazelcast.internal.services.NotifiableEventListener;
 import com.hazelcast.internal.serialization.Data;
+import com.hazelcast.security.SecurityInterceptorConstants;
 import com.hazelcast.security.permission.ActionConstants;
 import com.hazelcast.security.permission.CachePermission;
 import com.hazelcast.spi.impl.eventservice.EventRegistration;
@@ -46,7 +48,7 @@ import static com.hazelcast.spi.impl.InternalCompletableFuture.newCompletedFutur
  * Client request which registers an event listener on behalf of the client and delegates the received events
  * back to client.
  *
- * @see CacheService#registerListener(String, CacheEventListener, boolean localOnly)
+ * @see CacheService#registerListener(String, CacheEventListener)
  */
 public class CacheAddEntryListenerMessageTask
         extends AbstractAddListenerMessageTask<CacheAddEntryListenerCodec.RequestParameters> {
@@ -57,7 +59,7 @@ public class CacheAddEntryListenerMessageTask
 
     @Override
     protected CompletableFuture<UUID> processInternal() {
-        final CacheService service = getService(CacheService.SERVICE_NAME);
+        final CacheService service = getService(ICacheService.SERVICE_NAME);
         CacheEntryListener cacheEntryListener = new CacheEntryListener(endpoint, this);
 
         if (parameters.localOnly) {
@@ -69,7 +71,7 @@ public class CacheAddEntryListenerMessageTask
 
     @Override
     protected void addDestroyAction(UUID registrationId) {
-        final CacheService service = getService(CacheService.SERVICE_NAME);
+        final CacheService service = getService(ICacheService.SERVICE_NAME);
         endpoint.addDestroyAction(registrationId, () -> service.deregisterListener(parameters.name, registrationId));
     }
 
@@ -89,15 +91,15 @@ public class CacheAddEntryListenerMessageTask
 
         private Data getPartitionKey(Object eventObject) {
             Data partitionKey = null;
-            if (eventObject instanceof CacheEventSet) {
-                Set<CacheEventData> events = ((CacheEventSet) eventObject).getEvents();
+            if (eventObject instanceof CacheEventSet cacheEventSet) {
+                Set<CacheEventData> events = cacheEventSet.getEvents();
                 if (events.size() > 1) {
                     partitionKey = new HeapData();
                 } else if (events.size() == 1) {
                     partitionKey = events.iterator().next().getDataKey();
                 }
-            } else if (eventObject instanceof CacheEventData) {
-                partitionKey = ((CacheEventData) eventObject).getDataKey();
+            } else if (eventObject instanceof CacheEventData cacheEventData) {
+                partitionKey = cacheEventData.getDataKey();
             }
             return partitionKey;
         }
@@ -107,8 +109,7 @@ public class CacheAddEntryListenerMessageTask
             if (!endpoint.isAlive()) {
                 return;
             }
-            if (eventObject instanceof CacheEventSet) {
-                CacheEventSet ces = (CacheEventSet) eventObject;
+            if (eventObject instanceof CacheEventSet ces) {
                 Data partitionKey = getPartitionKey(eventObject);
                 ClientMessage clientMessage =
                         CacheAddEntryListenerCodec.
@@ -165,7 +166,7 @@ public class CacheAddEntryListenerMessageTask
 
     @Override
     public String getServiceName() {
-        return CacheService.SERVICE_NAME;
+        return SecurityInterceptorConstants.ICACHE_SERVICE;
     }
 
     @Override
@@ -175,7 +176,11 @@ public class CacheAddEntryListenerMessageTask
 
     @Override
     public String getMethodName() {
-        return "registerCacheEntryListener";
+        return SecurityInterceptorConstants.ADD_ENTRY_LISTENER;
     }
 
+    @Override
+    protected String getUserCodeNamespace() {
+        return CacheService.lookupNamespace(nodeEngine, parameters.name);
+    }
 }

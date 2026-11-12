@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,14 +38,16 @@ import com.hazelcast.replicatedmap.ReplicatedMap;
 import com.hazelcast.topic.ITopic;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import javax.security.auth.Subject;
 import java.util.List;
 import java.util.Map;
 
 /**
- * This class is a stateful proxy that delegates calls to given JetService.
- * The state is about running a jet job
+ * This class is a decorator that delegates most of the calls to given JetService.
+ * Implementors of this class provides a strategy pattern to access ExecuteJobParameters to launch a new jet job
  */
-@SuppressWarnings({"checkstyle:methodcount"})
+@SuppressWarnings("checkstyle:methodcount")
 public abstract class BootstrappedJetProxy<M> extends AbstractJetInstance<M> {
 
     private static final ILogger LOGGER = Logger.getLogger(BootstrappedJetProxy.class);
@@ -59,8 +61,14 @@ public abstract class BootstrappedJetProxy<M> extends AbstractJetInstance<M> {
 
     public abstract boolean hasExecuteJobParameters();
 
+    /**
+     * The strategy to get ExecuteJobParameters on client and member side
+     */
     public abstract ExecuteJobParameters getExecuteJobParameters();
 
+    /**
+     * The strategy to set ExecuteJobParameters on client and member side
+     */
     public abstract void setExecuteJobParameters(ExecuteJobParameters executeJobParameters);
 
     public void removeExecuteJobParameters() {
@@ -133,6 +141,22 @@ public abstract class BootstrappedJetProxy<M> extends AbstractJetInstance<M> {
         return jetInstance.getJobs(name);
     }
 
+    @Override
+    public Job getJob(long id) {
+        return jetInstance.getJob(id);
+    }
+
+    @Override
+    public Job getJob(@Nonnull String name) {
+        return jetInstance.getJob(name);
+    }
+
+    @Nonnull
+    @Override
+    public List<Job> getJobs() {
+        return jetInstance.getJobs();
+    }
+
     @Nonnull
     @Override
     public <K, V> IMap<K, V> getMap(@Nonnull String name) {
@@ -146,7 +170,7 @@ public abstract class BootstrappedJetProxy<M> extends AbstractJetInstance<M> {
     }
 
 
-    // supress "@Deprecated" code should not be used
+    // suppress "@Deprecated" code should not be used
     @SuppressWarnings("java:S1874")
     @Nonnull
     @Override
@@ -193,18 +217,17 @@ public abstract class BootstrappedJetProxy<M> extends AbstractJetInstance<M> {
     }
 
     @Override
-    public Job newJobProxy(long jobId, boolean isLightJob, @Nonnull Object jobDefinition, @Nonnull JobConfig config) {
-        return jetInstance.newJobProxy(jobId, isLightJob, jobDefinition, config);
+    public Job newJobProxy(long jobId,
+                           boolean isLightJob,
+                           @Nonnull Object jobDefinition,
+                           @Nonnull JobConfig config,
+                           @Nullable Subject subject) {
+        return jetInstance.newJobProxy(jobId, isLightJob, jobDefinition, config, subject);
     }
 
     @Override
     public M getMasterId() {
         return jetInstance.getMasterId();
-    }
-
-    @Override
-    public Map<M, GetJobIdsOperation.GetJobIdsResult> getJobsInt(String onlyName, Long onlyJobId) {
-        return jetInstance.getJobsInt(onlyName, onlyJobId);
     }
 
     private void addToSubmittedJobs(@Nonnull Job job) {
@@ -228,15 +251,32 @@ public abstract class BootstrappedJetProxy<M> extends AbstractJetInstance<M> {
                     jobConfig.setName(jobParameters.getJobName());
                 }
             } else {
-                String message = "The jet job has been started from a thread that is different from the one that called "
-                                 + "the main method. \n"
-                                 + "The job could not be found in the ThreadLocal and the job will not start.\n"
-                                 + "If you still want to start job in a different thread, then you need to set the parameters "
-                                 + "of the JobConfig in that thread\n"
-                                 + "JobConfig\n  .addJar(...)\n  .setInitialSnapshotName(...)\n  .setName(...); ";
+                String message = """
+                        The jet job has been started from a thread that is different from the one that called \
+                        the main method.\s
+                        The job could not be found in the ThreadLocal and the job will not start.
+                        If you still want to start job in a different thread, then you need to set the parameters \
+                        of the JobConfig in that thread
+                        JobConfig
+                          .addJar(...)
+                          .setInitialSnapshotName(...)
+                          .setName(...);\s""";
                 LOGGER.severe(message);
                 throw new JetException(message);
             }
         }
     }
+
+    protected GetJobIdsOperation.GetJobIdsResult getJobByName(String onlyName) {
+        throw new UnsupportedOperationException("This method is not supported in this BootstrappedJetProxy class.");
+    }
+
+    protected Map<M, GetJobIdsOperation.GetJobIdsResult> getJobsById(Long onlyJobId) {
+        throw new UnsupportedOperationException("This method is not supported in this BootstrappedJetProxy class.");
+    }
+
+    protected Map<M, GetJobIdsOperation.GetJobIdsResult> getAllJobs() {
+        throw new UnsupportedOperationException("This method is not supported in this BootstrappedJetProxy class.");
+    }
+
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,6 +34,11 @@ import com.hazelcast.client.impl.protocol.codec.DynamicConfigAddRingbufferConfig
 import com.hazelcast.client.impl.protocol.codec.DynamicConfigAddScheduledExecutorConfigCodec;
 import com.hazelcast.client.impl.protocol.codec.DynamicConfigAddSetConfigCodec;
 import com.hazelcast.client.impl.protocol.codec.DynamicConfigAddTopicConfigCodec;
+import com.hazelcast.client.impl.protocol.codec.DynamicConfigAddVectorCollectionConfigCodec;
+import com.hazelcast.client.impl.protocol.codec.DynamicConfigAddWanReplicationConfigCodec;
+import com.hazelcast.client.impl.protocol.codec.holder.WanBatchPublisherConfigHolder;
+import com.hazelcast.client.impl.protocol.codec.holder.WanConsumerConfigHolder;
+import com.hazelcast.client.impl.protocol.codec.holder.WanCustomPublisherConfigHolder;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.EvictionConfigHolder;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.ListenerConfigHolder;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.MapStoreConfigHolder;
@@ -41,6 +46,7 @@ import com.hazelcast.client.impl.protocol.task.dynamicconfig.NearCacheConfigHold
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.QueryCacheConfigHolder;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.QueueStoreConfigHolder;
 import com.hazelcast.client.impl.protocol.task.dynamicconfig.RingbufferStoreConfigHolder;
+import com.hazelcast.client.impl.protocol.task.dynamicconfig.WanReplicationConfigTransformer;
 import com.hazelcast.client.impl.spi.impl.ClientInvocation;
 import com.hazelcast.client.impl.spi.impl.ClientInvocationFuture;
 import com.hazelcast.config.AdvancedNetworkConfig;
@@ -51,6 +57,7 @@ import com.hazelcast.config.CardinalityEstimatorConfig;
 import com.hazelcast.config.Config;
 import com.hazelcast.config.ConfigPatternMatcher;
 import com.hazelcast.config.DataConnectionConfig;
+import com.hazelcast.config.DataConnectionConfigValidator;
 import com.hazelcast.config.DeviceConfig;
 import com.hazelcast.config.DurableExecutorConfig;
 import com.hazelcast.config.DynamicConfigurationConfig;
@@ -85,15 +92,20 @@ import com.hazelcast.config.SplitBrainProtectionConfig;
 import com.hazelcast.config.SqlConfig;
 import com.hazelcast.config.TopicConfig;
 import com.hazelcast.config.UserCodeDeploymentConfig;
+import com.hazelcast.config.UserCodeNamespacesConfig;
 import com.hazelcast.config.WanReplicationConfig;
-import com.hazelcast.config.tpc.TpcConfig;
 import com.hazelcast.config.cp.CPSubsystemConfig;
+import com.hazelcast.config.rest.RestConfig;
+import com.hazelcast.config.tpc.TpcConfig;
+import com.hazelcast.config.vector.VectorCollectionConfig;
 import com.hazelcast.core.ManagedContext;
 import com.hazelcast.internal.config.DataPersistenceAndHotRestartMerger;
 import com.hazelcast.internal.config.ServicesConfig;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.serialization.SerializationService;
 import com.hazelcast.jet.config.JetConfig;
+import com.hazelcast.spi.properties.HazelcastProperty;
+import com.hazelcast.vector.impl.spi.VectorCollectionLocator;
 
 import javax.annotation.Nonnull;
 import java.io.File;
@@ -101,19 +113,21 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentMap;
+import java.util.stream.Collectors;
 
 import static com.hazelcast.client.impl.protocol.util.PropertiesUtil.toMap;
 import static com.hazelcast.internal.util.ExceptionUtil.rethrow;
 
 /**
- * Client implementation of member side config. Clients use this to submit new data structure configurations into
- * a live Hazelcast cluster.
+ * Client implementation of member side config. Clients use this to submit new data structure configurations into a live
+ * Hazelcast cluster.
  */
 @SuppressWarnings({"checkstyle:methodcount", "checkstyle:classfanoutcomplexity"})
 public class ClientDynamicClusterConfig extends Config {
-    private static final String UNSUPPORTED_ERROR_MESSAGE =
+    protected static final String UNSUPPORTED_ERROR_MESSAGE =
             "Client config object only supports adding new data structure configurations";
 
     private final HazelcastClientInstanceImpl instance;
@@ -122,6 +136,7 @@ public class ClientDynamicClusterConfig extends Config {
     public ClientDynamicClusterConfig(HazelcastClientInstanceImpl instance) {
         this.instance = instance;
         this.serializationService = instance.getSerializationService();
+        userCodeNamespacesConfig = new ClientDynamicClusterUserCodeNamespacesConfig(this);
     }
 
     @Override
@@ -137,28 +152,27 @@ public class ClientDynamicClusterConfig extends Config {
             }
         }
 
-        String partitioningStrategyClassName = mapConfig.getPartitioningStrategyConfig() == null
-                ? null : mapConfig.getPartitioningStrategyConfig().getPartitioningStrategyClass();
-        Data partitioningStrategy = mapConfig.getPartitioningStrategyConfig() == null
-                ? null : serializationService.toData(mapConfig.getPartitioningStrategyConfig().getPartitioningStrategy());
+        String partitioningStrategyClassName = mapConfig.getPartitioningStrategyConfig() == null ? null
+                : mapConfig.getPartitioningStrategyConfig().getPartitioningStrategyClass();
+        Data partitioningStrategy = mapConfig.getPartitioningStrategyConfig() == null ? null
+                : serializationService.toData(mapConfig.getPartitioningStrategyConfig().getPartitioningStrategy());
 
-        DataPersistenceAndHotRestartMerger
-                .merge(mapConfig.getHotRestartConfig(), mapConfig.getDataPersistenceConfig());
+        DataPersistenceAndHotRestartMerger.merge(mapConfig.getHotRestartConfig(), mapConfig.getDataPersistenceConfig());
 
-        ClientMessage request = DynamicConfigAddMapConfigCodec.encodeRequest(mapConfig.getName(),
-                mapConfig.getBackupCount(), mapConfig.getAsyncBackupCount(), mapConfig.getTimeToLiveSeconds(),
-                mapConfig.getMaxIdleSeconds(), EvictionConfigHolder.of(mapConfig.getEvictionConfig(), serializationService),
-                mapConfig.isReadBackupData(), mapConfig.getCacheDeserializedValues().name(),
-                mapConfig.getMergePolicyConfig().getPolicy(), mapConfig.getMergePolicyConfig().getBatchSize(),
-                mapConfig.getInMemoryFormat().name(), listenerConfigs, partitionLostListenerConfigs,
-                mapConfig.isStatisticsEnabled(), mapConfig.getSplitBrainProtectionName(),
+        ClientMessage request = DynamicConfigAddMapConfigCodec.encodeRequest(mapConfig.getName(), mapConfig.getBackupCount(),
+                mapConfig.getAsyncBackupCount(), mapConfig.getTimeToLiveSeconds(), mapConfig.getMaxIdleSeconds(),
+                EvictionConfigHolder.of(mapConfig.getEvictionConfig(), serializationService), mapConfig.isReadBackupData(),
+                mapConfig.getCacheDeserializedValues().name(), mapConfig.getMergePolicyConfig().getPolicy(),
+                mapConfig.getMergePolicyConfig().getBatchSize(), mapConfig.getInMemoryFormat().name(), listenerConfigs,
+                partitionLostListenerConfigs, mapConfig.isStatisticsEnabled(), mapConfig.getSplitBrainProtectionName(),
                 MapStoreConfigHolder.of(mapConfig.getMapStoreConfig(), serializationService),
                 NearCacheConfigHolder.of(mapConfig.getNearCacheConfig(), serializationService),
                 mapConfig.getWanReplicationRef(), mapConfig.getIndexConfigs(), mapConfig.getAttributeConfigs(),
                 queryCacheConfigHolders, partitioningStrategyClassName, partitioningStrategy, mapConfig.getHotRestartConfig(),
                 mapConfig.getEventJournalConfig(), mapConfig.getMerkleTreeConfig(), mapConfig.getMetadataPolicy().getId(),
                 mapConfig.isPerEntryStatsEnabled(), mapConfig.getDataPersistenceConfig(), mapConfig.getTieredStoreConfig(),
-                mapConfig.getPartitioningAttributeConfigs());
+                mapConfig.getPartitioningAttributeConfigs(), mapConfig.getUserCodeNamespace(),
+                mapConfig.getOversizedEntryThresholdBytes());
         invoke(request);
         return this;
     }
@@ -168,18 +182,15 @@ public class ClientDynamicClusterConfig extends Config {
         List<ListenerConfigHolder> partitionLostListenerConfigs =
                 adaptListenerConfigs(cacheConfig.getPartitionLostListenerConfigs());
 
-        DataPersistenceAndHotRestartMerger
-                .merge(cacheConfig.getHotRestartConfig(), cacheConfig.getDataPersistenceConfig());
+        DataPersistenceAndHotRestartMerger.merge(cacheConfig.getHotRestartConfig(), cacheConfig.getDataPersistenceConfig());
 
         ClientMessage request = DynamicConfigAddCacheConfigCodec.encodeRequest(cacheConfig.getName(), cacheConfig.getKeyType(),
                 cacheConfig.getValueType(), cacheConfig.isStatisticsEnabled(), cacheConfig.isManagementEnabled(),
                 cacheConfig.isReadThrough(), cacheConfig.isWriteThrough(), cacheConfig.getCacheLoaderFactory(),
                 cacheConfig.getCacheWriterFactory(), cacheConfig.getCacheLoader(), cacheConfig.getCacheWriter(),
                 cacheConfig.getBackupCount(), cacheConfig.getAsyncBackupCount(), cacheConfig.getInMemoryFormat().name(),
-                cacheConfig.getSplitBrainProtectionName(),
-                cacheConfig.getMergePolicyConfig().getPolicy(),
-                cacheConfig.getMergePolicyConfig().getBatchSize(),
-                cacheConfig.isDisablePerEntryInvalidationEvents(),
+                cacheConfig.getSplitBrainProtectionName(), cacheConfig.getMergePolicyConfig().getPolicy(),
+                cacheConfig.getMergePolicyConfig().getBatchSize(), cacheConfig.isDisablePerEntryInvalidationEvents(),
                 partitionLostListenerConfigs,
                 cacheConfig.getExpiryPolicyFactoryConfig() == null ? null
                         : cacheConfig.getExpiryPolicyFactoryConfig().getClassName(),
@@ -187,9 +198,8 @@ public class ClientDynamicClusterConfig extends Config {
                         : cacheConfig.getExpiryPolicyFactoryConfig().getTimedExpiryPolicyFactoryConfig(),
                 cacheConfig.getCacheEntryListeners(),
                 EvictionConfigHolder.of(cacheConfig.getEvictionConfig(), serializationService),
-                cacheConfig.getWanReplicationRef(), cacheConfig.getEventJournalConfig(),
-                cacheConfig.getHotRestartConfig(), cacheConfig.getMerkleTreeConfig(),
-                cacheConfig.getDataPersistenceConfig());
+                cacheConfig.getWanReplicationRef(), cacheConfig.getEventJournalConfig(), cacheConfig.getHotRestartConfig(),
+                cacheConfig.getMerkleTreeConfig(), cacheConfig.getDataPersistenceConfig(), cacheConfig.getUserCodeNamespace());
         invoke(request);
         return this;
     }
@@ -197,13 +207,14 @@ public class ClientDynamicClusterConfig extends Config {
     @Override
     public Config addQueueConfig(QueueConfig queueConfig) {
         List<ListenerConfigHolder> listenerConfigs = adaptListenerConfigs(queueConfig.getItemListenerConfigs());
-        QueueStoreConfigHolder queueStoreConfigHolder = QueueStoreConfigHolder.of(queueConfig.getQueueStoreConfig(),
-                serializationService);
+        QueueStoreConfigHolder queueStoreConfigHolder =
+                QueueStoreConfigHolder.of(queueConfig.getQueueStoreConfig(), serializationService);
         ClientMessage request = DynamicConfigAddQueueConfigCodec.encodeRequest(queueConfig.getName(), listenerConfigs,
                 queueConfig.getBackupCount(), queueConfig.getAsyncBackupCount(), queueConfig.getMaxSize(),
                 queueConfig.getEmptyQueueTtl(), queueConfig.isStatisticsEnabled(), queueConfig.getSplitBrainProtectionName(),
                 queueStoreConfigHolder, queueConfig.getMergePolicyConfig().getPolicy(),
-                queueConfig.getMergePolicyConfig().getBatchSize(), queueConfig.getPriorityComparatorClassName());
+                queueConfig.getMergePolicyConfig().getBatchSize(), queueConfig.getPriorityComparatorClassName(),
+                queueConfig.getUserCodeNamespace());
         invoke(request);
         return this;
     }
@@ -214,7 +225,8 @@ public class ClientDynamicClusterConfig extends Config {
         ClientMessage request = DynamicConfigAddListConfigCodec.encodeRequest(listConfig.getName(), listenerConfigs,
                 listConfig.getBackupCount(), listConfig.getAsyncBackupCount(), listConfig.getMaxSize(),
                 listConfig.isStatisticsEnabled(), listConfig.getSplitBrainProtectionName(),
-                listConfig.getMergePolicyConfig().getPolicy(), listConfig.getMergePolicyConfig().getBatchSize());
+                listConfig.getMergePolicyConfig().getPolicy(), listConfig.getMergePolicyConfig().getBatchSize(),
+                listConfig.getUserCodeNamespace());
         invoke(request);
         return this;
     }
@@ -222,10 +234,11 @@ public class ClientDynamicClusterConfig extends Config {
     @Override
     public Config addSetConfig(SetConfig setConfig) {
         List<ListenerConfigHolder> listenerConfigs = adaptListenerConfigs(setConfig.getItemListenerConfigs());
-        ClientMessage request = DynamicConfigAddSetConfigCodec.encodeRequest(setConfig.getName(), listenerConfigs,
-                setConfig.getBackupCount(), setConfig.getAsyncBackupCount(), setConfig.getMaxSize(),
-                setConfig.isStatisticsEnabled(), setConfig.getSplitBrainProtectionName(),
-                setConfig.getMergePolicyConfig().getPolicy(), setConfig.getMergePolicyConfig().getBatchSize());
+        ClientMessage request =
+                DynamicConfigAddSetConfigCodec.encodeRequest(setConfig.getName(), listenerConfigs, setConfig.getBackupCount(),
+                        setConfig.getAsyncBackupCount(), setConfig.getMaxSize(), setConfig.isStatisticsEnabled(),
+                        setConfig.getSplitBrainProtectionName(), setConfig.getMergePolicyConfig().getPolicy(),
+                        setConfig.getMergePolicyConfig().getBatchSize(), setConfig.getUserCodeNamespace());
         invoke(request);
         return this;
     }
@@ -234,12 +247,11 @@ public class ClientDynamicClusterConfig extends Config {
     public Config addMultiMapConfig(MultiMapConfig multiMapConfig) {
         List<ListenerConfigHolder> listenerConfigHolders = adaptListenerConfigs(multiMapConfig.getEntryListenerConfigs());
 
-        ClientMessage request = DynamicConfigAddMultiMapConfigCodec.encodeRequest(
-                multiMapConfig.getName(), multiMapConfig.getValueCollectionType().toString(),
-                listenerConfigHolders,
-                multiMapConfig.isBinary(), multiMapConfig.getBackupCount(), multiMapConfig.getAsyncBackupCount(),
-                multiMapConfig.isStatisticsEnabled(), multiMapConfig.getSplitBrainProtectionName(),
-                multiMapConfig.getMergePolicyConfig().getPolicy(), multiMapConfig.getMergePolicyConfig().getBatchSize());
+        ClientMessage request = DynamicConfigAddMultiMapConfigCodec.encodeRequest(multiMapConfig.getName(),
+                multiMapConfig.getValueCollectionType().toString(), listenerConfigHolders, multiMapConfig.isBinary(),
+                multiMapConfig.getBackupCount(), multiMapConfig.getAsyncBackupCount(), multiMapConfig.isStatisticsEnabled(),
+                multiMapConfig.getSplitBrainProtectionName(), multiMapConfig.getMergePolicyConfig().getPolicy(),
+                multiMapConfig.getMergePolicyConfig().getBatchSize(), multiMapConfig.getUserCodeNamespace());
         invoke(request);
         return this;
     }
@@ -248,12 +260,11 @@ public class ClientDynamicClusterConfig extends Config {
     public Config addReplicatedMapConfig(ReplicatedMapConfig replicatedMapConfig) {
         List<ListenerConfigHolder> listenerConfigHolders = adaptListenerConfigs(replicatedMapConfig.getListenerConfigs());
 
-        ClientMessage request = DynamicConfigAddReplicatedMapConfigCodec.encodeRequest(
-                replicatedMapConfig.getName(), replicatedMapConfig.getInMemoryFormat().name(),
-                replicatedMapConfig.isAsyncFillup(), replicatedMapConfig.isStatisticsEnabled(),
-                replicatedMapConfig.getMergePolicyConfig().getPolicy(),
+        ClientMessage request = DynamicConfigAddReplicatedMapConfigCodec.encodeRequest(replicatedMapConfig.getName(),
+                replicatedMapConfig.getInMemoryFormat().name(), replicatedMapConfig.isAsyncFillup(),
+                replicatedMapConfig.isStatisticsEnabled(), replicatedMapConfig.getMergePolicyConfig().getPolicy(),
                 listenerConfigHolders, replicatedMapConfig.getSplitBrainProtectionName(),
-                replicatedMapConfig.getMergePolicyConfig().getBatchSize());
+                replicatedMapConfig.getMergePolicyConfig().getBatchSize(), replicatedMapConfig.getUserCodeNamespace());
         invoke(request);
         return this;
     }
@@ -261,17 +272,15 @@ public class ClientDynamicClusterConfig extends Config {
     @Override
     public Config addRingBufferConfig(RingbufferConfig ringbufferConfig) {
         RingbufferStoreConfigHolder ringbufferStoreConfig = null;
-        if (ringbufferConfig.getRingbufferStoreConfig() != null
-                && ringbufferConfig.getRingbufferStoreConfig().isEnabled()) {
+        if (ringbufferConfig.getRingbufferStoreConfig() != null && ringbufferConfig.getRingbufferStoreConfig().isEnabled()) {
             RingbufferStoreConfig storeConfig = ringbufferConfig.getRingbufferStoreConfig();
             ringbufferStoreConfig = RingbufferStoreConfigHolder.of(storeConfig, instance.getSerializationService());
         }
-        ClientMessage request = DynamicConfigAddRingbufferConfigCodec.encodeRequest(
-                ringbufferConfig.getName(), ringbufferConfig.getCapacity(), ringbufferConfig.getBackupCount(),
-                ringbufferConfig.getAsyncBackupCount(), ringbufferConfig.getTimeToLiveSeconds(),
-                ringbufferConfig.getInMemoryFormat().name(), ringbufferStoreConfig,
+        ClientMessage request = DynamicConfigAddRingbufferConfigCodec.encodeRequest(ringbufferConfig.getName(),
+                ringbufferConfig.getCapacity(), ringbufferConfig.getBackupCount(), ringbufferConfig.getAsyncBackupCount(),
+                ringbufferConfig.getTimeToLiveSeconds(), ringbufferConfig.getInMemoryFormat().name(), ringbufferStoreConfig,
                 ringbufferConfig.getSplitBrainProtectionName(), ringbufferConfig.getMergePolicyConfig().getPolicy(),
-                ringbufferConfig.getMergePolicyConfig().getBatchSize());
+                ringbufferConfig.getMergePolicyConfig().getBatchSize(), ringbufferConfig.getUserCodeNamespace());
         invoke(request);
         return this;
     }
@@ -280,9 +289,9 @@ public class ClientDynamicClusterConfig extends Config {
     public Config addTopicConfig(TopicConfig topicConfig) {
         List<ListenerConfigHolder> listenerConfigHolders = adaptListenerConfigs(topicConfig.getMessageListenerConfigs());
 
-        ClientMessage request = DynamicConfigAddTopicConfigCodec.encodeRequest(
-                topicConfig.getName(), topicConfig.isGlobalOrderingEnabled(), topicConfig.isStatisticsEnabled(),
-                topicConfig.isMultiThreadingEnabled(), listenerConfigHolders);
+        ClientMessage request = DynamicConfigAddTopicConfigCodec.encodeRequest(topicConfig.getName(),
+                topicConfig.isGlobalOrderingEnabled(), topicConfig.isStatisticsEnabled(), topicConfig.isMultiThreadingEnabled(),
+                listenerConfigHolders, topicConfig.getUserCodeNamespace());
         invoke(request);
         return this;
 
@@ -292,40 +301,40 @@ public class ClientDynamicClusterConfig extends Config {
     public Config addReliableTopicConfig(ReliableTopicConfig config) {
         List<ListenerConfigHolder> listenerConfigHolders = adaptListenerConfigs(config.getMessageListenerConfigs());
         Data executorData = serializationService.toData(config.getExecutor());
-        ClientMessage request = DynamicConfigAddReliableTopicConfigCodec.encodeRequest(config.getName(),
-                listenerConfigHolders, config.getReadBatchSize(), config.isStatisticsEnabled(),
-                config.getTopicOverloadPolicy().name(), executorData);
+        ClientMessage request = DynamicConfigAddReliableTopicConfigCodec.encodeRequest(config.getName(), listenerConfigHolders,
+                config.getReadBatchSize(), config.isStatisticsEnabled(), config.getTopicOverloadPolicy().name(), executorData,
+                config.getUserCodeNamespace());
         invoke(request);
         return this;
     }
 
     @Override
     public Config addExecutorConfig(ExecutorConfig executorConfig) {
-        ClientMessage request = DynamicConfigAddExecutorConfigCodec.encodeRequest(
-                executorConfig.getName(), executorConfig.getPoolSize(), executorConfig.getQueueCapacity(),
-                executorConfig.isStatisticsEnabled(), executorConfig.getSplitBrainProtectionName());
+        ClientMessage request = DynamicConfigAddExecutorConfigCodec.encodeRequest(executorConfig.getName(),
+                executorConfig.getPoolSize(), executorConfig.getQueueCapacity(), executorConfig.isStatisticsEnabled(),
+                executorConfig.getSplitBrainProtectionName(), executorConfig.getUserCodeNamespace());
         invoke(request);
         return this;
     }
 
     @Override
     public Config addDurableExecutorConfig(DurableExecutorConfig durableExecutorConfig) {
-        ClientMessage request = DynamicConfigAddDurableExecutorConfigCodec.encodeRequest(
-                durableExecutorConfig.getName(), durableExecutorConfig.getPoolSize(),
-                durableExecutorConfig.getDurability(), durableExecutorConfig.getCapacity(),
-                durableExecutorConfig.getSplitBrainProtectionName(), durableExecutorConfig.isStatisticsEnabled());
+        ClientMessage request = DynamicConfigAddDurableExecutorConfigCodec.encodeRequest(durableExecutorConfig.getName(),
+                durableExecutorConfig.getPoolSize(), durableExecutorConfig.getDurability(), durableExecutorConfig.getCapacity(),
+                durableExecutorConfig.getSplitBrainProtectionName(), durableExecutorConfig.isStatisticsEnabled(),
+                durableExecutorConfig.getUserCodeNamespace());
         invoke(request);
         return this;
     }
 
     @Override
     public Config addScheduledExecutorConfig(ScheduledExecutorConfig scheduledExecutorConfig) {
-        ClientMessage request = DynamicConfigAddScheduledExecutorConfigCodec.encodeRequest(
-                scheduledExecutorConfig.getName(), scheduledExecutorConfig.getPoolSize(),
-                scheduledExecutorConfig.getDurability(), scheduledExecutorConfig.getCapacity(),
-                scheduledExecutorConfig.getSplitBrainProtectionName(), scheduledExecutorConfig.getMergePolicyConfig().getPolicy(),
+        ClientMessage request = DynamicConfigAddScheduledExecutorConfigCodec.encodeRequest(scheduledExecutorConfig.getName(),
+                scheduledExecutorConfig.getPoolSize(), scheduledExecutorConfig.getDurability(),
+                scheduledExecutorConfig.getCapacity(), scheduledExecutorConfig.getSplitBrainProtectionName(),
+                scheduledExecutorConfig.getMergePolicyConfig().getPolicy(),
                 scheduledExecutorConfig.getMergePolicyConfig().getBatchSize(), scheduledExecutorConfig.isStatisticsEnabled(),
-                scheduledExecutorConfig.getCapacityPolicy().getId());
+                scheduledExecutorConfig.getCapacityPolicy().getId(), scheduledExecutorConfig.getUserCodeNamespace());
         invoke(request);
         return this;
     }
@@ -343,16 +352,25 @@ public class ClientDynamicClusterConfig extends Config {
 
     @Override
     public Config addPNCounterConfig(PNCounterConfig pnCounterConfig) {
-        ClientMessage request = DynamicConfigAddPNCounterConfigCodec.encodeRequest(
-                pnCounterConfig.getName(), pnCounterConfig.getReplicaCount(),
-                pnCounterConfig.isStatisticsEnabled(), pnCounterConfig.getSplitBrainProtectionName());
+        ClientMessage request =
+                DynamicConfigAddPNCounterConfigCodec.encodeRequest(pnCounterConfig.getName(), pnCounterConfig.getReplicaCount(),
+                        pnCounterConfig.isStatisticsEnabled(), pnCounterConfig.getSplitBrainProtectionName());
         invoke(request);
         return this;
     }
 
     @Override
     public Config addWanReplicationConfig(WanReplicationConfig wanReplicationConfig) {
-        throw new UnsupportedOperationException(UNSUPPORTED_ERROR_MESSAGE);
+        WanReplicationConfigTransformer transformer = new WanReplicationConfigTransformer(serializationService);
+        WanConsumerConfigHolder consumerConfig = transformer.toHolder(wanReplicationConfig.getConsumerConfig());
+        List<WanCustomPublisherConfigHolder> customPublisherConfigs = wanReplicationConfig.getCustomPublisherConfigs().stream()
+                .filter(Objects::nonNull).map(transformer::toHolder).collect(Collectors.toList());
+        List<WanBatchPublisherConfigHolder> batchPublisherConfigs = wanReplicationConfig.getBatchPublisherConfigs().stream()
+                .filter(Objects::nonNull).map(transformer::toHolder).collect(Collectors.toList());
+        ClientMessage request = DynamicConfigAddWanReplicationConfigCodec.encodeRequest(wanReplicationConfig.getName(),
+                consumerConfig, customPublisherConfigs, batchPublisherConfigs);
+        invoke(request);
+        return this;
     }
 
     @Override
@@ -367,16 +385,11 @@ public class ClientDynamicClusterConfig extends Config {
 
     @Override
     public Config addFlakeIdGeneratorConfig(FlakeIdGeneratorConfig flakeIdGeneratorConfig) {
-        ClientMessage request = DynamicConfigAddFlakeIdGeneratorConfigCodec.encodeRequest(
-                flakeIdGeneratorConfig.getName(),
-                flakeIdGeneratorConfig.getPrefetchCount(),
-                flakeIdGeneratorConfig.getPrefetchValidityMillis(),
-                flakeIdGeneratorConfig.isStatisticsEnabled(),
-                flakeIdGeneratorConfig.getNodeIdOffset(),
-                flakeIdGeneratorConfig.getEpochStart(),
-                flakeIdGeneratorConfig.getBitsSequence(),
-                flakeIdGeneratorConfig.getBitsNodeId(),
-                flakeIdGeneratorConfig.getAllowedFutureMillis());
+        ClientMessage request = DynamicConfigAddFlakeIdGeneratorConfigCodec.encodeRequest(flakeIdGeneratorConfig.getName(),
+                flakeIdGeneratorConfig.getPrefetchCount(), flakeIdGeneratorConfig.getPrefetchValidityMillis(),
+                flakeIdGeneratorConfig.isStatisticsEnabled(), flakeIdGeneratorConfig.getNodeIdOffset(),
+                flakeIdGeneratorConfig.getEpochStart(), flakeIdGeneratorConfig.getBitsSequence(),
+                flakeIdGeneratorConfig.getBitsNodeId(), flakeIdGeneratorConfig.getAllowedFutureMillis());
         invoke(request);
         return this;
     }
@@ -407,7 +420,17 @@ public class ClientDynamicClusterConfig extends Config {
     }
 
     @Override
+    public String getProperty(@Nonnull HazelcastProperty property) {
+        throw new UnsupportedOperationException(UNSUPPORTED_ERROR_MESSAGE);
+    }
+
+    @Override
     public Config setProperty(@Nonnull String name, @Nonnull String value) {
+        throw new UnsupportedOperationException(UNSUPPORTED_ERROR_MESSAGE);
+    }
+
+    @Override
+    public Config setProperty(@Nonnull HazelcastProperty property, @Nonnull String value) {
         throw new UnsupportedOperationException(UNSUPPORTED_ERROR_MESSAGE);
     }
 
@@ -747,8 +770,7 @@ public class ClientDynamicClusterConfig extends Config {
     }
 
     @Override
-    public Config setCardinalityEstimatorConfigs(
-            Map<String, CardinalityEstimatorConfig> cardinalityEstimatorConfigs) {
+    public Config setCardinalityEstimatorConfigs(Map<String, CardinalityEstimatorConfig> cardinalityEstimatorConfigs) {
         throw new UnsupportedOperationException(UNSUPPORTED_ERROR_MESSAGE);
     }
 
@@ -1131,9 +1153,9 @@ public class ClientDynamicClusterConfig extends Config {
 
     @Override
     public Config addDataConnectionConfig(DataConnectionConfig dataConnectionConfig) {
-        ClientMessage request = DynamicConfigAddDataConnectionConfigCodec.encodeRequest(
-                dataConnectionConfig.getName(), dataConnectionConfig.getType(),
-                dataConnectionConfig.isShared(), toMap(dataConnectionConfig.getProperties()));
+        DataConnectionConfigValidator.validate(dataConnectionConfig);
+        ClientMessage request = DynamicConfigAddDataConnectionConfigCodec.encodeRequest(dataConnectionConfig.getName(),
+                dataConnectionConfig.getType(), dataConnectionConfig.isShared(), toMap(dataConnectionConfig.getProperties()));
         invoke(request);
         return this;
     }
@@ -1160,12 +1182,74 @@ public class ClientDynamicClusterConfig extends Config {
         throw new UnsupportedOperationException(UNSUPPORTED_ERROR_MESSAGE);
     }
 
+    // S1185:S1612 A test (testDecorateAllPublicMethodsFromTest) forces this class to implement all of the parent methods, but
+    // as we are overriding "namespaceConfig" with our own version, the parent implementation is sufficient
+    @SuppressWarnings("squid:S1185")
+    @Nonnull
+    @Override
+    public UserCodeNamespacesConfig getNamespacesConfig() {
+        return super.getNamespacesConfig();
+    }
+
+    // S1185:S1612 A test (testDecorateAllPublicMethodsFromTest) forces this class to implement all of the parent methods, but
+    // as we are overriding "namespaceConfig" with our own version, the parent implementation is sufficient
+    @SuppressWarnings("squid:S1185")
+    @Nonnull
+    @Override
+    public Config setNamespacesConfig(@Nonnull UserCodeNamespacesConfig userCodeNamespacesConfig) {
+        throw new UnsupportedOperationException(UNSUPPORTED_ERROR_MESSAGE);
+    }
+
+    @Override
+    public RestConfig getRestConfig() {
+        throw new UnsupportedOperationException(UNSUPPORTED_ERROR_MESSAGE);
+    }
+
+    @Nonnull
+    @Override
+    public Config setRestConfig(@Nonnull RestConfig restConfig) {
+        throw new UnsupportedOperationException(UNSUPPORTED_ERROR_MESSAGE);
+    }
+
+    @Override
+    public VectorCollectionConfig getVectorCollectionConfigOrNull(String name) {
+        throw new UnsupportedOperationException(UNSUPPORTED_ERROR_MESSAGE);
+    }
+
+    @Override
+    public Map<String, VectorCollectionConfig> getVectorCollectionConfigs() {
+        throw new UnsupportedOperationException(UNSUPPORTED_ERROR_MESSAGE);
+    }
+
+    @Override
+    @Nonnull
+    public Config addVectorCollectionConfig(@Nonnull VectorCollectionConfig vectorCollectionConfig) {
+        VectorCollectionLocator.assertAvailable();
+        ClientMessage request = DynamicConfigAddVectorCollectionConfigCodec.encodeRequest(
+                vectorCollectionConfig.getName(),
+                vectorCollectionConfig.getVectorIndexConfigs(),
+                vectorCollectionConfig.getBackupCount(),
+                vectorCollectionConfig.getAsyncBackupCount(),
+                vectorCollectionConfig.getSplitBrainProtectionName(),
+                vectorCollectionConfig.getMergePolicyConfig().getPolicy(),
+                vectorCollectionConfig.getMergePolicyConfig().getBatchSize(),
+                vectorCollectionConfig.getUserCodeNamespace()
+        );
+        invoke(request);
+        return this;
+    }
+
+    @Override
+    public Config setVectorCollectionConfigs(Map<String, VectorCollectionConfig> vectorConfigs) {
+        throw new UnsupportedOperationException(UNSUPPORTED_ERROR_MESSAGE);
+    }
+
     @Override
     public String toString() {
         return "DynamicClusterConfig{instance=" + instance + "}";
     }
 
-    private void invoke(ClientMessage request) {
+    protected void invoke(ClientMessage request) {
         try {
             ClientInvocation invocation = new ClientInvocation(instance, request, null);
             ClientInvocationFuture future = invocation.invoke();
@@ -1185,5 +1269,4 @@ public class ClientDynamicClusterConfig extends Config {
         }
         return listenerConfigHolders;
     }
-
 }

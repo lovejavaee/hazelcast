@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@ import com.hazelcast.config.MapConfig;
 import com.hazelcast.config.QueryCacheConfig;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.instance.impl.Node;
-import com.hazelcast.map.EventLostEvent;
 import com.hazelcast.map.IMap;
 import com.hazelcast.map.QueryCache;
 import com.hazelcast.map.impl.MapService;
@@ -31,7 +30,6 @@ import com.hazelcast.map.impl.querycache.accumulator.Accumulator;
 import com.hazelcast.map.listener.EventLostListener;
 import com.hazelcast.query.Predicates;
 import com.hazelcast.spi.properties.ClusterProperty;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
@@ -82,13 +80,10 @@ public class QueryCacheRecoveryUponEventLossTest extends HazelcastTestSupport {
 
         final CountDownLatch waitEventLossNotification = new CountDownLatch(1);
         final QueryCache queryCache = map.getQueryCache(queryCacheName, Predicates.sql("this > 20"), true);
-        queryCache.addEntryListener(new EventLostListener() {
-            @Override
-            public void eventLost(EventLostEvent event) {
-                queryCache.tryRecover();
+        queryCache.addEntryListener((EventLostListener) event -> {
+            queryCache.tryRecover();
 
-                waitEventLossNotification.countDown();
-            }
+            waitEventLossNotification.countDown();
         }, false);
 
         int count = 30;
@@ -98,25 +93,17 @@ public class QueryCacheRecoveryUponEventLossTest extends HazelcastTestSupport {
 
         assertOpenEventually(waitEventLossNotification);
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                assertEquals(9, queryCache.size());
-            }
-        });
+        assertTrueEventually(() -> assertEquals(9, queryCache.size()));
 
         // re-put entries and check if broken-sequences holder map will be empty
         for (int i = 0; i < count; i++) {
             map.put(i, i);
         }
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                Map brokenSequences = getBrokenSequences(node, mapName, queryCache);
-                assertTrue("After recovery, there should be no broken sequences left",
-                        brokenSequences.isEmpty());
-            }
+        assertTrueEventually(() -> {
+            Map<Integer, Long> brokenSequences = getBrokenSequences(node, mapName, queryCache);
+            assertTrue("After recovery, there should be no broken sequences left",
+                    brokenSequences.isEmpty());
         });
     }
 
@@ -128,7 +115,7 @@ public class QueryCacheRecoveryUponEventLossTest extends HazelcastTestSupport {
         queryCacheContext.setSubscriberContext(new TestSubscriberContext(queryCacheContext, eventCount, true));
     }
 
-    private Map getBrokenSequences(HazelcastInstance instance, String mapName, QueryCache queryCache) {
+    private Map<Integer, Long> getBrokenSequences(HazelcastInstance instance, String mapName, QueryCache queryCache) {
         Node node = getNode(instance);
         MapService service = node.getNodeEngine().getService(MapService.SERVICE_NAME);
         MapServiceContext mapServiceContext = service.getMapServiceContext();

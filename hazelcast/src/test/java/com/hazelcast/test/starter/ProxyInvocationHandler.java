@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,13 +58,14 @@ public class ProxyInvocationHandler implements InvocationHandler, Serializable {
             return delegateResult;
         }
 
-        if (returnType instanceof ParameterizedType) {
-            ParameterizedType parameterizedReturnType = (ParameterizedType) returnType;
-            ParameterizedType parameterizedDelegateReturnType = (ParameterizedType) delegateReturnType;
+        if (returnType instanceof ParameterizedType parameterizedReturnType
+                && delegateReturnType instanceof ParameterizedType parameterizedDelegateReturnType) {
             if (Collection.class.isAssignableFrom((Class) parameterizedDelegateReturnType.getRawType())) {
-                return toCollection(targetClassLoader, delegateResult, parameterizedReturnType, parameterizedDelegateReturnType);
+                return toCollection(targetClassLoader, delegateResult,
+                        parameterizedReturnType, parameterizedDelegateReturnType);
             }
         }
+
         // at this point we know the delegate returned something loaded by
         // different classloader than the proxy -> we need to proxy the result
         return proxyReturnObject(targetClassLoader, delegateResult);
@@ -174,7 +175,8 @@ public class ProxyInvocationHandler implements InvocationHandler, Serializable {
         if (!isDebugEnabled()) {
             return;
         }
-        debug("Returning proxy %s, loaded by %s", resultingProxy, resultingProxy.getClass().getClassLoader());
+        debug("Returning proxy %s, loaded by %s", resultingProxy,
+                resultingProxy.getClass().getClassLoader());
         debug("The proxy implements interfaces:");
         for (Class<?> interfaceClass : resultingProxy.getClass().getInterfaces()) {
             debug("%s, loaded by %s", interfaceClass, interfaceClass.getClassLoader());

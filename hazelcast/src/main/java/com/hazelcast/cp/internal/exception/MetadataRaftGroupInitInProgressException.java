@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,12 +19,15 @@ package com.hazelcast.cp.internal.exception;
 import com.hazelcast.core.HazelcastException;
 import com.hazelcast.spi.exception.RetryableException;
 
+import java.io.Serial;
+
 /**
  * Thrown when all CP members have not committed their CP member list
  * and initialization of the Metadata Raft group is not completed yet.
  * Handled and retried internally.
  */
 public class MetadataRaftGroupInitInProgressException extends HazelcastException implements RetryableException {
+    @Serial
     private static final long serialVersionUID = -587586143908312910L;
 
 }

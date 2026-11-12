@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,8 +19,10 @@ package com.hazelcast.jet.sql.impl.connector.map;
 import com.google.common.collect.ImmutableMap;
 import com.hazelcast.jet.sql.SqlTestSupport;
 import com.hazelcast.sql.SqlResult;
+import com.hazelcast.test.HazelcastSerialClassRunner;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 
 import java.io.Serializable;
 import java.util.Map;
@@ -35,6 +37,7 @@ import static com.hazelcast.jet.sql.impl.connector.SqlConnector.OPTION_VALUE_FOR
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+@RunWith(HazelcastSerialClassRunner.class)
 public class SqlUpdateTest extends SqlTestSupport {
 
     @BeforeClass
@@ -165,6 +168,16 @@ public class SqlUpdateTest extends SqlTestSupport {
 
         checkUpdateCount("UPDATE test_map SET field3 = CAST(3 + keyField AS VARCHAR), field2 = 2 + 1, field1 = 1 WHERE keyField = 1", 0);
         assertThat(map).containsExactly(entry(new Key(1), new Value(1, 3L, "4")));
+    }
+
+    @Test
+    public void update_complexKeySimpleValue() {
+        createMapping("test_map", Key.class, String.class);
+        Map<Object, Object> map = instance().getMap("test_map");
+        map.put(new Key(1), "300");
+
+        checkUpdateCount("UPDATE test_map SET this = CAST(3 + keyField AS VARCHAR)", 0);
+        assertThat(map).containsExactly(entry(new Key(1), "4"));
     }
 
     @Test

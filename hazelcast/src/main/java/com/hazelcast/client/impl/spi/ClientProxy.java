@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.hazelcast.client.impl.clientside.HazelcastClientInstanceImpl;
 import com.hazelcast.client.impl.protocol.ClientMessage;
 import com.hazelcast.client.impl.protocol.codec.ClientDestroyProxyCodec;
 import com.hazelcast.client.impl.spi.impl.ClientInvocation;
+import com.hazelcast.client.impl.spi.impl.ClientInvocationFuture;
 import com.hazelcast.client.impl.spi.impl.ListenerMessageCodec;
 import com.hazelcast.core.DistributedObject;
 import com.hazelcast.internal.serialization.Data;
@@ -218,6 +219,10 @@ public abstract class ClientProxy implements DistributedObject {
         }
     }
 
+    protected ClientInvocationFuture invokeAsync(ClientMessage clientMessage) {
+        return new ClientInvocation(getClient(), clientMessage, getName()).invoke();
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -234,10 +239,7 @@ public abstract class ClientProxy implements DistributedObject {
         if (!getDistributedObjectName().equals(that.getDistributedObjectName())) {
             return false;
         }
-        if (!serviceName.equals(that.serviceName)) {
-            return false;
-        }
-        return true;
+        return serviceName.equals(that.serviceName);
     }
 
     @Override

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,18 +24,17 @@ import com.hazelcast.config.RestServerEndpointConfig;
 import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.core.LifecycleEvent;
-import com.hazelcast.core.LifecycleListener;
 import com.hazelcast.instance.BuildInfoProvider;
 import com.hazelcast.internal.ascii.HTTPCommunicator.ConnectionResponse;
 import com.hazelcast.internal.json.Json;
 import com.hazelcast.internal.json.JsonArray;
 import com.hazelcast.internal.json.JsonObject;
 import com.hazelcast.internal.json.JsonValue;
+import com.hazelcast.spi.properties.ClusterProperty;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.TestAwareInstanceFactory;
 import com.hazelcast.test.annotation.QuickTest;
-import org.apache.http.NoHttpResponseException;
 import org.junit.After;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -44,21 +43,25 @@ import org.junit.runner.RunWith;
 
 import java.io.IOException;
 import java.net.HttpURLConnection;
-import java.net.SocketException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import static com.hazelcast.test.HazelcastTestSupport.assertClusterStateEventually;
 import static com.hazelcast.test.HazelcastTestSupport.assertContains;
 import static com.hazelcast.test.HazelcastTestSupport.assertContainsAll;
+import static com.hazelcast.test.HazelcastTestSupport.assertFalseEventually;
 import static com.hazelcast.test.HazelcastTestSupport.assertOpenEventually;
+import static com.hazelcast.test.HazelcastTestSupport.assertThrows;
 import static com.hazelcast.test.HazelcastTestSupport.assertTrueEventually;
 import static com.hazelcast.test.HazelcastTestSupport.smallInstanceConfig;
+import static com.hazelcast.test.HazelcastTestSupport.spawn;
 import static java.net.HttpURLConnection.HTTP_NOT_FOUND;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -95,7 +98,7 @@ public class RestClusterTest {
     }
 
     @Test
-    public void testDisabledRest() throws Exception {
+    public void testDisabledRest() {
         // REST should be disabled by default
         HazelcastInstance instance = factory.newHazelcastInstance(createConfig());
         HTTPCommunicator communicator = new HTTPCommunicator(instance);
@@ -140,6 +143,54 @@ public class RestClusterTest {
             assertFalse(instance2.getLifecycleService().isRunning());
         });
     }
+
+    @Test
+    public void testClusterShutdownFailure() throws Exception {
+        Config config = createConfigWithRestEnabled();
+        AtomicReference<HazelcastInstance> member1 = new AtomicReference<>();
+        AtomicReference<HazelcastInstance> member2 = new AtomicReference<>();
+
+        int port = config.getNetworkConfig().getPort() + 1;
+        // for tests which use advanced network, change the port from the
+        // member-member connection.
+        if (config.getAdvancedNetworkConfig().isEnabled()) {
+            config.getAdvancedNetworkConfig().getRestEndpointConfig().setPort(8080);
+            port = 8080;
+        }
+
+        // stall the join process with these properties
+        config.getProperties().setProperty(ClusterProperty.WAIT_SECONDS_BEFORE_JOIN.getName(), "5");
+        config.getProperties().setProperty(ClusterProperty.ASYNC_JOIN_STRATEGY_ENABLED.getName(), "false");
+
+        // create two members async, separate spawns as the join wait will block
+        spawn(() -> {
+            member1.set(Hazelcast.newHazelcastInstance(config));
+        });
+        spawn(() -> {
+            member2.set(Hazelcast.newHazelcastInstance(config));
+        });
+
+        HTTPCommunicator communicator = new HTTPCommunicator(port);
+        // verify the connection is up - given nodes started async
+        assertFalseEventually(() -> {
+            assertThrows(Exception.class, communicator::getInstanceInfo);
+        });
+
+        HTTPCommunicator.ConnectionResponse response = communicator.shutdownCluster(config.getClusterName(), getPassword());
+        assertFailureJson(response, "message", "Member has not yet joined cluster!");
+
+        // make sure member creation is completed and running
+        assertTrueEventually(() -> {
+            assertNotNull("member1 was null", member1.get());
+            assertNotNull("member2 was null", member2.get());
+            assertTrue("member1 has been shutdown", member1.get().getLifecycleService().isRunning());
+            assertTrue("member2 has been shutdown", member2.get().getLifecycleService().isRunning());
+        });
+
+        member1.get().shutdown();
+        member2.get().shutdown();
+    }
+
 
     @Test
     public void testGetClusterState() throws Exception {
@@ -231,33 +282,28 @@ public class RestClusterTest {
         String clusterName = config.getClusterName();
         ConnectionResponse resp = communicator.listClusterNodes(clusterName, getPassword());
         assertSuccessJson(resp,
-                "response", String.format("[%s]\n%s\n%s", instance.getCluster().getLocalMember().toString(),
+                "response", String.format("[%s]\n%s\n%s", instance.getCluster().getLocalMember(),
                         BuildInfoProvider.getBuildInfo().getVersion(),
                         System.getProperty("java.version")));
     }
 
     @Test
-    public void testShutdownNode() throws Exception {
+    public void testShutdownNode() {
         Config config = createConfigWithRestEnabled();
         HazelcastInstance instance = factory.newHazelcastInstance(config);
         HTTPCommunicator communicator = new HTTPCommunicator(instance);
 
         final CountDownLatch shutdownLatch = new CountDownLatch(1);
-        instance.getLifecycleService().addLifecycleListener(new LifecycleListener() {
-            @Override
-            public void stateChanged(LifecycleEvent event) {
-                if (event.getState() == LifecycleEvent.LifecycleState.SHUTDOWN) {
-                    shutdownLatch.countDown();
-                }
+        instance.getLifecycleService().addLifecycleListener(event -> {
+            if (event.getState() == LifecycleEvent.LifecycleState.SHUTDOWN) {
+                shutdownLatch.countDown();
             }
         });
         String clusterName = config.getClusterName();
         try {
             assertJsonContains(communicator.shutdownMember(clusterName, getPassword()).response, "status", "success");
-        } catch (SocketException ignored) {
-            // if the node shuts down before response is received, a `SocketException` (or instance of its subclass) is expected
-        } catch (NoHttpResponseException ignored) {
-            // `NoHttpResponseException` is also a possible outcome when a node shut down before it has a chance
+        } catch (IOException ignored) {
+            // exception is also a possible outcome when a node shut down before it has a chance
             // to send a response back to a client.
         }
 
@@ -522,6 +568,14 @@ public class RestClusterTest {
     private void assertSuccessJson(ConnectionResponse resp, String... attributesAndValues) {
         assertEquals(HttpURLConnection.HTTP_OK, resp.responseCode);
         assertJsonContains(resp.response, "status", "success");
+        if (attributesAndValues.length > 0) {
+            assertJsonContains(resp.response, attributesAndValues);
+        }
+    }
+
+    void assertFailureJson(ConnectionResponse resp, String... attributesAndValues) {
+        assertEquals(HttpURLConnection.HTTP_CONFLICT, resp.responseCode);
+        assertJsonContains(resp.response, "status", "fail");
         if (attributesAndValues.length > 0) {
             assertJsonContains(resp.response, attributesAndValues);
         }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,18 +25,31 @@ import com.hazelcast.internal.util.collection.ArrayUtils;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 import static com.hazelcast.internal.nio.Bits.CHAR_SIZE_IN_BYTES;
+import static com.hazelcast.internal.nio.Bits.FLOAT_SIZE_IN_BYTES;
 import static com.hazelcast.internal.nio.Bits.INT_SIZE_IN_BYTES;
 import static com.hazelcast.internal.nio.Bits.LONG_SIZE_IN_BYTES;
 import static com.hazelcast.internal.nio.Bits.NULL_ARRAY_LENGTH;
 import static com.hazelcast.internal.nio.Bits.SHORT_SIZE_IN_BYTES;
 import static com.hazelcast.version.Version.UNKNOWN;
 
+@SuppressWarnings("MethodCount")
 public class ByteArrayObjectDataOutput extends VersionedObjectDataOutput implements BufferObjectDataOutput {
+
+    /**
+     * The array size used when doubling the current size would result in a value greater than {@link Integer#MAX_VALUE}.
+     * Some VMs reserve some header words in an array, so we give a very generous overhead for max array sizing.
+     * <pre>
+     * See <a href="https://github.com/openjdk/jdk/blob/bc5cde1b198baf6e2e36d370b0aaa907c8f35777/src/
+       java.base/share/classes/jdk/internal/util/ArraysSupport.java#L854">OpenJDK SOFT_MAX_ARRAY_LENGTH</a>
+     * </pre>
+     */
+    static final int MAX_ARRAY_SIZE = Integer.MAX_VALUE - 64;
 
     final int initialSize;
 
@@ -271,7 +284,7 @@ public class ByteArrayObjectDataOutput extends VersionedObjectDataOutput impleme
     }
 
     @Override
-    @Deprecated
+    @Deprecated(since = "4.2", forRemoval = true)
     public void writeUTF(final String str) throws IOException {
         writeString(str);
     }
@@ -358,9 +371,10 @@ public class ByteArrayObjectDataOutput extends VersionedObjectDataOutput impleme
         int len = floats != null ? floats.length : NULL_ARRAY_LENGTH;
         writeInt(len);
         if (len > 0) {
-            for (float f : floats) {
-                writeFloat(f);
-            }
+            int sizeInBytes = len * FLOAT_SIZE_IN_BYTES;
+            ensureAvailable(sizeInBytes);
+            ByteBuffer.wrap(this.buffer, pos, sizeInBytes).order(getByteOrder()).asFloatBuffer().put(floats);
+            pos += sizeInBytes;
         }
     }
 
@@ -376,7 +390,7 @@ public class ByteArrayObjectDataOutput extends VersionedObjectDataOutput impleme
     }
 
     @Override
-    @Deprecated
+    @Deprecated(since = "4.2", forRemoval = true)
     public void writeUTFArray(String[] strings) throws IOException {
        writeStringArray(strings);
     }
@@ -392,11 +406,30 @@ public class ByteArrayObjectDataOutput extends VersionedObjectDataOutput impleme
         }
     }
 
+    // Extracted for testing purposes, to avoid needing to allocate huge arrays in tests
+    int getBufferLength() {
+        return buffer.length;
+    }
+
+    // Separate method for testing purposes
+    final int getNewCapacity(int len) {
+        int neededCapacity = getBufferLength() + len;
+        if (neededCapacity < 0 || neededCapacity > MAX_ARRAY_SIZE) {
+            throw new OutOfMemoryError(String.format("Buffer capacity cannot be allocated. Current: %d, Len: %d, Maximum: %d",
+                    getBufferLength(), len, MAX_ARRAY_SIZE));
+        }
+
+        if (getBufferLength() << 1 < 0) {
+            return MAX_ARRAY_SIZE;
+        } else {
+            return Math.max(Math.max(buffer.length << 1, neededCapacity), firstGrowthSize);
+        }
+    }
+
     final void ensureAvailable(int len) {
         if (available() < len) {
             if (buffer != null) {
-                int newCap = Math.max(Math.max(buffer.length << 1, buffer.length + len), firstGrowthSize);
-                buffer = Arrays.copyOf(buffer, newCap);
+                buffer = Arrays.copyOf(buffer, getNewCapacity(len));
             } else {
                 buffer = new byte[len > initialSize / 2 ? len * 2 : initialSize];
             }
@@ -457,6 +490,7 @@ public class ByteArrayObjectDataOutput extends VersionedObjectDataOutput impleme
     }
 
     @Override
+    @SuppressWarnings("MagicNumber")
     public void clear() {
         pos = 0;
         if (buffer != null && buffer.length > initialSize * 8) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import com.hazelcast.spi.merge.HyperLogLogMergePolicy;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Objects;
 
 import static com.hazelcast.internal.util.Preconditions.checkAsyncBackupCount;
 import static com.hazelcast.internal.util.Preconditions.checkBackupCount;
@@ -34,7 +35,8 @@ import static java.lang.String.format;
 /**
  * Configuration options for the {@link com.hazelcast.cardinality.CardinalityEstimator}
  */
-public class CardinalityEstimatorConfig implements IdentifiedDataSerializable, NamedConfig {
+public class CardinalityEstimatorConfig implements IdentifiedDataSerializable, NamedConfig,
+        SplitBrainPolicyAwareConfig {
 
     /**
      * The number of sync backups per estimator
@@ -109,6 +111,7 @@ public class CardinalityEstimatorConfig implements IdentifiedDataSerializable, N
      *
      * @return the name of the estimator
      */
+    @Override
     public String getName() {
         return name;
     }
@@ -119,6 +122,7 @@ public class CardinalityEstimatorConfig implements IdentifiedDataSerializable, N
      * @param name the name of the estimator
      * @return the cardinality estimator config instance
      */
+    @Override
     public CardinalityEstimatorConfig setName(String name) {
         checkNotNull(name);
         this.name = name;
@@ -130,15 +134,17 @@ public class CardinalityEstimatorConfig implements IdentifiedDataSerializable, N
      *
      * @return the {@link MergePolicyConfig} for the cardinality estimator
      */
+    @Override
     public MergePolicyConfig getMergePolicyConfig() {
         return mergePolicyConfig;
     }
 
     /**
-     * Sets the {@link MergePolicyConfig} for the scheduler.
+     * Sets the {@link MergePolicyConfig} for the cardinality estimator.
      *
-     * @return this executor config instance
+     * @return this configuration
      */
+    @Override
     public CardinalityEstimatorConfig setMergePolicyConfig(MergePolicyConfig mergePolicyConfig) {
         this.mergePolicyConfig = checkNotNull(mergePolicyConfig, "mergePolicyConfig cannot be null");
         validate();
@@ -210,6 +216,7 @@ public class CardinalityEstimatorConfig implements IdentifiedDataSerializable, N
      *
      * @return the split brain protection name
      */
+    @Override
     public String getSplitBrainProtectionName() {
         return splitBrainProtectionName;
     }
@@ -220,6 +227,7 @@ public class CardinalityEstimatorConfig implements IdentifiedDataSerializable, N
      * @param splitBrainProtectionName the split brain protection name
      * @return the updated configuration
      */
+    @Override
     public CardinalityEstimatorConfig setSplitBrainProtectionName(String splitBrainProtectionName) {
         this.splitBrainProtectionName = splitBrainProtectionName;
         return this;
@@ -270,22 +278,20 @@ public class CardinalityEstimatorConfig implements IdentifiedDataSerializable, N
         if (this == o) {
             return true;
         }
-        if (!(o instanceof CardinalityEstimatorConfig)) {
+        if (!(o instanceof CardinalityEstimatorConfig that)) {
             return false;
         }
 
-        CardinalityEstimatorConfig that = (CardinalityEstimatorConfig) o;
         if (backupCount != that.backupCount) {
             return false;
         }
         if (asyncBackupCount != that.asyncBackupCount) {
             return false;
         }
-        if (splitBrainProtectionName != null ? !splitBrainProtectionName.equals(that.splitBrainProtectionName)
-                : that.splitBrainProtectionName != null) {
+        if (!Objects.equals(splitBrainProtectionName, that.splitBrainProtectionName)) {
             return false;
         }
-        if (mergePolicyConfig != null ? !mergePolicyConfig.equals(that.mergePolicyConfig) : that.mergePolicyConfig != null) {
+        if (!Objects.equals(mergePolicyConfig, that.mergePolicyConfig)) {
             return false;
         }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -162,11 +162,6 @@ public class NoLoggerTest extends AbstractLoggerTest {
         logger.log(Level.WARNING, MESSAGE, THROWABLE);
         logger.log(Level.SEVERE, MESSAGE, THROWABLE);
         logger.log(Level.ALL, MESSAGE, THROWABLE);
-    }
-
-    @Test
-    public void logEvent() {
-        logger.log(LOG_EVENT);
     }
 
     @Test

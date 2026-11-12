@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,12 @@
 
 package com.hazelcast.client.cp.internal.datastructures.lock;
 
-import com.hazelcast.client.cp.internal.session.ClientProxySessionManager;
 import com.hazelcast.client.impl.clientside.HazelcastClientProxy;
 import com.hazelcast.client.test.TestHazelcastFactory;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.cp.internal.RaftGroupId;
 import com.hazelcast.cp.internal.datastructures.lock.FencedLockBasicTest;
-import com.hazelcast.cp.internal.session.AbstractProxySessionManager;
+import com.hazelcast.cp.internal.session.ProxySessionManager;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
 import com.hazelcast.test.annotation.ParallelJVMTest;
@@ -31,7 +30,7 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
-import static com.hazelcast.cp.internal.session.AbstractProxySessionManager.NO_SESSION_ID;
+import static com.hazelcast.cp.internal.session.ProxySessionManager.NO_SESSION_ID;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
@@ -77,13 +76,13 @@ public class FencedLockClientBasicTest extends FencedLockBasicTest {
 
         assertTrueEventually(() -> {
             HazelcastClientProxy clientProxy = (HazelcastClientProxy) client;
-            ClientProxySessionManager proxySessionManager = clientProxy.client.getProxySessionManager();
+            ProxySessionManager proxySessionManager = clientProxy.client.getProxySessionManager();
             assertEquals(NO_SESSION_ID, proxySessionManager.getSession((RaftGroupId) lock.getGroupId()));
         });
     }
 
     @Override
-    protected AbstractProxySessionManager getSessionManager(HazelcastInstance instance) {
+    protected ProxySessionManager getSessionManager(HazelcastInstance instance) {
         return (((HazelcastClientProxy) client).client).getProxySessionManager();
     }
 

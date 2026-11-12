@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,10 @@
 
 package com.hazelcast.map.impl.mapstore.writebehind;
 
+import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.map.EntryLoader.MetadataAwareValue;
 import com.hazelcast.map.impl.mapstore.MapStoreContext;
 import com.hazelcast.map.impl.mapstore.writebehind.entry.DelayedEntry;
-import com.hazelcast.internal.serialization.Data;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -74,6 +74,33 @@ class DefaultWriteBehindProcessor extends AbstractWriteBehindProcessor<DelayedEn
         if (delayedEntries == null || delayedEntries.isEmpty()) {
             return Collections.emptyMap();
         }
+        return writeCoalescing
+                ? processInternalWithNoOrder(delayedEntries)
+                : processInternalWithOrder(delayedEntries);
+    }
+
+    private Map<Integer, List<DelayedEntry>> processInternalWithNoOrder(List<DelayedEntry> delayedEntries) {
+        final Map<Integer, List<DelayedEntry>> failuresByPartition = new HashMap<>();
+        // split into delete and write.
+        final List<DelayedEntry> entriesToProcessDelete = new ArrayList<>();
+        final List<DelayedEntry> entriesToProcessWrite = new ArrayList<>();
+        for (final DelayedEntry<Data, Object> entry : delayedEntries) {
+            if (entry.getValue() == null) {
+                entriesToProcessDelete.add(entry);
+            } else {
+                entriesToProcessWrite.add(entry);
+            }
+        }
+        final List<DelayedEntry> failuresDelete = callHandler(entriesToProcessDelete, StoreOperationType.DELETE);
+        addFailsTo(failuresByPartition, failuresDelete);
+        entriesToProcessDelete.clear();
+        final List<DelayedEntry> failuresWrite = callHandler(entriesToProcessWrite, StoreOperationType.WRITE);
+        addFailsTo(failuresByPartition, failuresWrite);
+        entriesToProcessWrite.clear();
+        return failuresByPartition;
+    }
+
+    private Map<Integer, List<DelayedEntry>> processInternalWithOrder(List<DelayedEntry> delayedEntries) {
         final Map<Integer, List<DelayedEntry>> failuresByPartition = new HashMap<>();
         final List<DelayedEntry> entriesToProcess = new ArrayList<>();
         StoreOperationType operationType = null;
@@ -86,7 +113,7 @@ class DefaultWriteBehindProcessor extends AbstractWriteBehindProcessor<DelayedEn
             } else {
                 operationType = StoreOperationType.WRITE;
             }
-            if (previousOperationType != null && !previousOperationType.equals(operationType)) {
+            if (previousOperationType != null && previousOperationType != operationType) {
                 final List<DelayedEntry> failures = callHandler(entriesToProcess, previousOperationType);
                 addFailsTo(failuresByPartition, failures);
                 entriesToProcess.clear();
@@ -167,7 +194,7 @@ class DefaultWriteBehindProcessor extends AbstractWriteBehindProcessor<DelayedEn
                 }
             }
         }
-        return totalFailures == null ? Collections.EMPTY_LIST : totalFailures;
+        return totalFailures == null ? Collections.emptyList() : totalFailures;
     }
 
     private Map prepareBatchMap(DelayedEntry[] delayedEntries) {
@@ -262,8 +289,10 @@ class DefaultWriteBehindProcessor extends AbstractWriteBehindProcessor<DelayedEn
         for (Collection<DelayedEntry> value : values) {
             size += value.size();
         }
-        final String logMessage = String.format("Map store flush operation can not be done for %d entries", size);
-        logger.severe(logMessage);
+        logWithMapName(
+                logger::severe,
+                String.format("Map store flush operation can not be done for %d entries", size)
+        );
     }
 
     @Override
@@ -320,8 +349,12 @@ class DefaultWriteBehindProcessor extends AbstractWriteBehindProcessor<DelayedEn
                 // partition-write-behind-queues and will try to re-process
                 // them. This fail and retry cycle will be repeated indefinitely.
                 List failureList = task.failureList();
-                logger.severe("Number of entries which could not be stored is = [" + failureList.size() + "]"
-                        + ", Hazelcast will indefinitely retry to store them", exception);
+                logWithMapName(
+                        logger::severe,
+                        "Number of entries which could not be stored is = [" + failureList.size() + "]"
+                                + ", Hazelcast will indefinitely retry to store them",
+                        exception
+                );
                 return failureList;
             }
         }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 package com.hazelcast.client.impl.protocol.task.cache;
 
-import com.hazelcast.cache.impl.CacheService;
+import com.hazelcast.cache.impl.ICacheService;
 import com.hazelcast.cache.impl.journal.CacheEventJournalReadOperation;
 import com.hazelcast.cache.EventJournalCacheEvent;
 import com.hazelcast.client.impl.protocol.ClientMessage;
@@ -25,6 +25,7 @@ import com.hazelcast.instance.impl.Node;
 import com.hazelcast.internal.nio.Connection;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.ringbuffer.impl.ReadResultSetImpl;
+import com.hazelcast.security.SecurityInterceptorConstants;
 import com.hazelcast.security.permission.ActionConstants;
 import com.hazelcast.security.permission.CachePermission;
 import com.hazelcast.spi.impl.operationservice.Operation;
@@ -57,6 +58,7 @@ public class CacheEventJournalReadTask<K, V, T>
 
     public CacheEventJournalReadTask(ClientMessage clientMessage, Node node, Connection connection) {
         super(clientMessage, node, connection);
+        setNamespaceAware();
     }
 
     @Override
@@ -64,7 +66,7 @@ public class CacheEventJournalReadTask<K, V, T>
         final Function<? super EventJournalCacheEvent<K, V>, T> projection
                 = serializationService.toObject(parameters.projection);
         final Predicate<? super EventJournalCacheEvent<K, V>> predicate = serializationService.toObject(parameters.predicate);
-        return new CacheEventJournalReadOperation<K, V, T>(parameters.name,
+        return new CacheEventJournalReadOperation<>(parameters.name,
                 parameters.startSequence, parameters.minSize, parameters.maxSize, predicate, projection);
     }
 
@@ -77,7 +79,7 @@ public class CacheEventJournalReadTask<K, V, T>
     protected ClientMessage encodeResponse(Object response) {
         // we are not deserializing the whole content, only the enclosing portable. The actual items remain un
         final ReadResultSetImpl resultSet = nodeEngine.getSerializationService().toObject(response);
-        final List<Data> items = new ArrayList<Data>(resultSet.size());
+        final List<Data> items = new ArrayList<>(resultSet.size());
         final long[] seqs = new long[resultSet.size()];
         final Data[] dataItems = resultSet.getDataItems();
 
@@ -92,9 +94,10 @@ public class CacheEventJournalReadTask<K, V, T>
 
     @Override
     public final String getServiceName() {
-        return CacheService.SERVICE_NAME;
+        return ICacheService.SERVICE_NAME;
     }
 
+    @Override
     public Permission getRequiredPermission() {
         return new CachePermission(parameters.name, ActionConstants.ACTION_READ);
     }
@@ -106,7 +109,7 @@ public class CacheEventJournalReadTask<K, V, T>
 
     @Override
     public String getMethodName() {
-        return "readFromEventJournal";
+        return SecurityInterceptorConstants.READ_FROM_EVENT_JOURNAL;
     }
 
     @Override

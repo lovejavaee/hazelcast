@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,8 @@ import static com.hazelcast.internal.memory.impl.UnsafeUtil.UNSAFE_AVAILABLE;
  * that directly uses {@link sun.misc.Unsafe} for accessing to memory.
  */
 @SuppressWarnings("checkstyle:methodcount")
-public final class StandardMemoryAccessor extends UnsafeBasedMemoryAccessor {
+public sealed class StandardMemoryAccessor extends UnsafeBasedMemoryAccessor
+        permits DiagnosticStandardMemoryAccessor {
 
     public static final StandardMemoryAccessor INSTANCE = UNSAFE_AVAILABLE ? new StandardMemoryAccessor() : null;
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,14 +19,10 @@ package com.hazelcast.security.permission;
 import com.hazelcast.jet.impl.util.IOUtil;
 import com.hazelcast.jet.pipeline.file.FileSourceBuilder;
 
-import javax.annotation.Nullable;
-
 public class ConnectorPermission extends InstancePermission {
 
     public static final String FILE_PREFIX = "file:";
     public static final String SOCKET_PREFIX = "socket:";
-    public static final String JMS_PREFIX = "jms:";
-    public static final String JDBC_PREFIX = "jdbc:";
 
     private static final int READ = 1;
     private static final int WRITE = 2;
@@ -51,14 +47,6 @@ public class ConnectorPermission extends InstancePermission {
 
     public static ConnectorPermission socket(String host, int port, String action) {
         return new ConnectorPermission(SOCKET_PREFIX + host + ':' + port, action);
-    }
-
-    public static ConnectorPermission jms(@Nullable String destination, String action) {
-        return new ConnectorPermission(JMS_PREFIX + (destination == null ? "" : destination), action);
-    }
-
-    public static ConnectorPermission jdbc(@Nullable String connectionUrl, String action) {
-        return new ConnectorPermission(JDBC_PREFIX + (connectionUrl == null ? "" : connectionUrl), action);
     }
 
     @Override

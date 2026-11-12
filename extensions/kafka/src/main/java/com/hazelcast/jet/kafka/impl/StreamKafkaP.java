@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import com.hazelcast.function.FunctionEx;
 import com.hazelcast.function.SupplierEx;
 import com.hazelcast.jet.Traverser;
 import com.hazelcast.jet.Traversers;
+import com.hazelcast.jet.config.ProcessingGuarantee;
 import com.hazelcast.jet.core.AbstractProcessor;
 import com.hazelcast.jet.core.BroadcastKey;
 import com.hazelcast.jet.core.EventTimeMapper;
@@ -27,6 +28,7 @@ import com.hazelcast.jet.core.EventTimePolicy;
 import com.hazelcast.jet.core.Processor;
 import com.hazelcast.jet.kafka.KafkaDataConnection;
 import com.hazelcast.jet.kafka.KafkaProcessors;
+import com.hazelcast.jet.kafka.TopicsConfig;
 import com.hazelcast.jet.pipeline.DataConnectionRef;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -46,16 +48,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Properties;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import static com.hazelcast.jet.Traversers.traverseIterable;
 import static com.hazelcast.jet.Traversers.traverseStream;
 import static com.hazelcast.jet.Util.entry;
+import static com.hazelcast.jet.config.ProcessingGuarantee.NONE;
 import static com.hazelcast.jet.core.BroadcastKey.broadcastKey;
-import static com.hazelcast.jet.impl.util.LoggingUtil.logFinest;
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static java.util.stream.Collectors.toMap;
 
 /**
  * See {@link KafkaProcessors#streamKafkaP}.
@@ -66,14 +68,31 @@ public final class StreamKafkaP<K, V, T> extends AbstractProcessor {
     private static final long METADATA_CHECK_INTERVAL_NANOS = SECONDS.toNanos(5);
     private static final String PARTITION_COUNTS_SNAPSHOT_KEY = "partitionCounts";
 
+    /**
+     * If number of partitions = number of Kafka partitions, then there is 1:1 assignment.
+     * In such cases, because the processor is only talking to one broker, it fires off its single fetch request in
+     * {@code poll()}. In next iterations of Jet's state machine,
+     * {@code poll(Duration.ZERO)} checks the network socket again and the fetch request is still being processed by the broker
+     * (or traveling over the network), the socket has no data, {@code poll(Duration.ZERO)} immediately returns
+     * an empty collection.
+     *
+     * <p>
+     *  This causes huge latency problems, when combined with Hazelcast's idle strategy of parking the threads.
+     *  Setting the timeout to a value higher than 0 bypasses Kafka's special and non-blocking handing of value "0"
+     *  and therefore avoids large latency spikes caused by frequent thread parking.
+     */
+    private static final Duration POLL_TIMEOUT = Duration.ofMillis(2);
+
     Map<TopicPartition, Integer> currentAssignment = new HashMap<>();
 
     private final FunctionEx<Context, Consumer<K, V>> kafkaConsumerFn;
 
     private final FunctionEx<? super ConsumerRecord<K, V>, ? extends T> projectionFn;
     private final EventTimeMapper<? super T> eventTimeMapper;
+    private final TopicsConfig topicsConfig;
     private List<String> topics;
     private int totalParallelism;
+    private ProcessingGuarantee processingGuarantee;
 
     private Consumer<K, V> consumer;
     private long nextMetadataCheck = Long.MIN_VALUE;
@@ -94,13 +113,19 @@ public final class StreamKafkaP<K, V, T> extends AbstractProcessor {
             @Nonnull FunctionEx<? super ConsumerRecord<K, V>, ? extends T> projectionFn,
             @Nonnull EventTimePolicy<? super T> eventTimePolicy
     ) {
+        this(kafkaConsumerFn, new TopicsConfig().addTopics(topics), projectionFn, eventTimePolicy);
+    }
+
+    public StreamKafkaP(
+            @Nonnull FunctionEx<Context, Consumer<K, V>> kafkaConsumerFn,
+            @Nonnull TopicsConfig topicsConfig,
+            @Nonnull FunctionEx<? super ConsumerRecord<K, V>, ? extends T> projectionFn,
+            @Nonnull EventTimePolicy<? super T> eventTimePolicy
+    ) {
         this.kafkaConsumerFn = kafkaConsumerFn;
-        this.topics = topics;
+        this.topicsConfig = topicsConfig;
         this.projectionFn = projectionFn;
-        eventTimeMapper = new EventTimeMapper<>(eventTimePolicy);
-        for (String topic : topics) {
-            offsets.put(topic, new long[0]);
-        }
+        this.eventTimeMapper = new EventTimeMapper<>(eventTimePolicy);
     }
 
     @Override
@@ -110,18 +135,28 @@ public final class StreamKafkaP<K, V, T> extends AbstractProcessor {
 
     @Override
     protected void init(@Nonnull Context context) {
-        List<String> uniqueTopics = topics.stream().distinct().collect(Collectors.toList());
-        if (uniqueTopics.size() != topics.size()) {
-            List<String> topics = new ArrayList<>(this.topics);
-            for (String t : uniqueTopics) {
-                topics.remove(t); // removes only first element
-            }
-            getLogger().warning("Duplicate topics found in topic list: " + topics);
+        topics = new ArrayList<>(topicsConfig.getTopicNames());
+        for (String topic : topics) {
+            offsets.put(topic, new long[0]);
         }
-        topics = uniqueTopics;
         processorIndex = context.globalProcessorIndex();
         totalParallelism = context.totalParallelism();
+        processingGuarantee = context.processingGuarantee();
         consumer = kafkaConsumerFn.apply(context);
+        if (processingGuarantee == NONE) {
+            warnWhenInitialOffsetsProvided();
+        }
+    }
+
+    private void warnWhenInitialOffsetsProvided() {
+        topicsConfig.getTopicConfigs().forEach((topicName, config) -> {
+            Map<Integer, Long> partitionsInitialOffsets = config.getPartitionsInitialOffsets();
+            if (!partitionsInitialOffsets.isEmpty()) {
+                getLogger().warning("Provided partitions initial offsets: " + partitionsInitialOffsets
+                        + " for topic: " + topicName
+                        + " will be ignored, because job's processing guarantee is: " + processingGuarantee);
+            }
+        });
     }
 
     private void assignPartitions() {
@@ -171,16 +206,44 @@ public final class StreamKafkaP<K, V, T> extends AbstractProcessor {
         getLogger().info("New partition(s) assigned: " + newAssignments);
         eventTimeMapper.addPartitions(newAssignments.size());
         consumer.assign(currentAssignment.keySet());
-        if (oldTopicOffsets.length > 0 && !isRestoring) {
-            // For partitions detected later during the runtime we seek to their
-            // beginning. It can happen that a partition is added, and some messages
-            // are added to it before we start consuming from it. If we started at the
-            // current position, we will miss those, so we explicitly seek to the
-            // beginning.
-            getLogger().info("Seeking to the beginning of newly-discovered partitions: " + newAssignments);
-            consumer.seekToBeginning(newAssignments);
+        if (!isRestoring) {
+            if (oldTopicOffsets.length > 0) {
+                // For partitions detected later during the runtime we seek to their
+                // beginning. It can happen that a partition is added, and some messages
+                // are added to it before we start consuming from it. If we started at the
+                // current position, we will miss those, so we explicitly seek to the
+                // beginning. Note that this behavior is still in-force, even when partitions
+                // initial offsets was provided. This means for partitions discovered later
+                // during the runtime initial offsets configuration will not be respected.
+                getLogger().info("Seeking to the beginning of newly-discovered partitions: " + newAssignments);
+                consumer.seekToBeginning(newAssignments);
+            } else if (processingGuarantee != NONE) {
+                // For processing guarantee equal to NONE partitions initial offsets
+                // configuration is always ignored.
+                seekToInitialOffsets(newAssignments);
+            }
         }
-        logFinest(getLogger(), "Currently assigned partitions: %s", currentAssignment);
+        getLogger().finest("Currently assigned partitions: %s", currentAssignment);
+    }
+
+    private void seekToInitialOffsets(Collection<TopicPartition> newAssignments) {
+        for (TopicPartition topicPartition : newAssignments) {
+            int partition = topicPartition.partition();
+            Long initialOffset = topicsConfig.getInitialOffsetFor(topicPartition.topic(), partition);
+            if (initialOffset == null || initialOffset < 0) {
+                continue;
+            }
+            long[] topicOffsets = offsets.get(topicPartition.topic());
+            assert topicOffsets != null && topicOffsets.length > partition;
+
+            // we need to decrement the initialOffset value before putting it into the array,
+            // because the record we want to start reading from has not yet been consumed
+            topicOffsets[partition] = initialOffset - 1;
+
+            getLogger().info("Seeking to specified initial offset: " + initialOffset
+                    + " of topic-partition: " + topicPartition);
+            consumer.seek(topicPartition, initialOffset);
+        }
     }
 
     @Override
@@ -192,21 +255,21 @@ public final class StreamKafkaP<K, V, T> extends AbstractProcessor {
         ConsumerRecords<K, V> records = null;
         assignPartitions();
         if (!currentAssignment.isEmpty()) {
-            records = consumer.poll(Duration.ZERO);
+            records = consumer.poll(POLL_TIMEOUT);
         }
 
         traverser = isEmpty(records)
                 ? eventTimeMapper.flatMapIdle()
                 : traverseIterable(records).flatMap(record -> {
-                    offsets.get(record.topic())[record.partition()] = record.offset();
-                    T projectedRecord = projectionFn.apply(record);
-                    if (projectedRecord == null) {
-                        return Traversers.empty();
-                    }
-                    TopicPartition topicPartition = new TopicPartition(record.topic(), record.partition());
-                    return eventTimeMapper.flatMapEvent(projectedRecord, currentAssignment.get(topicPartition),
-                            record.timestamp());
-                });
+            offsets.get(record.topic())[record.partition()] = record.offset();
+            T projectedRecord = projectionFn.apply(record);
+            if (projectedRecord == null) {
+                return Traversers.empty();
+            }
+            TopicPartition topicPartition = new TopicPartition(record.topic(), record.partition());
+            return eventTimeMapper.flatMapEvent(projectedRecord, currentAssignment.get(topicPartition),
+                    record.timestamp());
+        });
 
         emitFromTraverser(traverser);
         return false;
@@ -231,14 +294,14 @@ public final class StreamKafkaP<K, V, T> extends AbstractProcessor {
         if (snapshotTraverser == null) {
             Stream<Entry<BroadcastKey<?>, ?>> snapshotStream =
                     offsets.entrySet().stream()
-                           .flatMap(entry -> IntStream.range(0, entry.getValue().length)
-                                  .filter(partition -> entry.getValue()[partition] >= 0)
-                                  .mapToObj(partition -> {
-                                      TopicPartition key = new TopicPartition(entry.getKey(), partition);
-                                      long offset = entry.getValue()[partition];
-                                      long watermark = eventTimeMapper.getWatermark(currentAssignment.get(key));
-                                      return entry(broadcastKey(key), new long[]{offset, watermark});
-                                  }));
+                            .flatMap(entry -> IntStream.range(0, entry.getValue().length)
+                                    .filter(partition -> entry.getValue()[partition] >= 0)
+                                    .mapToObj(partition -> {
+                                        TopicPartition key = new TopicPartition(entry.getKey(), partition);
+                                        long offset = entry.getValue()[partition];
+                                        long watermark = eventTimeMapper.getWatermark(currentAssignment.get(key));
+                                        return entry(broadcastKey(key), new long[]{offset, watermark});
+                                    }));
             snapshotTraverser = traverseStream(snapshotStream)
                     .onFirstNull(() -> {
                         snapshotTraverser = null;
@@ -252,7 +315,7 @@ public final class StreamKafkaP<K, V, T> extends AbstractProcessor {
                 Entry<BroadcastKey<?>, ?> partitionCountsItem = entry(
                         broadcastKey(PARTITION_COUNTS_SNAPSHOT_KEY),
                         topics.stream()
-                              .collect(Collectors.toMap(topic -> topic, topic -> offsets.get(topic).length)));
+                                .collect(toMap(topic -> topic, topic -> offsets.get(topic).length)));
                 snapshotTraverser = snapshotTraverser.append(partitionCountsItem);
             }
         }
@@ -315,22 +378,22 @@ public final class StreamKafkaP<K, V, T> extends AbstractProcessor {
 
     private Map<TopicPartition, Long> offsets() {
         return currentAssignment.keySet().stream()
-                .collect(Collectors.toMap(tp -> tp, tp -> offsets.get(tp.topic())[tp.partition()]));
+                .collect(toMap(tp -> tp, tp -> offsets.get(tp.topic())[tp.partition()]));
     }
 
     private Map<TopicPartition, Long> watermarks() {
         return currentAssignment.entrySet().stream()
-                .collect(Collectors.toMap(Entry::getKey, e -> eventTimeMapper.getWatermark(e.getValue())));
+                .collect(toMap(Entry::getKey, e -> eventTimeMapper.getWatermark(e.getValue())));
     }
 
     @Nonnull
     public static <K, V, T> SupplierEx<Processor> processorSupplier(
             @Nonnull FunctionEx<Context, Consumer<K, V>> kafkaConsumerSup,
-            @Nonnull List<String> topics,
+            @Nonnull TopicsConfig topicsConfig,
             @Nonnull FunctionEx<? super ConsumerRecord<K, V>, ? extends T> projectionFn,
             @Nonnull EventTimePolicy<? super T> eventTimePolicy
     ) {
-        return () -> new StreamKafkaP<>(kafkaConsumerSup, topics, projectionFn, eventTimePolicy);
+        return () -> new StreamKafkaP<>(kafkaConsumerSup, topicsConfig, projectionFn, eventTimePolicy);
     }
 
     private boolean handledByThisProcessor(int topicIndex, int partition) {
@@ -345,18 +408,34 @@ public final class StreamKafkaP<K, V, T> extends AbstractProcessor {
     }
 
     public static <K, V> FunctionEx<Processor.Context, Consumer<K, V>> kafkaConsumerFn(Properties properties) {
-        return (c) -> new KafkaConsumer<>(properties);
+        return c -> new KafkaConsumer<>(properties);
     }
 
     public static <K, V> FunctionEx<Processor.Context, Consumer<K, V>> kafkaConsumerFn(
             DataConnectionRef dataConnectionRef
     ) {
-        return (context) -> {
+        return context -> {
             KafkaDataConnection kafkaDataConnection = context
                     .dataConnectionService()
                     .getAndRetainDataConnection(dataConnectionRef.getName(), KafkaDataConnection.class);
             try {
                 return kafkaDataConnection.newConsumer();
+            } finally {
+                kafkaDataConnection.release();
+            }
+        };
+    }
+
+    public static <K, V> FunctionEx<Processor.Context, Consumer<K, V>> kafkaConsumerFn(
+            DataConnectionRef dataConnectionRef,
+            Properties mappingProperties
+    ) {
+        return context -> {
+            KafkaDataConnection kafkaDataConnection = context
+                    .dataConnectionService()
+                    .getAndRetainDataConnection(dataConnectionRef.getName(), KafkaDataConnection.class);
+            try {
+                return kafkaDataConnection.newConsumer(mappingProperties);
             } finally {
                 kafkaDataConnection.release();
             }

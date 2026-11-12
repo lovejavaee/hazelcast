@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package com.hazelcast.map;
 
 import com.hazelcast.config.Config;
 import com.hazelcast.core.HazelcastInstance;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
@@ -29,6 +28,7 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
+import static com.hazelcast.instance.impl.TestUtil.terminateInstance;
 import static org.junit.Assert.assertEquals;
 
 @RunWith(HazelcastParallelClassRunner.class)
@@ -53,7 +53,7 @@ public class LocalMapStatsTest_WhenMigration extends HazelcastTestSupport {
     }
 
     @Test
-    public void testHitsGenerated_newNode() throws Exception {
+    public void testHitsGenerated_newNode() {
         for (int i = 0; i < 100; i++) {
             map.put(i, i);
             map.get(i);
@@ -71,7 +71,7 @@ public class LocalMapStatsTest_WhenMigration extends HazelcastTestSupport {
     }
 
     @Test
-    public void testHitsGenerated_nodeCrash() throws Exception {
+    public void testHitsGenerated_nodeCrash() {
 
         for (int i = 0; i < 100; i++) {
             map.put(i, i);
@@ -81,14 +81,11 @@ public class LocalMapStatsTest_WhenMigration extends HazelcastTestSupport {
         hz2 = factory.newHazelcastInstance(config);
 
         waitAllForSafeState(factory.getAllHazelcastInstances());
-        factory.terminate(hz2);
+        terminateInstance(hz2);
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() throws Exception {
-                long hits = map.getLocalMapStats().getHits();
-                assertEquals(100, hits);
-            }
+        assertTrueEventually(() -> {
+            long hits = map.getLocalMapStats().getHits();
+            assertEquals(100, hits);
         });
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.internal.diagnostics;
 
 import com.hazelcast.config.Config;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.Before;
@@ -25,7 +26,7 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
-import static com.hazelcast.internal.diagnostics.DiagnosticsPlugin.STATIC;
+import static com.hazelcast.internal.diagnostics.DiagnosticsPlugin.RUN_ONCE_PERIOD_MS;
 import static com.hazelcast.test.Accessors.getNodeEngineImpl;
 import static org.junit.Assert.assertEquals;
 
@@ -38,20 +39,34 @@ public class ConfigPropertiesPluginTest extends AbstractDiagnosticsPluginTest {
     @Before
     public void setup() {
         Config config = new Config()
-                .setProperty("property1", "value1");
+                .setProperty("property1", "value1")
+                .setProperty("property.password", "s3cr3t");
         HazelcastInstance hz = createHazelcastInstance(config);
-        plugin = new ConfigPropertiesPlugin(getNodeEngineImpl(hz));
+        NodeEngineImpl nodeEngine = getNodeEngineImpl(hz);
+        nodeEngine.getDiagnostics().setConfig(new DiagnosticsConfig()
+                .setProperty("property2", "value2")
+                .setProperty("property2.secret", "s3cr3t"));
+        plugin = new ConfigPropertiesPlugin(nodeEngine);
         plugin.onStart();
     }
 
     @Test
     public void testGetPeriodMillis() {
-        assertEquals(STATIC, plugin.getPeriodMillis());
+        assertEquals(RUN_ONCE_PERIOD_MS, plugin.getPeriodMillis());
     }
 
     @Test
     public void testRun() {
         plugin.run(logWriter);
         assertContains("property1=value1");
+        assertContains("property2=value2");
+    }
+
+    @Test
+    public void testRun_masksSensitiveProperties() {
+        plugin.run(logWriter);
+        assertContains("property.password=****");
+        assertContains("property2.secret=****");
+        assertNotContains("s3cr3t");
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,20 +16,18 @@
 
 package com.hazelcast.jet.sql.impl.connector.keyvalue;
 
-import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.jet.core.Processor;
 import com.hazelcast.jet.core.ProcessorSupplier;
 import com.hazelcast.jet.core.ResettableSingletonTraverser;
-import com.hazelcast.jet.impl.execution.init.Contexts.ProcSupplierCtx;
 import com.hazelcast.jet.impl.processor.TransformP;
 import com.hazelcast.jet.sql.impl.inject.UpsertTargetDescriptor;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.DataSerializable;
+import com.hazelcast.sql.impl.expression.ExpressionEvalContext;
 import com.hazelcast.sql.impl.extract.QueryPath;
 import com.hazelcast.sql.impl.row.JetSqlRow;
 import com.hazelcast.sql.impl.type.QueryDataType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -63,15 +61,15 @@ public final class KvProcessors {
         ));
     }
 
-    @SuppressFBWarnings(
-            value = {"SE_BAD_FIELD", "SE_NO_SERIALVERSIONID"},
-            justification = "the class is never java-serialized"
-    )
+//    @SuppressFBWarnings(
+//            value = {"SE_BAD_FIELD", "SE_NO_SERIALVERSIONID"},
+//            justification = "the class is never java-serialized"
+//    )
     private static final class EntryProjectorProcessorSupplier implements ProcessorSupplier, DataSerializable {
 
         private KvProjector.Supplier projectorSupplier;
 
-        private transient InternalSerializationService serializationService;
+        private transient ExpressionEvalContext evalContext;
 
         @SuppressWarnings("unused")
         private EntryProjectorProcessorSupplier() {
@@ -83,7 +81,7 @@ public final class KvProcessors {
 
         @Override
         public void init(@Nonnull Context context) {
-            serializationService = ((ProcSupplierCtx) context).serializationService();
+            evalContext = ExpressionEvalContext.from(context);
         }
 
         @Nonnull
@@ -92,7 +90,7 @@ public final class KvProcessors {
             List<Processor> processors = new ArrayList<>(count);
             for (int i = 0; i < count; i++) {
                 ResettableSingletonTraverser<Object> traverser = new ResettableSingletonTraverser<>();
-                KvProjector projector = projectorSupplier.get(serializationService);
+                KvProjector projector = projectorSupplier.get(evalContext);
                 Processor processor = new TransformP<JetSqlRow, Object>(row -> {
                     traverser.accept(projector.project(row));
                     return traverser;

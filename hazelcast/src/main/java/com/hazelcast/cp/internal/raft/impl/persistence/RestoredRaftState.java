@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
 import com.hazelcast.cp.internal.raft.impl.RaftNode;
 import com.hazelcast.cp.internal.raft.impl.log.LogEntry;
 import com.hazelcast.cp.internal.raft.impl.log.SnapshotEntry;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -37,15 +36,16 @@ public class RestoredRaftState {
     private final RaftEndpoint votedFor;
     private final SnapshotEntry snapshot;
     private final LogEntry[] entries;
+    private final String restoredFileName;
 
-    @SuppressFBWarnings("EI_EXPOSE_REP2")
     public RestoredRaftState(
             @Nonnull RaftEndpoint localEndpoint,
             @Nonnull Collection<RaftEndpoint> initialMembers,
             int term,
             @Nullable RaftEndpoint votedFor,
             @Nullable SnapshotEntry snapshot,
-            @Nonnull LogEntry[] entries
+            @Nonnull LogEntry[] entries,
+            @Nullable String restoredFileName
     ) {
         this.localEndpoint = localEndpoint;
         this.initialMembers = initialMembers;
@@ -53,6 +53,12 @@ public class RestoredRaftState {
         this.votedFor = votedFor;
         this.snapshot = snapshot;
         this.entries = entries;
+        this.restoredFileName = restoredFileName;
+    }
+
+    @Nullable
+    public String restoredFileName() {
+        return restoredFileName;
     }
 
     @Nonnull
@@ -80,7 +86,6 @@ public class RestoredRaftState {
     }
 
     @Nonnull
-    @SuppressFBWarnings("EI_EXPOSE_REP")
     public LogEntry[] entries() {
         return entries;
     }

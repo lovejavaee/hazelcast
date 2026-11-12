@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,49 +16,89 @@
 
 package com.hazelcast.jet.kafka.impl;
 
-import org.apache.kafka.clients.admin.Admin;
+import com.hazelcast.internal.util.concurrent.ConcurrentMemoizingSupplier;
+import com.hazelcast.test.starter.MavenInterface;
+import org.apache.maven.artifact.versioning.ComparableVersion;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.KafkaContainer;
 import org.testcontainers.containers.output.Slf4jLogConsumer;
+import org.testcontainers.kafka.ConfluentKafkaContainer;
 import org.testcontainers.utility.DockerImageName;
 
-import java.io.IOException;
-import java.util.Properties;
+import javax.annotation.Nonnull;
+
+import java.util.Locale;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import static com.hazelcast.internal.util.Memoizers.memoizeConcurrent;
 
 class DockerizedKafkaTestSupport extends KafkaTestSupport {
-
-    private static final String TEST_KAFKA_VERSION = System.getProperty("test.kafka.version", "7.3.0");
+    private static final ConcurrentMemoizingSupplier<String> MAVEN_CONFLUENT_VERSION
+        = memoizeConcurrent(() -> MavenInterface.evaluateExpression("confluent.version"));
     private static final Logger LOGGER = LoggerFactory.getLogger(DockerizedKafkaTestSupport.class);
+    private GenericContainer<?> kafkaContainer;
 
-    private KafkaContainer kafkaContainer;
-
-    public void createKafkaCluster() throws IOException {
-        kafkaContainer = new KafkaContainer(DockerImageName.parse("confluentinc/cp-kafka:" + TEST_KAFKA_VERSION))
+    @Override
+    protected String createKafkaCluster0(Map<String, String> properties) {
+        String kafkaVersion = System.getProperty("test.kafka.version");
+        if (kafkaVersion == null) {
+            kafkaVersion = MAVEN_CONFLUENT_VERSION.get();
+        }
+        DockerImageName imageName = DockerImageName.parse("confluentinc/cp-kafka").withTag(kafkaVersion);
+        if (new ComparableVersion(kafkaVersion).compareTo(new ComparableVersion("7.4.0")) < 0) {
+            // intentionally we want to test with old Kafka and Zookeeper
+            //noinspection deprecation
+            KafkaContainer legacyKafkaContainer = new KafkaContainer(imageName)
                 .withEmbeddedZookeeper()
-                .withLogConsumer(new Slf4jLogConsumer(LOGGER));
-        kafkaContainer.start();
+                .withEnv(toKafkaEnvironments(properties))
+                .withLogConsumer(new Slf4jLogConsumer(LOGGER))
+                .withNetwork(network)
+                .withNetworkAliases("kafka")
+                .withListener(() -> "kafka:19092");
+            kafkaContainer = legacyKafkaContainer;
+            kafkaContainer.start();
+            return legacyKafkaContainer.getBootstrapServers();
+        }
 
-        brokerConnectionString = kafkaContainer.getBootstrapServers();
-        Properties props = new Properties();
-        props.setProperty("bootstrap.servers", brokerConnectionString);
-        admin = Admin.create(props);
+        ConfluentKafkaContainer confluentKafkaContainer = new ConfluentKafkaContainer(imageName)
+            .withEnv(toKafkaEnvironments(properties))
+            .withLogConsumer(new Slf4jLogConsumer(LOGGER))
+            .withNetwork(network)
+            .withNetworkAliases("kafka")
+            .withListener("kafka:19092");
+        kafkaContainer = confluentKafkaContainer;
+        kafkaContainer.start();
+        return confluentKafkaContainer.getBootstrapServers();
     }
 
-    public void shutdownKafkaCluster() {
+    static @Nonnull String getKafkaVersion() {
+        String kafkaVersion = System.getProperty("test.kafka.version");
+        if (kafkaVersion == null) {
+            kafkaVersion = MAVEN_CONFLUENT_VERSION.get();
+        }
+        return kafkaVersion;
+    }
+
+    private String toKafkaEnvironment(String property) {
+        return "KAFKA_" + property.toUpperCase(Locale.ROOT).replace('.', '_');
+    }
+
+    private Map<String, String> toKafkaEnvironments(Map<String, String> properties) {
+        return properties
+            .entrySet()
+            .stream()
+            .map(entry -> Map.entry(toKafkaEnvironment(entry.getKey()), entry.getValue()))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    }
+
+    @Override
+    protected void shutdownKafkaCluster0() {
         if (kafkaContainer != null) {
             kafkaContainer.stop();
-            if (admin != null) {
-                admin.close();
-            }
-            if (producer != null) {
-                producer.close();
-            }
-            producer = null;
-            admin = null;
             kafkaContainer = null;
-            brokerConnectionString = null;
         }
     }
-
 }

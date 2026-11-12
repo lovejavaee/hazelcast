@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,19 +18,23 @@ package com.hazelcast.client.cp.internal;
 
 import com.hazelcast.client.test.TestHazelcastFactory;
 import com.hazelcast.config.Config;
+import com.hazelcast.core.HazelcastException;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.cp.CPGroupId;
+import com.hazelcast.cp.CPSubsystem;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
+import java.util.Collection;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertNotNull;
 
 @RunWith(HazelcastParallelClassRunner.class)
@@ -38,9 +42,6 @@ import static org.junit.Assert.assertNotNull;
 public class CPSubsystemImplTest extends HazelcastTestSupport {
 
     private TestHazelcastFactory factory;
-
-    @Rule
-    public ExpectedException thrown = ExpectedException.none();
 
     @Before
     public void init() {
@@ -56,53 +57,54 @@ public class CPSubsystemImplTest extends HazelcastTestSupport {
     public void test_atomicLong_whenCPSubsystemNotConfigured() {
         factory.newHazelcastInstance();
         HazelcastInstance client = factory.newHazelcastClient();
-        client.getCPSubsystem().getAtomicLong("long");
+        assertThrows(HazelcastException.class,
+                () -> client.getCPSubsystem().getAtomicLong("long"));
     }
 
     @Test
     public void test_atomicReference_whenCPSubsystemNotConfigured() {
         factory.newHazelcastInstance();
         HazelcastInstance client = factory.newHazelcastClient();
-        client.getCPSubsystem().getAtomicReference("ref");
+        assertThrows(HazelcastException.class,
+                () -> client.getCPSubsystem().getAtomicReference("ref"));
     }
 
     @Test
     public void test_lock_whenCPSubsystemNotConfigured() {
         factory.newHazelcastInstance();
         HazelcastInstance client = factory.newHazelcastClient();
-        client.getCPSubsystem().getLock("lock");
+        assertThrows(HazelcastException.class,
+                () -> client.getCPSubsystem().getLock("lock"));
     }
 
     @Test
     public void test_semaphore_whenCPSubsystemNotConfigured() {
         factory.newHazelcastInstance();
         HazelcastInstance client = factory.newHazelcastClient();
-        client.getCPSubsystem().getSemaphore("semaphore");
+        assertThrows(HazelcastException.class,
+                () -> client.getCPSubsystem().getSemaphore("semaphore"));
     }
 
     @Test
     public void test_countDownLatch_whenCPSubsystemNotConfigured() {
         factory.newHazelcastInstance();
         HazelcastInstance client = factory.newHazelcastClient();
-        client.getCPSubsystem().getAtomicLong("latch");
+        assertThrows(HazelcastException.class,
+                () -> client.getCPSubsystem().getAtomicLong("latch"));
     }
 
     @Test
     public void test_cpSubsystemManagementService_whenCPSubsystemNotConfigured() {
         factory.newHazelcastInstance();
         HazelcastInstance client = factory.newHazelcastClient();
-        thrown.expect(UnsupportedOperationException.class);
-
-        client.getCPSubsystem().getCPSubsystemManagementService();
+        assertThrows(UnsupportedOperationException.class, () -> client.getCPSubsystem().getCPSubsystemManagementService());
     }
 
     @Test
     public void test_cpSessionManagementService_whenCPSubsystemNotConfigured() {
         factory.newHazelcastInstance();
         HazelcastInstance client = factory.newHazelcastClient();
-        thrown.expect(UnsupportedOperationException.class);
-
-        client.getCPSubsystem().getCPSessionManagementService();
+        assertThrows(UnsupportedOperationException.class, () -> client.getCPSubsystem().getCPSessionManagementService());
     }
 
     @Test
@@ -179,9 +181,7 @@ public class CPSubsystemImplTest extends HazelcastTestSupport {
         factory.newHazelcastInstance(config);
         factory.newHazelcastInstance(config);
         HazelcastInstance client = factory.newHazelcastClient();
-        thrown.expect(UnsupportedOperationException.class);
-
-        client.getCPSubsystem().getCPSubsystemManagementService();
+        assertThrows(UnsupportedOperationException.class, () -> client.getCPSubsystem().getCPSubsystemManagementService());
     }
 
     @Test
@@ -193,9 +193,26 @@ public class CPSubsystemImplTest extends HazelcastTestSupport {
         factory.newHazelcastInstance(config);
         factory.newHazelcastInstance(config);
         HazelcastInstance client = factory.newHazelcastClient();
-        thrown.expect(UnsupportedOperationException.class);
-
-        client.getCPSubsystem().getCPSessionManagementService();
+        assertThrows(UnsupportedOperationException.class, () -> client.getCPSubsystem().getCPSessionManagementService());
     }
 
+    @Test
+    public void testGetCPGroupIdsWhenSubsystemConfigured() {
+        Config config = new Config();
+        config.getCPSubsystemConfig().setCPMemberCount(3);
+
+        factory.newHazelcastInstance(config);
+        factory.newHazelcastInstance(config);
+        factory.newHazelcastInstance(config);
+        HazelcastInstance client = factory.newHazelcastClient();
+        CPSubsystem cp = client.getCPSubsystem();
+
+        cp.getAtomicLong("long");
+        cp.getAtomicLong("long@group1");
+        cp.getAtomicLong("long@group2");
+
+        Collection<CPGroupId> cpGroupIds = cp.getCPGroupIds();
+        assertThat(cpGroupIds).extracting(CPGroupId::getName)
+                .containsExactlyInAnyOrder("METADATA", "default", "group1", "group2");
+    }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import com.hazelcast.config.IndexConfig;
 import com.hazelcast.config.PredicateConfig;
 import com.hazelcast.config.QueryCacheConfig;
 
+import javax.annotation.Nonnull;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -49,7 +50,7 @@ public class QueryCacheConfigReadOnly extends QueryCacheConfig {
     @Override
     public List<EntryListenerConfig> getEntryListenerConfigs() {
         List<EntryListenerConfig> listenerConfigs = super.getEntryListenerConfigs();
-        List<EntryListenerConfig> readOnlyListenerConfigs = new ArrayList<EntryListenerConfig>(listenerConfigs.size());
+        List<EntryListenerConfig> readOnlyListenerConfigs = new ArrayList<>(listenerConfigs.size());
         for (EntryListenerConfig listenerConfig : listenerConfigs) {
             readOnlyListenerConfigs.add(new EntryListenerConfigReadOnly(listenerConfig));
         }
@@ -86,23 +87,27 @@ public class QueryCacheConfigReadOnly extends QueryCacheConfig {
         throw new UnsupportedOperationException("This config is read-only query cache: " + getName());
     }
 
+    @Nonnull
     @Override
     public QueryCacheConfig setEvictionConfig(EvictionConfig evictionConfig) {
         throw new UnsupportedOperationException("This config is read-only query cache: " + getName());
     }
 
+    @Nonnull
     @Override
     public QueryCacheConfig setIncludeValue(boolean includeValue) {
         throw new UnsupportedOperationException("This config is read-only query cache: " + getName());
     }
 
+    @Nonnull
     @Override
     public QueryCacheConfig setInMemoryFormat(InMemoryFormat inMemoryFormat) {
         throw new UnsupportedOperationException("This config is read-only query cache: " + getName());
     }
 
+    @Nonnull
     @Override
-    public QueryCacheConfig setName(String name) {
+    public QueryCacheConfig setName(@Nonnull String name) {
         throw new UnsupportedOperationException("This config is read-only query cache: " + getName());
     }
 

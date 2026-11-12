@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,16 +21,21 @@ import com.hazelcast.cp.CPMember;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendFailureResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendRequest;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendSuccessResponse;
-import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshot;
+import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshotRequest;
+import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshotResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.PreVoteRequest;
 import com.hazelcast.cp.internal.raft.impl.dto.PreVoteResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.TriggerLeaderElection;
 import com.hazelcast.cp.internal.raft.impl.dto.VoteRequest;
 import com.hazelcast.cp.internal.raft.impl.dto.VoteResponse;
+import com.hazelcast.cp.internal.raft.impl.log.SnapshotChunk;
 import com.hazelcast.cp.internal.raft.impl.log.SnapshotEntry;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
 
+import javax.annotation.Nonnull;
+import java.util.Collection;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -60,7 +65,6 @@ public interface RaftIntegration {
      * Returns true if the endpoint is reachable by the time this method
      * is called, false otherwise.
      *
-     * @param endpoint endpoint
      * @return true if endpoint is reachable, false otherwise
      */
     boolean isReachable(RaftEndpoint endpoint);
@@ -70,7 +74,7 @@ public interface RaftIntegration {
      * to be handled by via {@link RaftNode#handlePreVoteRequest(PreVoteRequest)}.
      *
      * @return true if request is sent or scheduled to be sent to target,
-     *         false otherwise
+     * false otherwise
      */
     boolean send(PreVoteRequest request, RaftEndpoint target);
 
@@ -79,7 +83,7 @@ public interface RaftIntegration {
      * to be handled via {@link RaftNode#handlePreVoteResponse(PreVoteResponse)}.
      *
      * @return true if response is sent or scheduled to be sent to target,
-     *         false otherwise
+     * false otherwise
      */
     boolean send(PreVoteResponse response, RaftEndpoint target);
 
@@ -88,7 +92,7 @@ public interface RaftIntegration {
      * to be handled via {@link RaftNode#handleVoteRequest(VoteRequest)}.
      *
      * @return true if request is sent or scheduled to be sent to target,
-     *         false otherwise
+     * false otherwise
      */
     boolean send(VoteRequest request, RaftEndpoint target);
 
@@ -97,7 +101,7 @@ public interface RaftIntegration {
      * to be handled via {@link RaftNode#handleVoteResponse(VoteResponse)}.
      *
      * @return true if response is sent or scheduled to be sent to target,
-     *         false otherwise
+     * false otherwise
      */
     boolean send(VoteResponse response, RaftEndpoint target);
 
@@ -106,7 +110,7 @@ public interface RaftIntegration {
      * to be handled via {@link RaftNode#handleAppendRequest(AppendRequest)}.
      *
      * @return true if request is sent or scheduled to be sent to target,
-     *         false otherwise
+     * false otherwise
      */
     boolean send(AppendRequest request, RaftEndpoint target);
 
@@ -115,7 +119,7 @@ public interface RaftIntegration {
      * to be handled via {@link RaftNode#handleAppendResponse(AppendSuccessResponse)}.
      *
      * @return true if response is sent or scheduled to be sent to target,
-     *         false otherwise
+     * false otherwise
      */
     boolean send(AppendSuccessResponse response, RaftEndpoint target);
 
@@ -124,25 +128,36 @@ public interface RaftIntegration {
      * to be handled via {@link RaftNode#handleAppendResponse(AppendFailureResponse)}.
      *
      * @return true if response is sent or scheduled to be sent to target,
-     *         false otherwise
+     * false otherwise
      */
     boolean send(AppendFailureResponse response, RaftEndpoint target);
 
     /**
-     * Sends the given {@link InstallSnapshot} DTO to target endpoint
-     * to be handled via {@link RaftNode#handleInstallSnapshot(InstallSnapshot)}.
+     * Sends the given {@link InstallSnapshotRequest} DTO to target endpoint
+     * to be handled via {@link RaftNode#handleInstallSnapshotRequest(InstallSnapshotRequest)}.
      *
      * @return true if request is sent or scheduled to be sent to target,
-     *         false otherwise
+     * false otherwise
      */
-    boolean send(InstallSnapshot request, RaftEndpoint target);
+    boolean send(InstallSnapshotRequest request, RaftEndpoint target);
+
+    /**
+     * Used to request missing chunks from the leader.
+     * <p>
+     * Sends the given {@link InstallSnapshotResponse} DTO to target endpoint
+     * to be handled via {@link RaftNode#handleInstallSnapshotResponse(InstallSnapshotResponse)}.
+     *
+     * @return true if response is sent or scheduled to be sent to target,
+     * false otherwise
+     */
+    boolean send(InstallSnapshotResponse response, RaftEndpoint target);
 
     /**
      * Sends the given {@link TriggerLeaderElection} DTO to target endpoint
      * to be handled via {@link RaftNode#handleTriggerLeaderElection(TriggerLeaderElection)}.
      *
      * @return true if request is sent or scheduled to be sent to target,
-     *         false otherwise
+     * false otherwise
      */
     boolean send(TriggerLeaderElection request, RaftEndpoint target);
 
@@ -157,22 +172,32 @@ public interface RaftIntegration {
     Object runOperation(Object operation, long commitIndex);
 
     /**
-     * Take a snapshot for the given commit index which is the current commit
-     * index
+     * Takes snapshots from all snapshot-aware services and packages them into a list of
+     * {@link SnapshotChunk} instances for the specified Raft group commit index and term.
      *
-     * @param commitIndex commit index
-     * @return snapshot operation to put into the {@link SnapshotEntry}
+     * @param snapshotTerm           term of the log entry at commitIndex
+     * @param commitIndex            commit index associated with the snapshot
+     * @param groupMembers           current group members
+     * @param groupMembersLogIndex   log index of group members
+     * @return list of snapshot chunks representing the state of the services
      */
-    Object takeSnapshot(long commitIndex);
+    @Nonnull
+    List<SnapshotChunk> takeGroupSnapshotChunks(int snapshotTerm, long commitIndex,
+                                                Collection<RaftEndpoint> groupMembers,
+                                                long groupMembersLogIndex);
 
     /**
-     * Restores the snapshot with the given operation for the given commit
-     * index
+     * Restores services state from the given snapshot entry.
      *
-     * @param operation snapshot operation provided by {@link #takeSnapshot(long)}
-     * @param commitIndex commit index of the snapshot
+     * @param snapshotEntry the snapshot entry to restore
      */
-    void restoreSnapshot(Object operation, long commitIndex);
+    void restoreSnapshot(@Nonnull SnapshotEntry snapshotEntry);
+
+    /**
+     * see {@link
+     * com.hazelcast.cp.internal.raft.ChunkedSnapshotAwareService#prepareForSnapshotRestore(CPGroupId)}
+     */
+    void resetForChunkedSnapshotRestore();
 
     /**
      * Executes the given task on the underlying task execution mechanism.
@@ -216,6 +241,7 @@ public interface RaftIntegration {
 
     /**
      * Creates a new instance of {@link InternalCompletableFuture}.
+     *
      * @return a new future
      */
     InternalCompletableFuture newCompletableFuture();
@@ -244,13 +270,29 @@ public interface RaftIntegration {
 
     /**
      * Called when RaftNode status changes.
+     *
      * @param status new status
      */
     void onNodeStatusChange(RaftNodeStatus status);
 
     /**
      * Called when CP group is destroyed.
+     *
      * @param groupId id of CP group
      */
     void onGroupDestroyed(CPGroupId groupId);
+
+    /**
+     * Called when this member is selected as the new
+     * {@link RaftRole#LEADER} for this node.
+     */
+    void onNewLeaderElected(CPGroupId groupId);
+
+    /**
+     * With this method, implementation-dependent
+     * snapshot restore operations are introduced.
+     *
+     * @return the operation to restore snapshot
+     */
+    Object newRestoreSnapshotOp(String serviceName, long commitIndex, Object chunk);
 }

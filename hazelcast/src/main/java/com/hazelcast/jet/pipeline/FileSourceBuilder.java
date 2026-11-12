@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -73,7 +73,7 @@ public final class FileSourceBuilder {
      * If {@code sharedFileSystem} is {@code true}, Jet will assume all members
      * see the same files. They will split the work so that each member will
      * read a part of the files. If {@code sharedFileSystem} is {@code false},
-     * each member will read all files in the directory, assuming the are
+     * each member will read all files in the directory, assuming they are
      * local.
      * <p>
      * If you start all the members on a single machine (such as for
@@ -107,6 +107,7 @@ public final class FileSourceBuilder {
      *
      * @deprecated Use {@link FileSources#files}. Will be removed in Jet 5.0.
      */
+    @Deprecated(since = "Jet 4.4", forRemoval = true)
     @Nonnull
     public BatchSource<String> build() {
         return build((filename, line) -> line);
@@ -132,6 +133,7 @@ public final class FileSourceBuilder {
      *
      * @deprecated Use {@link FileSources#files}. Will be removed in Jet 5.0.
      */
+    @Deprecated(since = "Jet 4.4", forRemoval = true)
     @Nonnull
     public <T> BatchSource<T> build(@Nonnull BiFunctionEx<String, String, ? extends T> mapOutputFn) {
         String charsetName = charset.name();
@@ -161,6 +163,7 @@ public final class FileSourceBuilder {
      *
      * @deprecated Use {@link FileSources#files}. Will be removed in Jet 5.0.
      */
+    @Deprecated(since = "Jet 4.4", forRemoval = true)
     @Nonnull
     public <T> BatchSource<T> build(@Nonnull FunctionEx<? super Path, ? extends Stream<T>> readFileFn) {
         return batchFromProcessor("filesSource(" + new File(directory, glob) + ')',

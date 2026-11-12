@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,22 +35,22 @@ import static org.junit.Assert.assertTrue;
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class ReadOnlyIteratorTest {
 
-    private Sequenced sequenced = new DefaultQueryCacheEventData();
+    private final Sequenced sequenced = new DefaultQueryCacheEventData();
 
     private ReadOnlyIterator<Sequenced> iterator;
 
     @Before
     public void setUp() {
-        CyclicBuffer<Sequenced> buffer = new DefaultCyclicBuffer<Sequenced>(1);
+        CyclicBuffer<Sequenced> buffer = new DefaultCyclicBuffer<>(1);
         sequenced.setSequence(1);
         buffer.add(sequenced);
 
-        iterator = new ReadOnlyIterator<Sequenced>(buffer);
+        iterator = new ReadOnlyIterator<>(buffer);
     }
 
     @Test(expected = NullPointerException.class)
     public void testConstructor_whenBufferIsNull_thenThrowException() {
-        iterator = new ReadOnlyIterator<Sequenced>(null);
+        iterator = new ReadOnlyIterator<>(null);
     }
 
     @Test

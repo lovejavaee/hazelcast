@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.map.impl.operation.steps;
 
 import com.hazelcast.core.EntryEventType;
 import com.hazelcast.internal.serialization.Data;
+import com.hazelcast.internal.util.BiTuple;
 import com.hazelcast.internal.util.CollectionUtil;
 import com.hazelcast.map.impl.MapContainer;
 import com.hazelcast.map.impl.MapEntries;
@@ -71,7 +72,7 @@ public enum PutAllOpSteps implements IMapOpStep {
 
         @Override
         public Step nextStep(State state) {
-            if (!CollectionUtil.isEmpty(state.getKeysToLoad())) {
+            if (CollectionUtil.isNotEmpty(state.getKeysToLoad())) {
                 return PutAllOpSteps.LOAD_ALL;
             }
             return PutAllOpSteps.STORE_ALL;
@@ -130,7 +131,7 @@ public enum PutAllOpSteps implements IMapOpStep {
     PROCESS() {
         @Override
         public void runStep(State state) {
-            RecordStore recordStore = state.getRecordStore();
+            DefaultRecordStore recordStore = ((DefaultRecordStore) state.getRecordStore());
             MapContainer mapContainer = recordStore.getMapContainer();
             MapServiceContext mapServiceContext = mapContainer.getMapServiceContext();
             boolean triggerMapLoader = state.isTriggerMapLoader();
@@ -141,19 +142,27 @@ public enum PutAllOpSteps implements IMapOpStep {
             Map<Data, Object> oldValueByKey = new HashMap<>();
             Map result = (Map) state.getResult();
             State perKeyState = new State(state);
+
             boolean loadOldValue = triggerMapLoader
                     && ((PutAllOperation) state.getOperation()).isHasMapListener();
-            Map loadedKeyValuePairs = state.getLoadedKeyValuePairs();
+            List loadedKeyAndOldValueWithTtlPairs = state.loadedKeyAndOldValueWithTtlPairs();
+            Map<Object, Object> loadedOldValuesPerKey = new HashMap<>();
+            for (int i = 0; i < loadedKeyAndOldValueWithTtlPairs.size(); i += 2) {
+                Data key = (Data) loadedKeyAndOldValueWithTtlPairs.get(i);
+                BiTuple<Object, Long> biTuple
+                        = (BiTuple<Object, Long>) loadedKeyAndOldValueWithTtlPairs.get(i + 1);
+                loadedOldValuesPerKey.put(key, biTuple.element1);
+            }
 
             for (Map.Entry<Data, Data> entry : entries) {
                 Object oldValue = null;
                 if (loadOldValue) {
-                    oldValue = loadedKeyValuePairs.get(entry.getKey());
+                    oldValue = loadedOldValuesPerKey.get(entry.getKey());
                 }
                 if (oldValue == null) {
                     Record record = recordStore.getRecord(entry.getKey());
                     if (record != null) {
-                        oldValue = record.getValue();
+                        oldValue = recordStore.copyToHeapWhenNeeded(record.getValue());
                     }
                 }
 
@@ -167,7 +176,8 @@ public enum PutAllOpSteps implements IMapOpStep {
 
                 if (loadOldValue && oldValue != null) {
                     // TODO why do we need to convert to heap data here?
-                    oldValueByKey.put(perKeyState.getKey(), mapServiceContext.toData(oldValue));
+                    oldValueByKey.put(perKeyState.getKey(),
+                            mapServiceContext.toData(perKeyState.getOldValue()));
                 }
             }
 
@@ -230,7 +240,7 @@ public enum PutAllOpSteps implements IMapOpStep {
 
         @Override
         public Step nextStep(State state) {
-            return UtilSteps.SEND_RESPONSE;
+            return UtilSteps.FINAL_STEP;
         }
     };
 

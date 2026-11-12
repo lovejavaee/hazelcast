@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.hazelcast.internal.util;
 import com.hazelcast.core.HazelcastException;
 import com.hazelcast.instance.impl.OutOfMemoryErrorDispatcher;
 import com.hazelcast.logging.ILogger;
+import com.hazelcast.spi.properties.HazelcastProperty;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -26,18 +27,31 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodType;
 import java.lang.invoke.WrongMethodTypeException;
 import java.lang.reflect.InvocationTargetException;
 import java.util.Collection;
+import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
+
+import static java.lang.invoke.MethodType.methodType;
 
 /**
  * Contains various exception related utility methods.
  */
 public final class ExceptionUtil {
+    /**
+     * Max number of iterations of {@link #isOrHasCause(Throwable, Class)}, before it
+     * assumes negative result due to very long exception cause chain.
+     * <p>
+     * Should be kept reasonably small to avoid OutOfMemoryErrors.
+     *
+     * @since 6.0
+     */
+    public static final HazelcastProperty MAX_SEARCH_DEPTH
+            = new HazelcastProperty("hazelcast.internal.max.search.depth.of.exception.cause", 50);
 
     static final String EXCEPTION_SEPARATOR = "------ submitted from ------";
 
@@ -90,7 +104,7 @@ public final class ExceptionUtil {
     /**
      * Processes {@code Throwable t} so that the returned {@code Throwable}'s type matches {@code allowedType},
      * {@code RuntimeException} or any {@code Throwable} returned by `exceptionWrapper`
-     * Processing may include unwrapping {@code t}'s cause hierarchy, wrapping it in a exception
+     * Processing may include unwrapping {@code t}'s cause hierarchy, wrapping it in an exception
      * created by using exceptionWrapper or just returning the same instance {@code t}
      * if it is already an instance of {@code RuntimeException}.
      *
@@ -136,6 +150,7 @@ public final class ExceptionUtil {
         throw (RuntimeException) peel(t, null, null, exceptionWrapper);
     }
 
+    @SuppressWarnings("unchecked")
     public static <T extends Throwable> RuntimeException rethrow(final Throwable t, Class<T> allowedType) throws T {
         rethrowIfError(t);
         throw (T) peel(t, allowedType, null);
@@ -144,6 +159,7 @@ public final class ExceptionUtil {
     /**
      * This rethrow the exception providing an allowed Exception in first priority, even it is a Runtime exception
      */
+    @SuppressWarnings("unchecked")
     public static <T extends Throwable> RuntimeException rethrowAllowedTypeFirst(final Throwable t,
                                                                                  Class<T> allowedType) throws T {
         rethrowIfError(t);
@@ -155,11 +171,11 @@ public final class ExceptionUtil {
     }
 
     public static void rethrowIfError(final Throwable t) {
-        if (t instanceof Error) {
-            if (t instanceof OutOfMemoryError) {
-                OutOfMemoryErrorDispatcher.onOutOfMemory((OutOfMemoryError) t);
+        if (t instanceof Error error) {
+            if (t instanceof OutOfMemoryError outOfMemoryError) {
+                OutOfMemoryErrorDispatcher.onOutOfMemory(outOfMemoryError);
             }
-            throw (Error) t;
+            throw error;
         }
     }
 
@@ -210,6 +226,7 @@ public final class ExceptionUtil {
      * new Throwable(Throwable cause)
      * new Throwable(String message)
      * new Throwable()
+     * software.amazon.awssdk.core.exception.SdkException.builder().message(String).cause(Throwable).build()
      *
      * @param exceptionClass class of the exception
      * @param message        message to be pass to constructor of the exception
@@ -218,40 +235,69 @@ public final class ExceptionUtil {
      * described above, otherwise returns newly constructed exception
      */
     @SuppressWarnings("checkstyle:npathcomplexity")
-    public static <T extends Throwable> T tryCreateExceptionWithMessageAndCause(Class<? extends Throwable> exceptionClass,
-                                                                                String message, @Nullable Throwable cause) {
-        T cloned;
-        int i = 0;
-        do {
-            cloned = cloneException(exceptionClass, message, cause, ConstructorMethod.METHODS[i]);
-        } while (cloned == null && ++i < ConstructorMethod.METHODS.length);
-
-        return cloned;
+    public static <T extends Throwable> T tryCreateExceptionWithMessageAndCause(Class<T> exceptionClass,
+                                                                                String message,
+                                                                                @Nullable Throwable cause) {
+        for (ConstructorMethod method : ConstructorMethod.values()) {
+            try {
+                return method.cloneException(exceptionClass, message, cause);
+            } catch (ClassCastException | WrongMethodTypeException | IllegalAccessException
+                     | SecurityException | NoSuchMethodException | ClassNotFoundException ignored) {
+            } catch (Throwable t) {
+                throw new RuntimeException("Exception creation failed ", t);
+            }
+        }
+        return null;
     }
 
     /**
-     * @param exceptionClass    class of the exception
-     * @param message           message to be passed to constructor of the exception
-     * @param cause             cause to be set to the exception
-     * @param constructorMethod signature of the constructor to be used while cloning
-     * @return {@code null} if can not find a
-     * constructor from predefined list of constructors,
-     * otherwise returns newly constructed exception
+     * Tries to invoke given callable and return the result, in case of any {@link Throwable} being thrown (that is not
+     * an {@link OutOfMemoryError}), it will return defaultValue.
+     * @since 6.0
      */
-    private static <T extends Throwable> T cloneException(Class<? extends Throwable> exceptionClass,
-                                                          String message, @Nullable Throwable cause,
-                                                          ConstructorMethod constructorMethod) {
+    @Nullable
+    public static <T> T tryGetOrElse(@Nonnull Callable<T> callable, @Nullable T defaultValue) {
         try {
-            MethodHandle constructor = MethodHandles.publicLookup()
-                                                    .findConstructor(exceptionClass, constructorMethod.signature());
-            return constructorMethod.cloneWith(constructor, message, cause);
-        } catch (ClassCastException | WrongMethodTypeException
-                | IllegalAccessException | SecurityException | NoSuchMethodException ignored) {
+            return callable.call();
+        } catch (OutOfMemoryError e) {
+            throw e;
         } catch (Throwable t) {
-            throw new RuntimeException("Exception creation failed ", t);
+            return defaultValue;
         }
+    }
 
-        return null;
+    /**
+     * Checks, if {@code t} itself or any exception in its cause chain is an
+     * instance of {@code classToFind}.
+     *
+     * <p>
+     * Search is limited to {@link #MAX_SEARCH_DEPTH} iterations. After that, it is assumed it's a cycle
+     * and it returns false.
+     */
+    public static boolean isOrHasCause(Throwable t, Class<?> classToFind) {
+        final int maxIterations = MaxSearchDepthHolder.MAX_SEARCH_DEPTH;
+        int i = 0;
+        while (t != null && t.getCause() != t && !classToFind.isAssignableFrom(t.getClass())) {
+            t = t.getCause();
+            i++;
+            // cycle detected/assumed
+            if (i > maxIterations) {
+                return false;
+            }
+        }
+        return t != null && classToFind.isAssignableFrom(t.getClass());
+    }
+
+    private static final class MaxSearchDepthHolder {
+        private static final int MAX_SEARCH_DEPTH = parse();
+
+        private static int parse() {
+            String systemProperty = ExceptionUtil.MAX_SEARCH_DEPTH.getSystemProperty();
+            if (systemProperty != null && !systemProperty.isEmpty()) {
+                return Integer.parseInt(systemProperty);
+            }
+            return Integer.parseInt(ExceptionUtil.MAX_SEARCH_DEPTH.getDefaultValue());
+        }
     }
 
     /**
@@ -259,44 +305,36 @@ public final class ExceptionUtil {
      * <p>
      * Keep order of enums as is.
      */
+    @SuppressWarnings("unchecked")
     private enum ConstructorMethod {
         // new Throwable(String message, Throwable cause)
         MT_INIT_STRING_THROWABLE() {
             @Override
-            MethodType signature() {
-                return MethodType.methodType(void.class, String.class, Throwable.class);
-            }
-
-            @Override
-            <T extends Throwable> T cloneWith(MethodHandle constructor, String message,
-                                              @Nullable Throwable cause) throws Throwable {
-                return (T) constructor.invokeWithArguments(message, cause);
+            <T extends Throwable> T cloneException(Class<T> exceptionClass, String message,
+                                                   @Nullable Throwable cause) throws Throwable {
+                MethodHandle constructor = MethodHandles.publicLookup()
+                        .findConstructor(exceptionClass, methodType(void.class, String.class, Throwable.class));
+                return (T) constructor.invoke(message, cause);
             }
         },
         // new Throwable(Throwable cause)
         MT_INIT_THROWABLE() {
             @Override
-            MethodType signature() {
-                return MethodType.methodType(void.class, Throwable.class);
-            }
-
-            @Override
-            <T extends Throwable> T cloneWith(MethodHandle constructor, String message,
-                                              @Nullable Throwable cause) throws Throwable {
-                return (T) constructor.invokeWithArguments(cause);
+            <T extends Throwable> T cloneException(Class<T> exceptionClass, String message,
+                                                   @Nullable Throwable cause) throws Throwable {
+                MethodHandle constructor = MethodHandles.publicLookup()
+                        .findConstructor(exceptionClass, methodType(void.class, Throwable.class));
+                return (T) constructor.invoke(cause);
             }
         },
         // new Throwable(String message)
         MT_INIT_STRING() {
             @Override
-            MethodType signature() {
-                return MethodType.methodType(void.class, String.class);
-            }
-
-            @Override
-            <T extends Throwable> T cloneWith(MethodHandle constructor, String message,
-                                              @Nullable Throwable cause) throws Throwable {
-                T cloned = (T) constructor.invokeWithArguments(message);
+            <T extends Throwable> T cloneException(Class<T> exceptionClass, String message,
+                                                   @Nullable Throwable cause) throws Throwable {
+                MethodHandle constructor = MethodHandles.publicLookup()
+                        .findConstructor(exceptionClass, methodType(void.class, String.class));
+                T cloned = (T) constructor.invoke(message);
                 try {
                     cloned.initCause(cause);
                 } catch (IllegalStateException ignored) {
@@ -309,14 +347,11 @@ public final class ExceptionUtil {
         // new Throwable()
         MT_INIT() {
             @Override
-            MethodType signature() {
-                return MethodType.methodType(void.class);
-            }
-
-            @Override
-            <T extends Throwable> T cloneWith(MethodHandle constructor, String message,
-                                              @Nullable Throwable cause) throws Throwable {
-                T cloned = (T) constructor.invokeWithArguments();
+            <T extends Throwable> T cloneException(Class<T> exceptionClass, String message,
+                                                   @Nullable Throwable cause) throws Throwable {
+                MethodHandle constructor = MethodHandles.publicLookup()
+                        .findConstructor(exceptionClass, methodType(void.class));
+                T cloned = (T) constructor.invoke();
                 try {
                     cloned.initCause(cause);
                 } catch (IllegalStateException ignored) {
@@ -325,14 +360,27 @@ public final class ExceptionUtil {
                 }
                 return cloned;
             }
+        },
+        // software.amazon.awssdk.core.exception.SdkException.builder().message(String).cause(Throwable).build()
+        MT_BUILD_STRING_THROWABLE() {
+            @Override
+            <T extends Throwable> T cloneException(Class<T> exceptionClass, String message,
+                                                   @Nullable Throwable cause) throws Throwable {
+                Class<?> builderClass = Class.forName(exceptionClass.getName() + "$Builder");
+                Object builder = exceptionClass.getMethod("builder").invoke(null);
+                builderClass.getMethod("message", String.class).invoke(builder, message);
+                builderClass.getMethod("cause", Throwable.class).invoke(builder, cause);
+                return (T) builderClass.getMethod("build").invoke(builder);
+            }
         };
 
-        private static final ConstructorMethod[] METHODS = ConstructorMethod.values();
-
-        abstract MethodType signature();
-
-        abstract <T extends Throwable> T cloneWith(MethodHandle constructor, String message,
-                                                   @Nullable Throwable cause) throws Throwable;
+        /**
+         * @param exceptionClass class of the exception
+         * @param message        message to be passed to constructor of the exception
+         * @param cause          cause to be set to the exception
+         */
+        abstract <T extends Throwable> T cloneException(Class<T> exceptionClass, String message,
+                                                        @Nullable Throwable cause) throws Throwable;
     }
 
     /**
@@ -344,6 +392,7 @@ public final class ExceptionUtil {
      * cause and the message as the original exception
      */
     @Nonnull
+    @SuppressWarnings("unchecked")
     public static <T extends Throwable> T cloneExceptionWithFixedAsyncStackTrace(@Nonnull T original) {
         StackTraceElement[] fixedStackTrace = getFixedStackTrace(original, Thread.currentThread().getStackTrace());
 
@@ -377,13 +426,44 @@ public final class ExceptionUtil {
     public static void rethrowFromCollection(Collection<?> values, Class<? extends Throwable> ... ignored) throws Throwable {
         outerLoop:
         for (Object value : values) {
-            if (value instanceof Throwable) {
+            if (value instanceof Throwable throwable) {
                 for (Class<? extends Throwable> ignoredClass : ignored) {
                     if (ignoredClass.isAssignableFrom(value.getClass())) {
                         continue outerLoop;
                     }
                 }
-                throw (Throwable) value;
+                throw throwable;
+            }
+        }
+    }
+
+    /**
+     *  Checks, if {@code t} itself or any exception in its cause chain is an
+     *  instance of {@code classToFind} and returns it.
+     */
+    @Nullable
+    @SuppressWarnings("unchecked")
+    public static <T extends Throwable> T findCause(Throwable throwable, Class<T> classToFind) {
+        Throwable t = throwable;
+        while (t != null && t.getCause() != t && !classToFind.isAssignableFrom(t.getClass())) {
+            t = t.getCause();
+        }
+        if (t != null && classToFind.isAssignableFrom(t.getClass())) {
+            return (T) t;
+        }
+        return null;
+    }
+
+    /**
+     * If given closeable is not null, it closes it. In case of exception being thrown, it will be added to the provided
+     * list of exceptions.
+     */
+    public static void safeClose(AutoCloseable closeable, List<Exception> exceptions) {
+        if (closeable != null) {
+            try {
+                closeable.close();
+            } catch (Exception e) {
+                exceptions.add(e);
             }
         }
     }

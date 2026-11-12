@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import com.hazelcast.jet.grpc.greeter.GreeterOuterClass.HelloReply;
 import com.hazelcast.jet.grpc.greeter.GreeterOuterClass.HelloReplyList;
 import com.hazelcast.jet.grpc.greeter.GreeterOuterClass.HelloRequest;
 import com.hazelcast.jet.grpc.greeter.GreeterOuterClass.HelloRequestList;
-import com.hazelcast.jet.impl.util.ExceptionUtil;
+import com.hazelcast.jet.impl.util.JetExceptionUtil;
 import com.hazelcast.jet.pipeline.BatchStage;
 import com.hazelcast.jet.pipeline.BatchStageWithKey;
 import com.hazelcast.jet.pipeline.Pipeline;
@@ -30,6 +30,7 @@ import com.hazelcast.jet.pipeline.ServiceFactory;
 import com.hazelcast.jet.pipeline.Sinks;
 import com.hazelcast.jet.pipeline.test.AssertionSinks;
 import com.hazelcast.jet.pipeline.test.TestSources;
+import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import io.grpc.BindableService;
@@ -41,6 +42,7 @@ import org.junit.After;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
+import org.junit.runner.RunWith;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -57,6 +59,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
 @Category({QuickTest.class, ParallelJVMTest.class})
+@RunWith(HazelcastSerialClassRunner.class)
 public class GrpcServiceTest extends SimpleTestInClusterSupport {
 
     private static final int ITEM_COUNT = 10_000;
@@ -167,7 +170,7 @@ public class GrpcServiceTest extends SimpleTestInClusterSupport {
             instance().getJet().newJob(p).join();
             fail("Job should have failed");
         } catch (Exception e) {
-            Throwable ex = ExceptionUtil.peel(e);
+            Throwable ex = JetExceptionUtil.peel(e);
             assertThat(ex.getMessage()).contains("com.hazelcast.jet.grpc.impl.StatusRuntimeExceptionJet");
         }
     }
@@ -269,7 +272,7 @@ public class GrpcServiceTest extends SimpleTestInClusterSupport {
             instance().getJet().newJob(p).join();
             fail("Job should have failed");
         } catch (Exception e) {
-            Throwable ex = ExceptionUtil.peel(e);
+            Throwable ex = JetExceptionUtil.peel(e);
             assertThat(ex.getMessage()).contains("com.hazelcast.jet.grpc.impl.StatusRuntimeExceptionJet");
         }
     }
@@ -350,7 +353,7 @@ public class GrpcServiceTest extends SimpleTestInClusterSupport {
             instance().getJet().newJob(p).join();
             fail("Job should have failed");
         } catch (Exception e) {
-            Throwable ex = ExceptionUtil.peel(e);
+            Throwable ex = JetExceptionUtil.peel(e);
             assertThat(ex.getMessage()).contains("com.hazelcast.jet.grpc.impl.StatusRuntimeExceptionJet");
         }
     }
@@ -391,7 +394,7 @@ public class GrpcServiceTest extends SimpleTestInClusterSupport {
 
         @Override
         public StreamObserver<HelloRequest> sayHelloBidirectional(StreamObserver<HelloReply> responseObserver) {
-            return new StreamObserver<HelloRequest>() {
+            return new StreamObserver<>() {
                 @Override
                 public void onNext(HelloRequest value) {
                     responseObserver.onError(new RuntimeException("something went wrong"));
@@ -412,7 +415,7 @@ public class GrpcServiceTest extends SimpleTestInClusterSupport {
         @Override
         public StreamObserver<HelloRequestList> sayHelloRepeatedBidirectional(
                 StreamObserver<HelloReplyList> responseObserver) {
-            return new StreamObserver<HelloRequestList>() {
+            return new StreamObserver<>() {
                 @Override
                 public void onNext(HelloRequestList value) {
                     responseObserver.onError(new RuntimeException("something went wrong"));
@@ -448,7 +451,7 @@ public class GrpcServiceTest extends SimpleTestInClusterSupport {
 
         @Override
         public StreamObserver<HelloRequest> sayHelloBidirectional(StreamObserver<HelloReply> responseObserver) {
-            return new StreamObserver<HelloRequest>() {
+            return new StreamObserver<>() {
 
                 @Override
                 public void onNext(HelloRequest value) {
@@ -474,7 +477,7 @@ public class GrpcServiceTest extends SimpleTestInClusterSupport {
         @Override
         public StreamObserver<HelloRequestList> sayHelloRepeatedBidirectional(
                 StreamObserver<HelloReplyList> responseObserver) {
-            return new StreamObserver<HelloRequestList>() {
+            return new StreamObserver<>() {
 
                 @Override
                 public void onNext(HelloRequestList value) {

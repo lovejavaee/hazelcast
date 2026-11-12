@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 package com.hazelcast.query.impl.predicates;
 
 import com.hazelcast.query.Predicate;
-import com.hazelcast.query.impl.Indexes;
+import com.hazelcast.query.impl.IndexRegistry;
 
 import static com.hazelcast.internal.util.collection.ArrayUtils.createCopy;
 
@@ -31,18 +31,14 @@ public final class VisitorUtils {
      *
      * It's Copy-On-Write: If at least one predicate returns a different instance
      * then this method returns a copy of the passed arrays.
-     *
-     * @param predicates
-     * @param visitor
-     * @return
      */
-    public static Predicate[] acceptVisitor(Predicate[] predicates, Visitor visitor, Indexes indexes) {
+    public static Predicate[] acceptVisitor(Predicate[] predicates, Visitor visitor, IndexRegistry indexes) {
         Predicate[] target = predicates;
         boolean copyCreated = false;
         for (int i = 0; i < predicates.length; i++) {
             Predicate predicate = predicates[i];
-            if (predicate instanceof VisitablePredicate) {
-                Predicate transformed = ((VisitablePredicate) predicate).accept(visitor, indexes);
+            if (predicate instanceof VisitablePredicate visitablePredicate) {
+                Predicate transformed = visitablePredicate.accept(visitor, indexes);
                 if (transformed != predicate) {
                     if (!copyCreated) {
                         copyCreated = true;

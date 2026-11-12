@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,6 +49,7 @@ import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.DataSerializable;
 import com.hazelcast.spi.exception.TargetNotMemberException;
 import com.hazelcast.spi.impl.NodeEngineImpl;
+import com.hazelcast.test.Accessors;
 import com.hazelcast.test.HazelcastParametrizedRunner;
 import com.hazelcast.test.HazelcastSerialParametersRunnerFactory;
 import com.hazelcast.test.annotation.ParallelJVMTest;
@@ -65,6 +66,7 @@ import org.junit.runners.Parameterized.UseParametersRunnerFactory;
 import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.io.NotSerializableException;
+import java.io.Serial;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -79,6 +81,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.function.Function;
 
+import static com.hazelcast.internal.util.ExceptionUtil.sneakyThrow;
 import static com.hazelcast.internal.util.RootCauseMatcher.getRootCause;
 import static com.hazelcast.jet.config.ProcessingGuarantee.EXACTLY_ONCE;
 import static com.hazelcast.jet.core.Edge.between;
@@ -90,8 +93,7 @@ import static com.hazelcast.jet.core.processor.Processors.noopP;
 import static com.hazelcast.jet.impl.JobClassLoaderService.JobPhase.COORDINATOR;
 import static com.hazelcast.jet.impl.JobExecutionRecord.NO_SNAPSHOT;
 import static com.hazelcast.jet.impl.TerminationMode.CANCEL_FORCEFUL;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.peel;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.sneakyThrow;
+import static com.hazelcast.jet.impl.util.JetExceptionUtil.peel;
 import static com.hazelcast.test.PacketFiltersUtil.delayOperationsFrom;
 import static java.lang.String.format;
 import static java.util.Collections.nCopies;
@@ -201,7 +203,7 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
     @Test
     public void when_pmsInitThrowsNonSerializable_then_jobFails() {
         // Given
-        SupplierEx<ProcessorSupplier> supplier = () ->  new MockPS(MockP::new, MEMBER_COUNT);
+        SupplierEx<ProcessorSupplier> supplier = () -> new MockPS(MockP::new, MEMBER_COUNT);
         DAG dag = new DAG().vertex(new Vertex("test",
                 new MockPMS(supplier).setInitError(NON_SERIALIZABLE_EXCEPTION)));
 
@@ -217,7 +219,7 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
     public void when_pmsNonCooperativeInitThrowsNonSerializable_then_jobFails()
             throws InterruptedException, ExecutionException {
         // Given
-        SupplierEx<ProcessorSupplier> supplier = () ->  new MockPS(MockP::new, MEMBER_COUNT);
+        SupplierEx<ProcessorSupplier> supplier = () -> new MockPS(MockP::new, MEMBER_COUNT);
         DAG dag = new DAG().vertex(new Vertex("test",
                 new MockPMS(supplier)
                         .initBlocks()
@@ -232,16 +234,14 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
         }
 
         //Wait for job to finish
-        assertThrows(CompletionException.class, () -> {
-            jobFuture.get().getFuture().join();
-        });
+        assertThrows(CompletionException.class, () -> jobFuture.get().getFuture().join());
         assertJobFailed(jobFuture.get(), NON_SERIALIZABLE_EXCEPTION.get());
     }
 
     @Test
     public void when_pmsCloseThrowsNonSerializable_then_jobSucceeds() {
         // Given
-        SupplierEx<ProcessorSupplier> supplier = () ->  new MockPS(MockP::new, MEMBER_COUNT);
+        SupplierEx<ProcessorSupplier> supplier = () -> new MockPS(MockP::new, MEMBER_COUNT);
         DAG dag = new DAG().vertex(new Vertex("test",
                 new MockPMS(supplier)
                         .setCloseError(NON_SERIALIZABLE_EXCEPTION)));
@@ -254,7 +254,7 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
     public void when_pmsNonCooperativeCloseThrowsNonSerializable_then_jobSucceeds()
             throws InterruptedException, ExecutionException {
         // Given
-        SupplierEx<ProcessorSupplier> supplier = () ->  new MockPS(MockP::new, MEMBER_COUNT);
+        SupplierEx<ProcessorSupplier> supplier = () -> new MockPS(MockP::new, MEMBER_COUNT);
         DAG dag = new DAG().vertex(new Vertex("test",
                 new MockPMS(supplier)
                         .closeBlocks()
@@ -333,7 +333,7 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
     @Test
     public void when_psInitThrowsNonSerializable_then_jobFails() {
         // Given
-        SupplierEx<ProcessorSupplier> supplier = () ->  new MockPS(MockP::new, MEMBER_COUNT)
+        SupplierEx<ProcessorSupplier> supplier = () -> new MockPS(MockP::new, MEMBER_COUNT)
                 .setInitError(NON_SERIALIZABLE_EXCEPTION);
         DAG dag = new DAG().vertex(new Vertex("test",
                 new MockPMS(supplier)));
@@ -344,14 +344,14 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
         // Then
         assertPsClosedWithError();
         assertPmsClosedWithError();
-        assertThrows(CompletionException.class, () -> job.join());
+        assertThrows(CompletionException.class, job::join);
     }
 
     @Test
     public void when_psNonCooperativeInitThrowsNonSerializable_then_jobFails() throws ExecutionException,
             InterruptedException {
         // Given
-        SupplierEx<ProcessorSupplier> supplier = () ->  new MockPS(MockP::new, MEMBER_COUNT)
+        SupplierEx<ProcessorSupplier> supplier = () -> new MockPS(MockP::new, MEMBER_COUNT)
                 .initBlocks()
                 .setInitError(NON_SERIALIZABLE_EXCEPTION);
         DAG dag = new DAG().vertex(new Vertex("test",
@@ -366,16 +366,14 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
         }
 
         //Wait for job to finish
-        assertThrows(CompletionException.class, () -> {
-            jobFuture.get().getFuture().join();
-        });
+        assertThrows(CompletionException.class, () -> jobFuture.get().getFuture().join());
         assertJobFailed(jobFuture.get(), NON_SERIALIZABLE_EXCEPTION.get());
     }
 
     @Test
     public void when_psCloseThrowsNonSerializable_then_jobSucceeds() throws Exception {
         // Given
-        SupplierEx<ProcessorSupplier> supplier = () ->  new MockPS(MockP::new, MEMBER_COUNT)
+        SupplierEx<ProcessorSupplier> supplier = () -> new MockPS(MockP::new, MEMBER_COUNT)
                 .setCloseError(NON_SERIALIZABLE_EXCEPTION);
         DAG dag = new DAG().vertex(new Vertex("test",
                 new MockPMS(supplier)));
@@ -395,7 +393,7 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
     @Test
     public void when_psNonCooperativeCloseThrowsNonSerializable_then_jobSucceeds() throws Exception {
         // Given
-        SupplierEx<ProcessorSupplier> supplier = () ->  new MockPS(MockP::new, MEMBER_COUNT)
+        SupplierEx<ProcessorSupplier> supplier = () -> new MockPS(MockP::new, MEMBER_COUNT)
                 .closeBlocks()
                 .setCloseError(NON_SERIALIZABLE_EXCEPTION);
         DAG dag = new DAG().vertex(new Vertex("test",
@@ -637,7 +635,7 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
         DAG dag = new DAG().vertex(new Vertex("test",
                 new MockPS(NoOutputSourceP::new, MEMBER_COUNT)));
 
-        NodeEngineImpl nodeEngineImpl = getNodeEngineImpl(instance());
+        NodeEngineImpl nodeEngineImpl = Accessors.getNodeEngineImpl(instance());
         Address localAddress = nodeEngineImpl.getThisAddress();
         ClusterServiceImpl clusterService = (ClusterServiceImpl) nodeEngineImpl.getClusterService();
         MembersView membersView = clusterService.getMembershipManager().getMembersView();
@@ -649,7 +647,7 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
         JobConfig jobConfig = new JobConfig();
         final Map<MemberInfo, ExecutionPlan> executionPlans =
                 ExecutionPlanBuilder.createExecutionPlans(nodeEngineImpl, membersView.getMembers(), dag,
-                        jobId, executionId, jobConfig, NO_SNAPSHOT, false, null).get();
+                        jobId, executionId, jobConfig, NO_SNAPSHOT, false, false, null).get();
         ExecutionPlan executionPlan = executionPlans.get(membersView.getMember(localAddress));
 
         jetServiceBackend.getJobClassLoaderService().getOrCreateClassLoader(jobConfig, jobId, COORDINATOR);
@@ -681,7 +679,8 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
                 singletonList(JetInitDataSerializerHook.START_EXECUTION_OP));
 
         Job job = instance().getJet().newJob(dag);
-        assertJobStatusEventually(job, RUNNING); // RUNNING status is set on master before sending the StartOp
+        // RUNNING status is set on master before sending the StartOp
+        JobAssertions.assertThat(job).eventuallyHasStatus(RUNNING);
         job.cancel();
         assertThatThrownBy(job::join)
                 .isInstanceOf(CancellationException.class);
@@ -731,7 +730,7 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
 
         // Then
         // we can't assert the exception class. Sometimes the HazelcastSerializationException is wrapped
-        // in JetException and sometimes it's not, depending on whether the job managed to write JobResult or not.
+        // in JetException, and sometimes it's not, depending on whether the job managed to write JobResult or not.
         assertThatThrownBy(() -> executeAndPeel(newJob(instance, dag, null)))
                 .hasMessageContaining("java.lang.ClassNotFoundException: fake.Class");
     }
@@ -787,7 +786,7 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
         dag.edge(between(noop, faulty));
 
         Job job = newJob(client(), dag, null);
-        assertJobStatusEventually(job, RUNNING);
+        JobAssertions.assertThat(job).eventuallyHasStatus(RUNNING);
         NoOutputSourceP.proceedLatch.countDown();
         Throwable excBeforeComplete;
         Throwable excAfterComplete;
@@ -845,7 +844,7 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
                         address -> new NotSerializable_DataSerializable_ProcessorSupplier()));
 
         Job job = newJob(dag);
-        Exception e = assertThrows(Exception.class, () -> job.join());
+        Exception e = assertThrows(Exception.class, job::join);
         assertContains(e.getMessage(), "Failed to serialize");
     }
 
@@ -882,7 +881,7 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
         dag.newVertex("v", () -> new MockP().streaming());
 
         Job job = inst1.getJet().newLightJob(dag);
-        assertJobRunningEventually(inst1, job, null);
+        JobAssertions.assertThat(job).eventuallyJobRunning(inst1, null);
         inst2.getLifecycleService().terminate();
 
         try {
@@ -1282,6 +1281,7 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
             throw new UnsupportedOperationException("should not get here");
         }
 
+        @Serial
         private void readObject(java.io.ObjectInputStream stream) throws ClassNotFoundException {
             // simulate deserialization failure
             throw new ClassNotFoundException("fake.Class");
@@ -1295,6 +1295,7 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
             throw new UnsupportedOperationException("should not get here");
         }
 
+        @Serial
         private void readObject(java.io.ObjectInputStream stream) throws ClassNotFoundException {
             // simulate deserialization failure
             throw new ClassNotFoundException("fake.Class");
@@ -1313,6 +1314,7 @@ public class ExecutionLifecycleTest extends SimpleTestInClusterSupport {
                     throw new UnsupportedOperationException("should not get here");
                 }
 
+                @Serial
                 private void writeObject(java.io.ObjectOutputStream stream) throws Exception {
                     // simulate serialization failure
                     throw new NotSerializableException(getClass().getName());

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Function;
+import java.util.function.Predicate;
 
 import static com.hazelcast.core.LifecycleEvent.LifecycleState.SHUTTING_DOWN;
 import static com.hazelcast.internal.util.ConcurrencyUtil.getOrPutIfAbsent;
@@ -61,10 +61,10 @@ public class BatchInvalidator extends Invalidator {
     private final int batchSize;
     private final int batchFrequencySeconds;
     private final UUID nodeShutdownListenerId;
-    private final AtomicBoolean runningBackgroundTask = new AtomicBoolean(false);
+    private final AtomicBoolean runningBackgroundTask = new AtomicBoolean();
 
     public BatchInvalidator(String serviceName, int batchSize, int batchFrequencySeconds,
-                            Function<EventRegistration, Boolean> eventFilter, NodeEngine nodeEngine) {
+                            Predicate<EventRegistration> eventFilter, NodeEngine nodeEngine) {
         super(serviceName, eventFilter, nodeEngine);
 
         this.batchSize = batchSize;
@@ -112,13 +112,17 @@ public class BatchInvalidator extends Invalidator {
             invalidationQueue.release();
         }
 
+        // Sending the invalidations after releasing the lock is a trade-off between queue inflation
+        // and delivery ordering. We accept a higher likelihood that invalidations will arrive out of
+        // order to the listener in exchange for lower latency on draining the queue when it exceeds
+        // the batch size.
         sendInvalidations(dataStructureName, invalidations);
     }
 
     private List<Invalidation> pollInvalidations(InvalidationQueue<Invalidation> invalidationQueue) {
         final int size = invalidationQueue.size();
 
-        List<Invalidation> invalidations = new ArrayList<Invalidation>(size);
+        List<Invalidation> invalidations = new ArrayList<>(size);
 
         for (int i = 0; i < size; i++) {
             Invalidation invalidation = invalidationQueue.poll();
@@ -140,11 +144,10 @@ public class BatchInvalidator extends Invalidator {
 
         Collection<EventRegistration> registrations = eventService.getRegistrations(serviceName, dataStructureName);
         for (EventRegistration registration : registrations) {
-            if (eventFilter.apply(registration)) {
-                // find worker queue of striped executor by using subscribers' address.
-                // we want to send all batch invalidations belonging to same subscriber go into
-                // the same workers queue.
-                int orderKey = registration.getSubscriber().hashCode();
+            if (eventFilter.test(registration)) {
+                // Find worker queue of striped executor by using the registration id so all batch invalidations for the same
+                // registration will go into the same worker queue.
+                int orderKey = registration.getId().hashCode();
                 eventService.publishEvent(serviceName, registration, invalidation, orderKey);
             }
         }
@@ -192,7 +195,7 @@ public class BatchInvalidator extends Invalidator {
                 }
                 String name = entry.getKey();
                 InvalidationQueue<Invalidation> invalidationQueue = entry.getValue();
-                if (invalidationQueue.size() > 0) {
+                if (!invalidationQueue.isEmpty()) {
                     pollAndSendInvalidations(name, invalidationQueue);
                 }
             }

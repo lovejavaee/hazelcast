@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,13 @@ package com.hazelcast.jet.sql.impl.validate;
 
 import com.hazelcast.jet.sql.impl.connector.SqlConnector;
 import com.hazelcast.jet.sql.impl.connector.virtual.ViewTable;
+import com.hazelcast.jet.sql.impl.parse.SqlAnalyzeStatement;
 import com.hazelcast.jet.sql.impl.parse.SqlCreateMapping;
 import com.hazelcast.jet.sql.impl.parse.SqlExplainStatement;
 import com.hazelcast.jet.sql.impl.parse.SqlShowStatement;
+import com.hazelcast.jet.sql.impl.schema.HazelcastDynamicTableFunction;
 import com.hazelcast.jet.sql.impl.schema.HazelcastTable;
+import com.hazelcast.jet.sql.impl.validate.HazelcastSqlOperatorTable.RewriteVisitor;
 import com.hazelcast.jet.sql.impl.validate.literal.LiteralUtils;
 import com.hazelcast.jet.sql.impl.validate.operators.misc.HazelcastCastFunction;
 import com.hazelcast.jet.sql.impl.validate.param.AbstractParameterConverter;
@@ -29,18 +32,23 @@ import com.hazelcast.jet.sql.impl.validate.types.HazelcastObjectType;
 import com.hazelcast.jet.sql.impl.validate.types.HazelcastTypeCoercion;
 import com.hazelcast.jet.sql.impl.validate.types.HazelcastTypeFactory;
 import com.hazelcast.jet.sql.impl.validate.types.HazelcastTypeUtils;
+import com.hazelcast.security.permission.ActionConstants;
+import com.hazelcast.security.permission.MapPermission;
 import com.hazelcast.sql.impl.ParameterConverter;
 import com.hazelcast.sql.impl.QueryException;
+import com.hazelcast.sql.impl.QueryUtils;
 import com.hazelcast.sql.impl.SqlErrorCode;
 import com.hazelcast.sql.impl.schema.IMapResolver;
 import com.hazelcast.sql.impl.schema.Mapping;
 import com.hazelcast.sql.impl.schema.Table;
+import com.hazelcast.sql.impl.security.SqlSecurityContext;
 import com.hazelcast.sql.impl.type.QueryDataType;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.runtime.CalciteContextException;
 import org.apache.calcite.runtime.ResourceUtil;
 import org.apache.calcite.runtime.Resources;
+import org.apache.calcite.sql.SqlBasicCall;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlDelete;
 import org.apache.calcite.sql.SqlDynamicParam;
@@ -53,12 +61,14 @@ import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
+import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlSelect;
 import org.apache.calcite.sql.SqlUpdate;
 import org.apache.calcite.sql.SqlUtil;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.util.SqlBasicVisitor;
+import org.apache.calcite.sql.util.SqlShuttle;
 import org.apache.calcite.sql.validate.SelectScope;
 import org.apache.calcite.sql.validate.SqlQualified;
 import org.apache.calcite.sql.validate.SqlValidatorCatalogReader;
@@ -70,6 +80,8 @@ import org.apache.calcite.sql.validate.SqlValidatorUtil;
 import org.apache.calcite.util.Static;
 import org.apache.calcite.util.Util;
 
+import javax.annotation.Nonnull;
+import java.security.Permission;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -79,9 +91,9 @@ import java.util.Set;
 
 import static com.hazelcast.jet.sql.impl.connector.SqlConnectorUtil.getJetSqlConnector;
 import static com.hazelcast.jet.sql.impl.validate.ValidatorResource.RESOURCE;
-import static com.hazelcast.jet.sql.impl.validate.types.HazelcastTypeUtils.extractHzObjectType;
-import static com.hazelcast.jet.sql.impl.validate.types.HazelcastTypeUtils.isHzObjectType;
 import static org.apache.calcite.sql.JoinType.FULL;
+import static org.apache.calcite.sql.SqlKind.AS;
+import static org.apache.calcite.sql.SqlKind.COLLECTION_TABLE;
 
 /**
  * Hazelcast-specific SQL validator.
@@ -102,6 +114,11 @@ public class HazelcastSqlValidator extends SqlValidatorImplBridge {
     private final HazelcastSqlOperatorTable.RewriteVisitor rewriteVisitor;
 
     /**
+     * Wraps TABLE operators in subqueries when they appear as join operands.
+     */
+    private final TableOperatorWrapper tableOperatorWrapper;
+
+    /**
      * Parameter converter that will be passed to parameter metadata.
      */
     private final Map<Integer, ParameterConverter> parameterConverterMap = new HashMap<>();
@@ -117,17 +134,21 @@ public class HazelcastSqlValidator extends SqlValidatorImplBridge {
     private final List<Object> arguments;
 
     private final IMapResolver iMapResolver;
+    private final SqlSecurityContext ssc;
 
     public HazelcastSqlValidator(
             SqlValidatorCatalogReader catalogReader,
             List<Object> arguments,
-            IMapResolver iMapResolver
+            IMapResolver iMapResolver,
+            SqlSecurityContext ssc
     ) {
         super(HazelcastSqlOperatorTable.instance(), catalogReader, HazelcastTypeFactory.INSTANCE, CONFIG);
 
-        this.rewriteVisitor = new HazelcastSqlOperatorTable.RewriteVisitor(this);
+        this.rewriteVisitor = new RewriteVisitor(this);
+        this.tableOperatorWrapper = new TableOperatorWrapper();
         this.arguments = arguments;
         this.iMapResolver = iMapResolver;
+        this.ssc = ssc;
     }
 
     @Override
@@ -141,7 +162,7 @@ public class HazelcastSqlValidator extends SqlValidatorImplBridge {
             return topNode;
         }
 
-        if (topNode instanceof SqlExplainStatement) {
+        if (topNode instanceof SqlExplainStatement explainStatement) {
             /*
              * Just FYI, why do we do set validated explicandum back.
              *
@@ -158,11 +179,19 @@ public class HazelcastSqlValidator extends SqlValidatorImplBridge {
              * It's a reason why we do it (extraction, validation & re-setting) manually.
              */
 
-            SqlExplainStatement explainStatement = (SqlExplainStatement) topNode;
             SqlNode explicandum = explainStatement.getExplicandum();
             explicandum = super.validate(explicandum);
             explainStatement.setExplicandum(explicandum);
             return explainStatement;
+        }
+
+        if (topNode instanceof SqlAnalyzeStatement analyzeStatement) {
+            analyzeStatement.validate(this);
+            // Note: we're using custom validate method to extract & validate options
+            SqlNode query = analyzeStatement.getQuery();
+            query = super.validate(query);
+            analyzeStatement.setQuery(query);
+            return analyzeStatement;
         }
 
         return super.validate(topNode);
@@ -171,8 +200,8 @@ public class HazelcastSqlValidator extends SqlValidatorImplBridge {
     @Override
     public void validateQuery(SqlNode node, SqlValidatorScope scope, RelDataType targetRowType) {
         super.validateQuery(node, scope, targetRowType);
-        if (node instanceof SqlSelect) {
-            validateSelect((SqlSelect) node, scope);
+        if (node instanceof SqlSelect select) {
+            validateSelect(select, scope);
         }
     }
 
@@ -192,33 +221,17 @@ public class HazelcastSqlValidator extends SqlValidatorImplBridge {
             super.validateColumnListParams(function, argTypes, operands);
         }
 
-        if (!argTypes.get(0).getSqlTypeName().equals(SqlTypeName.COLUMN_LIST)) {
+        if (argTypes.get(0).getSqlTypeName() != SqlTypeName.COLUMN_LIST) {
             throw QueryException.error("Cannot convert " + argTypes.get(0).getSqlTypeName()
                     + " to " + argTypes.get(1).getSqlTypeName());
         }
 
         final SqlCall call = (SqlCall) operands.get(0);
 
-        assert call.getOperator().getKind().equals(SqlKind.ROW)
+        assert call.getOperator().getKind() == SqlKind.ROW
                 : "CAST column list argument is not a RowExpression call";
 
         throw QueryException.error("Cannot convert ROW to JSON");
-    }
-
-    private boolean containsCycles(final HazelcastObjectType type, final Set<String> discovered) {
-        if (!discovered.add(type.getTypeName())) {
-            return true;
-        }
-
-        for (final RelDataTypeField field : type.getFieldList()) {
-            final RelDataType fieldType = field.getType();
-            if (isHzObjectType(fieldType)
-                    && containsCycles(extractHzObjectType(fieldType), discovered)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private void validateSelect(SqlSelect select, SqlValidatorScope scope) {
@@ -328,18 +341,17 @@ public class HazelcastSqlValidator extends SqlValidatorImplBridge {
         validateUpsertRowType((SqlIdentifier) update.getTargetTable());
     }
 
+
     private void validateUpsertRowType(SqlIdentifier table) {
-        final RelDataType rowType = Objects.requireNonNull(getCatalogReader()
-                        .getTable(table.names))
-                .getRowType();
+        final RelDataType rowType = Objects.requireNonNull(getCatalogReader().getTable(table.names)).getRowType();
 
         for (final RelDataTypeField field : rowType.getFieldList()) {
             final RelDataType fieldType = field.getType();
-            if (!isHzObjectType(fieldType)) {
+            if (!(fieldType instanceof HazelcastObjectType)) {
                 continue;
             }
 
-            if (containsCycles(extractHzObjectType(fieldType), new HashSet<>())) {
+            if (QueryUtils.containsCycles((HazelcastObjectType) fieldType, new HashSet<>())) {
                 throw QueryException.error("Upserts are not supported for cyclic data type columns");
             }
         }
@@ -356,9 +368,9 @@ public class HazelcastSqlValidator extends SqlValidatorImplBridge {
             SqlConnector connector = getJetSqlConnector(table);
 
             // We need to feed primary keys to the delete processor so that it can directly delete the records.
-            // Therefore we use the primary key for the select list.
+            // Therefore, we use the primary key for the select list.
             connector.getPrimaryKey(table).forEach(name -> selectList.add(new SqlIdentifier(name, SqlParserPos.ZERO)));
-            if (selectList.size() == 0) {
+            if (selectList.isEmpty()) {
                 throw QueryException.error("Cannot DELETE from " + delete.getTargetTable() + ": it doesn't have a primary key");
             }
         }
@@ -413,6 +425,24 @@ public class HazelcastSqlValidator extends SqlValidatorImplBridge {
     }
 
     @Override
+    protected void validateTableFunction(SqlCall node, SqlValidatorScope scope, RelDataType targetRowType) {
+        if (ssc.isSecurityEnabled() && node instanceof SqlBasicCall && !node.getOperandList().isEmpty()) {
+            SqlNode sqlNode = node.getOperandList().get(0);
+            if (sqlNode instanceof SqlBasicCall call) {
+                SqlOperator operator = call.getOperator();
+                if (operator instanceof HazelcastDynamicTableFunction f) {
+                    for (Permission permission : f.permissions(call, this)) {
+                        ssc.checkPermission(permission);
+                    }
+                }
+            }
+        }
+
+        super.validateTableFunction(node, scope, targetRowType);
+    }
+
+
+    @Override
     protected SqlNode performUnconditionalRewrites(SqlNode node, boolean underFrom) {
         SqlNode rewritten = super.performUnconditionalRewrites(node, underFrom);
 
@@ -423,6 +453,14 @@ public class HazelcastSqlValidator extends SqlValidatorImplBridge {
             // operator and the second '+' refers to HazelcastSqlOperatorTable.PLUS
             // operator.
             rewritten.accept(rewriteVisitor);
+
+            // Wrap TABLE operators in subqueries to prevent scoping issues.
+            // TABLE(...) expressions do not create a separate scope; that's why when
+            // they are used as join operands, the operators they enclose, such as
+            // DESCRIPTOR(...), are assigned the JoinScope. This results in incorrect
+            // indexing after resolving identifiers or name clashes due to combined
+            // namespaces.
+            rewritten.accept(tableOperatorWrapper);
         }
 
         return rewritten;
@@ -441,6 +479,10 @@ public class HazelcastSqlValidator extends SqlValidatorImplBridge {
         ParameterConverter parameterConverter = parameterConverterMap.get(index);
         Object argument = arguments.get(index);
         return parameterConverter.convert(argument);
+    }
+
+    public Object getRawArgumentAt(int index) {
+        return arguments.get(index);
     }
 
     public ParameterConverter[] getParameterConverters(SqlNode node) {
@@ -518,11 +560,65 @@ public class HazelcastSqlValidator extends SqlValidatorImplBridge {
         if (OBJECT_NOT_FOUND.equals(ResourceUtil.key(e)) || OBJECT_NOT_FOUND_WITHIN.equals(ResourceUtil.key(e))) {
             Object[] arguments = ResourceUtil.args(e);
             String identifier = (arguments != null && arguments.length > 0) ? String.valueOf(arguments[0]) : null;
-            Mapping mapping = identifier != null ? iMapResolver.resolve(identifier) : null;
+            Mapping mapping = identifier != null && hasMapAccess(identifier) ? iMapResolver.resolve(identifier) : null;
             String sql = mapping != null ? SqlCreateMapping.unparse(mapping) : null;
             String message = sql != null ? ValidatorResource.imapNotMapped(e.str(), identifier, sql) : e.str();
             throw QueryException.error(SqlErrorCode.OBJECT_NOT_FOUND, message, exception, sql);
         }
         return exception;
+    }
+
+
+    /**
+     * Check read permission for the map.
+     * This method does not throw an exception, but rather provides the results of a permission check.
+     * Use in scenarios where it is needed to check permissions without interrupting the process.
+     *
+     * @param map name of the map.
+     * @return {@code true} access is allowed, {@code false} otherwise.
+     */
+    private boolean hasMapAccess(String map) {
+        if (!ssc.isSecurityEnabled()) {
+            return true;
+        }
+        var permission = new MapPermission(map, ActionConstants.ACTION_READ);
+        try {
+            ssc.checkPermission(permission);
+            return true;
+        } catch (SecurityException e) {
+            return false;
+        }
+    }
+
+
+    /**
+     * Wraps TABLE operators in subqueries when they appear as join operands.
+     * <p>
+     * {@code FROM TABLE(...) JOIN TABLE(...)} → <br>
+     * {@code FROM (SELECT * FROM TABLE(...)) JOIN (SELECT * FROM TABLE(...))}
+     */
+    private static final class TableOperatorWrapper extends SqlShuttle {
+        @Override
+        public SqlNode visit(@Nonnull SqlCall call) {
+            if (call instanceof SqlJoin join) {
+                join.setLeft(wrapTableOperator(join.getLeft()));
+                join.setRight(wrapTableOperator(join.getRight()));
+                return join;
+            }
+            return super.visit(call);
+        }
+
+        private SqlNode wrapTableOperator(SqlNode node) {
+            if (node instanceof SqlCall call) {
+                if (call.getOperator().getKind() == AS) {
+                    call.setOperand(0, wrapTableOperator(call.getOperandList().get(0)));
+                    return call;
+                } else if (call.getOperator().getKind() == COLLECTION_TABLE) {
+                    return new SqlSelect(call.getParserPosition(), null, SqlNodeList.SINGLETON_STAR,
+                            super.visit(call), null, null, null, null, null, null, null, null);
+                }
+            }
+            return node.accept(this);
+        }
     }
 }

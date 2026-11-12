@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,7 +38,6 @@ import static com.hazelcast.client.config.XmlClientConfigBuilderTest.HAZELCAST_C
 import static com.hazelcast.client.config.XmlClientConfigBuilderTest.HAZELCAST_CLIENT_START_TAG;
 import static com.hazelcast.client.config.XmlClientConfigBuilderTest.buildConfig;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 @RunWith(HazelcastSerialClassRunner.class)
@@ -96,7 +95,7 @@ public class XmlClientConfigImportVariableReplacementTest extends AbstractClient
             + HAZELCAST_CLIENT_END_TAG;
 
         Properties properties = new Properties(System.getProperties());
-        properties.put("config.location", configLocation);
+        properties.setProperty("config.location", configLocation);
         ClientConfig groupConfig = buildConfig(xml, properties);
         assertEquals(System.getProperty("java.version") + " dev", groupConfig.getClusterName());
     }
@@ -123,7 +122,7 @@ public class XmlClientConfigImportVariableReplacementTest extends AbstractClient
             + HAZELCAST_CLIENT_END_TAG;
 
         Properties properties = new Properties(System.getProperties());
-        properties.put("config.location", clusterNameLocation);
+        properties.setProperty("config.location", clusterNameLocation);
         ClientConfig groupConfig = buildConfig(xml, properties);
         assertEquals(System.getProperty("java.version") + " dev", groupConfig.getClusterName());
     }
@@ -156,8 +155,8 @@ public class XmlClientConfigImportVariableReplacementTest extends AbstractClient
             + HAZELCAST_CLIENT_END_TAG;
 
         Properties properties = new Properties(System.getProperties());
-        properties.put("config.location", clusterNameLocation);
-        properties.put("p1", "a property");
+        properties.setProperty("config.location", clusterNameLocation);
+        properties.setProperty("p1", "a property");
         ClientConfig config = buildConfig(xml, properties);
         assertEquals("a property  another property <test/> $T{p5}", config.getClusterName());
     }
@@ -171,7 +170,7 @@ public class XmlClientConfigImportVariableReplacementTest extends AbstractClient
                 + "      <address>192.168.100.100</address>"
                 + "      <address>127.0.0.10</address>"
                 + "    </cluster-members>"
-                + "    <smart-routing>false</smart-routing>"
+                + "    <cluster-routing mode=\"MULTI_MEMBER\" routing-strategy=\"PARTITION_GROUPS\"/>"
                 + "    <redo-operation>true</redo-operation>"
                 + "    <socket-interceptor enabled=\"true\">"
                 + "      <class-name>com.hazelcast.examples.MySocketInterceptor</class-name>"
@@ -188,7 +187,9 @@ public class XmlClientConfigImportVariableReplacementTest extends AbstractClient
                 + HAZELCAST_CLIENT_END_TAG;
 
         ClientConfig config = buildConfig(xml, "config.location", configLocationPath);
-        assertFalse(config.getNetworkConfig().isSmartRouting());
+        assertEquals(RoutingMode.MULTI_MEMBER, config.getNetworkConfig().getClusterRoutingConfig().getRoutingMode());
+        assertEquals(ClusterRoutingConfig.DEFAULT_ROUTING_STRATEGY,
+                config.getNetworkConfig().getClusterRoutingConfig().getRoutingStrategy());
         assertTrue(config.getNetworkConfig().isRedoOperation());
         assertContains(config.getNetworkConfig().getAddresses(), "192.168.100.100");
         assertContains(config.getNetworkConfig().getAddresses(), "127.0.0.10");

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 package com.hazelcast.cp.internal.raft.impl.state;
 
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
-import com.hazelcast.test.HazelcastSerialClassRunner;
+import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import com.hazelcast.internal.util.RandomPicker;
@@ -27,16 +27,14 @@ import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
 import static com.hazelcast.cp.internal.raft.impl.RaftUtil.newRaftMember;
-import static java.util.Arrays.asList;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-@RunWith(HazelcastSerialClassRunner.class)
+@RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class LeaderStateTest {
 
@@ -47,11 +45,11 @@ public class LeaderStateTest {
     @Before
     public void setUp() throws Exception {
         lastLogIndex = 123;
-        remoteEndpoints = new HashSet<RaftEndpoint>(asList(
+        remoteEndpoints = Set.of(
                 newRaftMember(5001),
                 newRaftMember(5002),
                 newRaftMember(5003),
-                newRaftMember(5004)));
+                newRaftMember(5004));
 
         state = new LeaderState(remoteEndpoints, lastLogIndex);
     }
@@ -73,7 +71,7 @@ public class LeaderStateTest {
 
     @Test
     public void test_nextIndex() {
-        Map<RaftEndpoint, Integer> indices = new HashMap<RaftEndpoint, Integer>();
+        Map<RaftEndpoint, Integer> indices = new HashMap<>();
         for (RaftEndpoint endpoint : remoteEndpoints) {
             int index = 1 + RandomPicker.getInt(100);
             state.getFollowerState(endpoint).nextIndex(index);
@@ -88,7 +86,7 @@ public class LeaderStateTest {
 
     @Test
     public void test_matchIndex() {
-        Map<RaftEndpoint, Long> indices = new HashMap<RaftEndpoint, Long>();
+        Map<RaftEndpoint, Long> indices = new HashMap<>();
         for (RaftEndpoint endpoint : remoteEndpoints) {
             long index = 1 + RandomPicker.getInt(100);
             state.getFollowerState(endpoint).matchIndex(index);

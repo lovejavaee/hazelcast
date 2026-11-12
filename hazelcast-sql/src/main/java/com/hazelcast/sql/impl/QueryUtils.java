@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,14 +18,20 @@ package com.hazelcast.sql.impl;
 
 import com.hazelcast.cluster.Member;
 import com.hazelcast.internal.util.collection.PartitionIdSet;
+import com.hazelcast.jet.sql.impl.validate.types.HazelcastObjectType;
+import com.hazelcast.map.IMap;
+import com.hazelcast.map.impl.MapContainer;
+import com.hazelcast.map.impl.MapService;
+import com.hazelcast.map.impl.MapServiceContext;
+import com.hazelcast.map.impl.proxy.MapProxyImpl;
 import com.hazelcast.partition.Partition;
 import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.sql.SqlColumnMetadata;
 import com.hazelcast.sql.impl.schema.TableResolver;
 import com.hazelcast.sql.impl.type.QueryDataType;
 import com.hazelcast.version.MemberVersion;
-import org.apache.calcite.sql.SqlDialect;
-import org.apache.calcite.sql.dialect.CalciteSqlDialect;
+import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rel.type.RelDataTypeField;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
@@ -34,9 +40,8 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
-
-import static java.util.Arrays.asList;
 
 /**
  * Common SQL engine utility methods used by both "core" and "sql" modules.
@@ -51,6 +56,8 @@ public final class QueryUtils {
 
     // This is an arbitrarily-chosen prefix so that data connection names don't clash with other object names
     private static final String DATA_CONNECTION_KEY_PREFIX = "57ae1d3a-d379-44cb-bb60-86b1d2dcd744-";
+
+    // TODO: tech debt: revisit and this class, move some methods to other classes.
 
     private QueryUtils() {
         // No-op.
@@ -70,7 +77,8 @@ public final class QueryUtils {
      * @param columnType Internal type.
      * @return Public type.
      */
-    public static SqlColumnMetadata getColumnMetadata(String columnName, QueryDataType columnType, boolean columnIsNullable) {
+    public static SqlColumnMetadata getColumnMetadata(String columnName, QueryDataType columnType,
+                                                      boolean columnIsNullable) {
         return new SqlColumnMetadata(columnName, columnType.getTypeFamily().getPublicType(), columnIsNullable);
     }
 
@@ -78,8 +86,9 @@ public final class QueryUtils {
      * Create map from member ID to owned partitions.
      *
      * @param nodeEngine                node engine
-     * @param localMemberVersion        version of the local member. If any of partition owners have a different version,
-     *                                  an exception is thrown. The check is ignored if passed version is {@code null}
+     * @param localMemberVersion        version of the local member. If any of partition owners have a different
+     *                                  version, an exception is thrown.
+     *                                  The check is ignored if passed version is {@code null}
      * @param failOnUnassignedPartition whether the call should fail in case an unassigned partition is found;
      *                                  when set to {@code false} the missing partitions will not be included
      *                                  in the result
@@ -155,13 +164,29 @@ public final class QueryUtils {
     }
 
     /**
-     * Quote the given compound identifier using Calcite dialect (= Hazelcast dialect).
-     * You can use this when giving information to the user, e.g. in exception message.
-     * When building a query you should use {@link SqlDialect#quoteIdentifier(StringBuilder, List)} directly.
+     * Check if the given type contains cycles.
      */
-    public static String quoteCompoundIdentifier(String[] compoundIdentifier) {
-        return CalciteSqlDialect.DEFAULT
-                .quoteIdentifier(new StringBuilder(), asList(compoundIdentifier))
-                .toString();
+    public static boolean containsCycles(final HazelcastObjectType type, final Set<String> discovered) {
+        if (!discovered.add(type.getTypeName())) {
+            return true;
+        }
+
+        for (final RelDataTypeField field : type.getFieldList()) {
+            final RelDataType fieldType = field.getType();
+            if (fieldType instanceof HazelcastObjectType objectType
+                    && containsCycles(objectType, discovered)) {
+                return true;
+            }
+        }
+
+        discovered.remove(type.getTypeName());
+        return false;
+    }
+
+    public static <K, V> MapContainer getMapContainer(IMap<K, V> map) {
+        MapProxyImpl<K, V> mapProxy = (MapProxyImpl<K, V>) map;
+        MapService mapService = mapProxy.getService();
+        MapServiceContext mapServiceContext = mapService.getMapServiceContext();
+        return mapServiceContext.getMapContainer(map.getName());
     }
 }

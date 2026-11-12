@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,22 +20,37 @@ import com.hazelcast.config.Config;
 import com.hazelcast.config.InMemoryFormat;
 import com.hazelcast.config.MapConfig;
 import com.hazelcast.config.MapStoreConfig;
-import com.hazelcast.map.MapStore;
+import com.hazelcast.core.EntryEventType;
+import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.internal.util.MapUtil;
 import com.hazelcast.journal.AbstractEventJournalBasicTest;
+import com.hazelcast.journal.EventJournalDataStructureAdapter;
 import com.hazelcast.journal.EventJournalTestContext;
 import com.hazelcast.map.EventJournalMapEvent;
+import com.hazelcast.map.IMap;
+import com.hazelcast.map.MapStore;
+import com.hazelcast.ringbuffer.ReadResultSet;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import com.hazelcast.internal.util.MapUtil;
+import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
+import java.io.Serializable;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
+import java.util.function.Predicate;
 
 import static com.hazelcast.config.MapStoreConfig.InitialLoadMode.EAGER;
+import static com.hazelcast.function.FunctionEx.identity;
+import static com.hazelcast.function.PredicateEx.alwaysTrue;
+import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
@@ -43,7 +58,10 @@ public class MapEventJournalBasicTest<K, V> extends AbstractEventJournalBasicTes
 
     private static final String NON_EXPIRING_MAP = "mappy";
     private static final String EXPIRING_MAP = "expiring";
+    private static final String OBJECT_MAP = "journalObject";
 
+    public final AtomicBoolean isPredicateContextInjected = new AtomicBoolean();
+    public final AtomicBoolean isProjectionContextInjected = new AtomicBoolean();
     @Override
     protected Config getConfig() {
         Config config = super.getConfig();
@@ -58,7 +76,18 @@ public class MapEventJournalBasicTest<K, V> extends AbstractEventJournalBasicTes
 
         config.getMapConfig(EXPIRING_MAP).setTimeToLiveSeconds(1)
               .setInMemoryFormat(getInMemoryFormat());
-
+        MapConfig objectMap = config.getMapConfig(OBJECT_MAP).setInMemoryFormat(InMemoryFormat.OBJECT);
+        objectMap.getEventJournalConfig().setEnabled(true);
+        objectMap.getMerkleTreeConfig().setEnabled(false);
+        config.setManagedContext(obj -> {
+            if (obj instanceof PredicateWithContext) {
+                setPredicate(true);
+            }
+            if (obj instanceof ProjectionWithContext) {
+                setProjection(true);
+            }
+            return obj;
+        });
         return config;
     }
 
@@ -68,11 +97,66 @@ public class MapEventJournalBasicTest<K, V> extends AbstractEventJournalBasicTes
 
     @Override
     protected EventJournalTestContext<K, V, EventJournalMapEvent<K, V>> createContext() {
-        return new EventJournalTestContext<K, V, EventJournalMapEvent<K, V>>(
-                new EventJournalMapDataStructureAdapter<K, V>(getRandomInstance().<K, V>getMap(NON_EXPIRING_MAP)),
-                new EventJournalMapDataStructureAdapter<K, V>(getRandomInstance().<K, V>getMap(EXPIRING_MAP)),
-                new EventJournalMapEventAdapter<K, V>()
+        return new EventJournalTestContext<>(
+                new EventJournalMapDataStructureAdapter<>(getRandomInstance().getMap(NON_EXPIRING_MAP)),
+                new EventJournalMapDataStructureAdapter<>(getRandomInstance().getMap(EXPIRING_MAP)),
+                new EventJournalMapEventAdapter<>()
         );
+    }
+
+    @Test
+    public void testPredicateAndProjectionContextInjection() {
+        final EventJournalTestContext<K, V, EventJournalMapEvent<K, V>> context = createContext();
+        readFromEventJournal((EventJournalDataStructureAdapter) context.dataAdapter, 0,
+                1, 1, new PredicateWithContext(), new ProjectionWithContext());
+        assertAtomicEventually("Predicate Must be injected with ManagedContext", true, getPredicate(), 30);
+        assertAtomicEventually("Projection must injected with ManagedContext", true, getProjection(), 30);
+    }
+
+    @Test
+    public void testInPlaceObjectUpdate_preservesJournalOldValue() throws Exception {
+        HazelcastInstance instance = getRandomInstance();
+        IMap<String, AtomicInteger> map = instance.getMap(OBJECT_MAP);
+        int partitionId = instance.getPartitionService().getPartition("key").getPartitionId();
+        EventJournalMapDataStructureAdapter<String, AtomicInteger> journal = new EventJournalMapDataStructureAdapter<>(map);
+        map.put("key", new AtomicInteger(1));
+        long nextSequence = journal.subscribeToEventJournal(partitionId)
+                .toCompletableFuture().get(10, SECONDS).getNewestSequence() + 1;
+
+        map.executeOnKey("key", entry -> {
+            AtomicInteger value = entry.getValue();
+            value.incrementAndGet();
+            entry.setValue(value);
+            return null;
+        });
+
+        ReadResultSet<EventJournalMapEvent<String, AtomicInteger>> events =
+                journal.<EventJournalMapEvent<String, AtomicInteger>>readFromEventJournal(
+                        nextSequence, 1, 1, partitionId, alwaysTrue(), identity())
+                        .toCompletableFuture().get(10, SECONDS);
+        assertThat(map.get("key").get()).isEqualTo(2);
+        assertThat(events.size()).isEqualTo(1);
+        EventJournalMapEvent<String, AtomicInteger> update = events.get(0);
+        assertThat(update.getKey()).isEqualTo("key");
+        assertThat(update.getType()).isEqualTo(EntryEventType.UPDATED);
+        assertThat(update.getOldValue().get()).isEqualTo(1);
+        assertThat(update.getNewValue().get()).isEqualTo(2);
+    }
+
+    public void setPredicate(boolean value) {
+        this.isPredicateContextInjected.set(value);
+    }
+
+    public void setProjection(boolean value) {
+        this.isProjectionContextInjected.set(value);
+    }
+
+    public AtomicBoolean getProjection() {
+        return this.isProjectionContextInjected;
+    }
+
+    public AtomicBoolean getPredicate() {
+        return this.isPredicateContextInjected;
     }
 
     public static class CustomMapStore implements MapStore<Object, Object> {
@@ -114,6 +198,39 @@ public class MapEventJournalBasicTest<K, V> extends AbstractEventJournalBasicTes
         @Override
         public Iterable<Object> loadAllKeys() {
             return Collections.emptySet();
+        }
+    }
+    public static class PredicateWithContext implements Predicate, Serializable {
+        @Override
+        public boolean test(Object o) {
+            return true;
+        }
+    }
+    public static class ProjectionWithContext implements Function , Serializable {
+        @Override
+        public Object apply(Object o) {
+            return null;
+        }
+    }
+
+    protected boolean isAfterLostEvents(EventJournalMapEvent event) {
+        return event.isAfterLostEvents();
+    }
+
+    protected Predicate<EventJournalMapEvent> putFilter() {
+        return new PutPredicate();
+    }
+
+    @Override
+    protected void assertValueEquals(EventJournalMapEvent event, Object expectedValue) {
+        assert event.getNewValue().equals(expectedValue);
+    }
+
+    public static class PutPredicate implements Predicate<EventJournalMapEvent>, Serializable {
+
+        @Override
+        public boolean test(EventJournalMapEvent e) {
+            return e.getType() == EntryEventType.ADDED;
         }
     }
 }

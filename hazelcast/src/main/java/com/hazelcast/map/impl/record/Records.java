@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -92,9 +92,6 @@ public final class Records {
      * Use it instead of raw {@link Record#getCachedValueUnsafe()} See
      * {@link #getValueOrCachedValue(Record, SerializationService)}
      * for details.
-     *
-     * @param record
-     * @return
      */
     public static Object getCachedValue(Record record) {
         for (; ; ) {
@@ -132,10 +129,6 @@ public final class Records {
      * returned to the outside world. Use {@link #getCachedValue(Record)}
      * instead of raw {@link Record#getCachedValueUnsafe()} to
      * protect from accidental mutex exposure to the user-code.
-     *
-     * @param record
-     * @param serializationService
-     * @return
      */
     public static Object getValueOrCachedValue(Record record, SerializationService serializationService) {
         Object cachedValue = record.getCachedValueUnsafe();
@@ -211,8 +204,7 @@ public final class Records {
         // For HazelcastJsonValue objects, if we pass the instanceof Data check, that
         // means the metadata is created from the Data representation of the object.
         // If we allow using the deserialized values, the metadata might not be safe to use.
-        if (value instanceof Data) {
-            Data data = (Data) value;
+        if (value instanceof Data data) {
             return !(data.isPortable() || data.isJson() || data.isCompact());
         }
         return false;
@@ -232,18 +224,18 @@ public final class Records {
         }
 
         static Object unwrapOrNull(Object o) {
-            if (o instanceof ThreadWrapper) {
-                return ((ThreadWrapper) o).wrappedValue;
+            if (o instanceof ThreadWrapper wrapper) {
+                return wrapper.wrappedValue;
             }
             return null;
         }
 
         static Object wrapIfNeeded(Object object) {
-            if (object instanceof Thread) {
+            if (object instanceof Thread thread) {
                 //exceptional case: deserialized value is an instance of Thread
                 //we need to wrap it as we use currentThread to mark the cacheValue is 'deserilization in-progress'
                 //this is the only case where we allocate a new object.
-                return new ThreadWrapper((Thread) object);
+                return new ThreadWrapper(thread);
             }
             return object;
         }

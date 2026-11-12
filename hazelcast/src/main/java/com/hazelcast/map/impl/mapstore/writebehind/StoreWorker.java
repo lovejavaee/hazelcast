@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -76,7 +76,10 @@ public class StoreWorker implements Runnable {
         this.executionService = nodeEngine.getExecutionService();
         this.writeBehindProcessor = writeBehindProcessor;
         this.backupDelayMillis = getReplicaWaitTimeMillis();
-        this.lastHighestStoreTime = Clock.currentTimeMillis();
+        // Initialize lastHighestStoreTime to current time - 1 millisecond
+        // to avoid processing entries added in the same millisecond
+        // when the worker was initialized.
+        this.lastHighestStoreTime = Clock.currentTimeMillis() - 1;
         this.writeDelayMillis = SECONDS.toMillis(getWriteDelaySeconds(mapStoreContext));
         this.partitionCount = partitionService.getPartitionCount();
     }
@@ -136,10 +139,10 @@ public class StoreWorker implements Runnable {
 
             if (!localPartition) {
                 backupsList = initListIfNull(backupsList, partitionCount);
-                selectEntriesToStore(recordStore, backupsList, backupHighestStoreTime);
+                selectEntriesToStore(recordStore, backupsList, backupHighestStoreTime, true);
             } else {
                 ownersList = initListIfNull(ownersList, partitionCount);
-                selectEntriesToStore(recordStore, ownersList, ownerHighestStoreTime);
+                selectEntriesToStore(recordStore, ownersList, ownerHighestStoreTime, false);
             }
         }
 
@@ -173,7 +176,8 @@ public class StoreWorker implements Runnable {
      * @return highestStoreTime in millis.
      */
     private long calculateHighestStoreTime(long lastHighestStoreTime, long now) {
-        return now >= lastHighestStoreTime + writeDelayMillis ? now : lastHighestStoreTime;
+       // Use subtraction to avoid long overflow in time comparison
+        return now - lastHighestStoreTime >= writeDelayMillis ? now : lastHighestStoreTime;
     }
 
     private boolean hasEntryInWriteBehindQueue(RecordStore recordStore) {
@@ -202,17 +206,40 @@ public class StoreWorker implements Runnable {
         return partition.isLocal();
     }
 
-    private void selectEntriesToStore(RecordStore recordStore, List<DelayedEntry> entries, long highestStoreTime) {
+    private void selectEntriesToStore(
+        RecordStore recordStore,
+        List<DelayedEntry> entries,
+        long highestStoreTime,
+        boolean backup
+    ) {
         WriteBehindQueue<DelayedEntry> queue = getWriteBehindQueue(recordStore);
         long nextSequenceToFlush = getSequenceToFlush(recordStore);
 
-        filterWriteBehindQueue(highestStoreTime, nextSequenceToFlush, entries, queue);
+        filterWriteBehindQueue(highestStoreTime, nextSequenceToFlush, entries, queue, backup);
     }
 
-    private void filterWriteBehindQueue(final long highestStoreTime, final long sequence, Collection<DelayedEntry> collection,
-                                        WriteBehindQueue<DelayedEntry> queue) {
-        if (sequence > 0) {
+    private void filterWriteBehindQueue(
+        final long highestStoreTime,
+        final long sequence,
+        Collection<DelayedEntry> collection,
+        WriteBehindQueue<DelayedEntry> queue,
+        boolean backup
+    ) {
+        if (sequence > 0 && backup) {
+            // Owner and backup flush operations run in parallel.
+            // To prevent data loss if the owner fails during a flush, the backup must retain entries
+            // for a short delay before they are removed from the queue.
+            // This ensures the backup always lags behind the owner flush process.
+            // Multiple flushes can occur if a flush happens on the primary partition,
+            // followed by a primary loss and promotion of the backup partition.
+            var backupCleanupCutoffTime = Clock.currentTimeMillis() - backupDelayMillis;
+            queue.filter(
+                delayedEntry -> delayedEntry.getSequence() <= sequence && delayedEntry.getStoreTime() < backupCleanupCutoffTime,
+                collection
+            );
+        } else if (sequence > 0) {
             queue.filter(delayedEntry -> delayedEntry.getSequence() <= sequence, collection);
+
         } else {
             queue.filter(delayedEntry -> delayedEntry.getStoreTime() <= highestStoreTime, collection);
         }
@@ -248,7 +275,7 @@ public class StoreWorker implements Runnable {
     }
 
     /**
-     * Process write-behind queues on backup partitions. It is a fake processing and
+     * Process write-behind queues on backup partitions. It is a fake processing, and
      * it only removes entries from queues and does not persist any of them.
      *
      * @param delayedEntries entries to be processed.

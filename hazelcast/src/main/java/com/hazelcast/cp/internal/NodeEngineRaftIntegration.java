@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,18 +16,21 @@
 
 package com.hazelcast.cp.internal;
 
+import com.hazelcast.cluster.Address;
 import com.hazelcast.cp.CPGroupId;
 import com.hazelcast.cp.CPMember;
 import com.hazelcast.cp.internal.operation.integration.AppendFailureResponseOp;
 import com.hazelcast.cp.internal.operation.integration.AppendRequestOp;
 import com.hazelcast.cp.internal.operation.integration.AppendSuccessResponseOp;
 import com.hazelcast.cp.internal.operation.integration.AsyncRaftOp;
-import com.hazelcast.cp.internal.operation.integration.InstallSnapshotOp;
+import com.hazelcast.cp.internal.operation.integration.InstallSnapshotRequestOp;
+import com.hazelcast.cp.internal.operation.integration.InstallSnapshotResponseOp;
 import com.hazelcast.cp.internal.operation.integration.PreVoteRequestOp;
 import com.hazelcast.cp.internal.operation.integration.PreVoteResponseOp;
 import com.hazelcast.cp.internal.operation.integration.TriggerLeaderElectionOp;
 import com.hazelcast.cp.internal.operation.integration.VoteRequestOp;
 import com.hazelcast.cp.internal.operation.integration.VoteResponseOp;
+import com.hazelcast.cp.internal.raft.ChunkedSnapshotAwareService;
 import com.hazelcast.cp.internal.raft.SnapshotAwareService;
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
 import com.hazelcast.cp.internal.raft.impl.RaftIntegration;
@@ -35,17 +38,20 @@ import com.hazelcast.cp.internal.raft.impl.RaftNodeStatus;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendFailureResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendRequest;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendSuccessResponse;
-import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshot;
+import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshotRequest;
+import com.hazelcast.cp.internal.raft.impl.dto.InstallSnapshotResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.PreVoteRequest;
 import com.hazelcast.cp.internal.raft.impl.dto.PreVoteResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.TriggerLeaderElection;
 import com.hazelcast.cp.internal.raft.impl.dto.VoteRequest;
 import com.hazelcast.cp.internal.raft.impl.dto.VoteResponse;
+import com.hazelcast.cp.internal.raft.impl.log.SnapshotChunk;
+import com.hazelcast.cp.internal.raft.impl.log.SnapshotEntry;
 import com.hazelcast.cp.internal.raftop.NotifyTermChangeOp;
 import com.hazelcast.cp.internal.raftop.snapshot.RestoreSnapshotOp;
 import com.hazelcast.cp.internal.util.PartitionSpecificRunnableAdaptor;
+import com.hazelcast.internal.util.FrequentLogSuppressor;
 import com.hazelcast.logging.ILogger;
-import com.hazelcast.cluster.Address;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
 import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.spi.impl.executionservice.TaskScheduler;
@@ -55,12 +61,14 @@ import com.hazelcast.spi.impl.operationservice.impl.OperationServiceImpl;
 import com.hazelcast.spi.impl.servicemanager.ServiceInfo;
 import com.hazelcast.spi.properties.HazelcastProperty;
 
-import java.util.ArrayList;
+import javax.annotation.Nonnull;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static com.hazelcast.cp.internal.RaftService.CP_SUBSYSTEM_EXECUTOR;
+import static com.hazelcast.cp.internal.datastructures.snapshot.ChunkUtil.createChunksFromSnapshot;
 import static com.hazelcast.cp.internal.raft.impl.RaftNodeStatus.STEPPED_DOWN;
 import static com.hazelcast.cp.internal.raft.impl.RaftNodeStatus.TERMINATED;
 
@@ -69,8 +77,8 @@ import static com.hazelcast.cp.internal.raft.impl.RaftNodeStatus.TERMINATED;
  * Hazelcast system. Replicates Raft RPCs via Hazelcast operations and executes
  * committed Raft operations.
  */
-@SuppressWarnings("checkstyle:classfanoutcomplexity")
-final class NodeEngineRaftIntegration implements RaftIntegration {
+@SuppressWarnings({"checkstyle:classfanoutcomplexity", "checkstyle:ClassDataAbstractionCoupling"})
+class NodeEngineRaftIntegration implements RaftIntegration {
 
     /**
      * !!! ONLY FOR INTERNAL USAGE AND TESTING !!!
@@ -79,17 +87,31 @@ final class NodeEngineRaftIntegration implements RaftIntegration {
     public static final HazelcastProperty RAFT_LINEARIZABLE_READ_OPTIMIZATION_ENABLED
             = new HazelcastProperty("raft.linearizable.read.optimization.enabled", true);
 
+    /**
+     * How often operation failures should be logged, in seconds
+     */
+    public static final HazelcastProperty RAFT_OP_SUPPRESSED_FREQUENT_LOG_PERIOD
+            = new HazelcastProperty("hazelcast.internal.raft.op.suppressed.frequent.log.period", 60);
 
-    private final NodeEngineImpl nodeEngine;
+    /**
+     * How many times an operation failure is logged before it is suppressed
+     */
+    public static final HazelcastProperty RAFT_OP_SUPPRESSED_FREQUENT_LOG_THRESHOLD
+            = new HazelcastProperty("hazelcast.internal.raft.op.suppress.frequent.log.threshold", 10);
+
+    protected final NodeEngineImpl nodeEngine;
+    protected final RaftInvocationManager invocationManager;
+
     private final CPGroupId groupId;
     private final RaftEndpoint localCPMember;
     private final Address localAddress;
     private final OperationServiceImpl operationService;
-    private final RaftInvocationManager invocationManager;
     private final TaskScheduler taskScheduler;
     private final int partitionId;
     private final int threadId;
     private final boolean linearizableReadOptimizationEnabled;
+
+    private final FrequentLogSuppressor frequentLogSuppressor;
 
     NodeEngineRaftIntegration(NodeEngineImpl nodeEngine, CPGroupId groupId, RaftEndpoint localCPMember, int partitionId) {
         this.nodeEngine = nodeEngine;
@@ -103,14 +125,20 @@ final class NodeEngineRaftIntegration implements RaftIntegration {
         this.threadId = operationExecutor.toPartitionThreadIndex(partitionId);
         this.taskScheduler = nodeEngine.getExecutionService().getGlobalTaskScheduler();
         this.linearizableReadOptimizationEnabled = nodeEngine.getProperties()
-                                                             .getBoolean(RAFT_LINEARIZABLE_READ_OPTIMIZATION_ENABLED);
+                .getBoolean(RAFT_LINEARIZABLE_READ_OPTIMIZATION_ENABLED);
+
+        this.frequentLogSuppressor = new FrequentLogSuppressor(
+                nodeEngine.getProperties().getInteger(RAFT_OP_SUPPRESSED_FREQUENT_LOG_PERIOD),
+                nodeEngine.getProperties().getInteger(RAFT_OP_SUPPRESSED_FREQUENT_LOG_THRESHOLD),
+                nodeEngine.getLogger(FrequentLogSuppressor.class)
+        );
     }
 
     @Override
     public void execute(Runnable task) {
         Thread currentThread = Thread.currentThread();
-        if (currentThread instanceof PartitionOperationThread
-                && ((PartitionOperationThread) currentThread).getThreadId() == threadId) {
+        if (currentThread instanceof PartitionOperationThread thread
+                && thread.getThreadId() == threadId) {
             task.run();
         } else {
             operationService.execute(new PartitionSpecificRunnableAdaptor(task, partitionId));
@@ -202,8 +230,13 @@ final class NodeEngineRaftIntegration implements RaftIntegration {
     }
 
     @Override
-    public boolean send(InstallSnapshot request, RaftEndpoint target) {
-        return send(new InstallSnapshotOp(groupId, request), target);
+    public boolean send(InstallSnapshotRequest request, RaftEndpoint target) {
+        return send(new InstallSnapshotRequestOp(groupId, request), target);
+    }
+
+    @Override
+    public boolean send(InstallSnapshotResponse response, RaftEndpoint target) {
+        return send(new InstallSnapshotResponseOp(groupId, response), target);
     }
 
     @Override
@@ -218,37 +251,58 @@ final class NodeEngineRaftIntegration implements RaftIntegration {
         try {
             return operation.run(groupId, commitIndex);
         } catch (Throwable t) {
-            operation.logFailure(t);
+            frequentLogSuppressor.runSuppressed(t, () -> operation.logFailure(t));
             return t;
         }
     }
 
-    @Override
-    public Object takeSnapshot(long commitIndex) {
-        try {
-            List<RestoreSnapshotOp> snapshotOps = new ArrayList<>();
-            for (ServiceInfo serviceInfo : nodeEngine.getServiceInfos(SnapshotAwareService.class)) {
-                SnapshotAwareService service = serviceInfo.getService();
-                Object snapshot = service.takeSnapshot(groupId, commitIndex);
-                if (snapshot != null) {
-                    snapshotOps.add(new RestoreSnapshotOp(serviceInfo.getName(), snapshot));
-                }
+    private Object takeServiceSnapshots(long commitIndex) {
+        var snapshotPerServiceInfo = new HashMap<>();
+
+        for (ServiceInfo serviceInfo : nodeEngine.getServiceInfos(SnapshotAwareService.class)) {
+            SnapshotAwareService<?> service = serviceInfo.getService();
+            Object snapshot = service instanceof ChunkedSnapshotAwareService<?, ?> chunkedService
+                    ? chunkedService.takeSnapshotChunks(groupId, commitIndex)
+                    : service.takeSnapshot(groupId, commitIndex);
+            if (snapshot == null) {
+                continue;
             }
 
-            return snapshotOps;
-        } catch (Throwable t) {
-            return t;
+            snapshotPerServiceInfo.put(serviceInfo, snapshot);
+        }
+
+        return snapshotPerServiceInfo;
+    }
+
+    @Nonnull
+    @Override
+    public List<SnapshotChunk> takeGroupSnapshotChunks(int snapshotTerm, long commitIndex,
+                                                       Collection<RaftEndpoint> groupMembers,
+                                                       long groupMembersLogIndex) {
+        Object snapshot = takeServiceSnapshots(commitIndex);
+        ILogger logger = nodeEngine.getLogger(getClass());
+        return createChunksFromSnapshot(this, snapshotTerm, commitIndex, groupMembers,
+                groupMembersLogIndex, snapshot, logger);
+    }
+
+    @Override
+    public void resetForChunkedSnapshotRestore() {
+        for (ServiceInfo serviceInfo : nodeEngine.getServiceInfos(ChunkedSnapshotAwareService.class)) {
+            ChunkedSnapshotAwareService<?, ?> service = serviceInfo.getService();
+            service.prepareForSnapshotRestore(groupId);
         }
     }
 
     @Override
-    public void restoreSnapshot(Object op, long commitIndex) {
+    public void restoreSnapshot(SnapshotEntry snapshotEntry) {
         ILogger logger = nodeEngine.getLogger(getClass());
-        List<RestoreSnapshotOp> snapshotOps = (List<RestoreSnapshotOp>) op;
-        for (RestoreSnapshotOp snapshotOp : snapshotOps) {
-            Object result = runOperation(snapshotOp, commitIndex);
-            if (result instanceof Throwable) {
-                logger.severe("Restore of " + snapshotOp + " failed...", (Throwable) result);
+        for (SnapshotChunk snapshotChunk : snapshotEntry.snapshotChunks()) {
+            List<Object> ops = (List<Object>) snapshotChunk.operation();
+            for (Object snapshotOp : ops) {
+                Object result = runOperation(snapshotOp, snapshotChunk.index());
+                if (result instanceof Throwable throwable) {
+                    logger.severe("Restore of " + snapshotOp + " failed...", throwable);
+                }
             }
         }
     }
@@ -300,5 +354,16 @@ final class NodeEngineRaftIntegration implements RaftIntegration {
             }
             service.onRaftNodeTerminated(groupId);
         }
+    }
+
+    @Override
+    public void onNewLeaderElected(CPGroupId groupId) {
+        RaftService raftService = nodeEngine.getService(RaftService.SERVICE_NAME);
+        raftService.getGroupViewTracker().publishGroupLeadershipStates();
+    }
+
+    @Override
+    public Object newRestoreSnapshotOp(String serviceName, long commitIndex, Object chunk) {
+        return new RestoreSnapshotOp(serviceName, chunk);
     }
 }

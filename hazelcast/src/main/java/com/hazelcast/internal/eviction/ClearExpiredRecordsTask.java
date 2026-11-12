@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,17 +17,18 @@
 package com.hazelcast.internal.eviction;
 
 import com.hazelcast.cluster.Address;
+import com.hazelcast.cluster.ClusterState;
 import com.hazelcast.internal.partition.IPartition;
 import com.hazelcast.internal.partition.IPartitionService;
 import com.hazelcast.internal.util.Clock;
 import com.hazelcast.partition.PartitionLostEvent;
 import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.operationservice.Operation;
-import com.hazelcast.spi.impl.operationservice.impl.OperationServiceImpl;
+import com.hazelcast.spi.impl.operationservice.OperationService;
 import com.hazelcast.spi.properties.HazelcastProperties;
 import com.hazelcast.spi.properties.HazelcastProperty;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+import javax.annotation.Nullable;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.LinkedList;
@@ -35,6 +36,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
+import java.util.function.BiPredicate;
 
 import static com.hazelcast.internal.eviction.ToBackupSender.newToBackupSender;
 import static com.hazelcast.internal.util.CollectionUtil.isEmpty;
@@ -44,7 +46,6 @@ import static java.lang.Integer.parseInt;
 import static java.lang.Math.min;
 
 @SuppressWarnings({"checkstyle:magicnumber", "checkstyle:methodcount"})
-@SuppressFBWarnings({"URF_UNREAD_FIELD"})
 public abstract class ClearExpiredRecordsTask<T, S> implements Runnable {
 
     private static final int DIFFERENCE_BETWEEN_TWO_SUBSEQUENT_PARTITION_CLEANUP_MILLIS = 1000;
@@ -61,8 +62,8 @@ public abstract class ClearExpiredRecordsTask<T, S> implements Runnable {
     private final int cleanupOperationCount;
 
     private final Address thisAddress;
-    private final OperationServiceImpl operationService;
-    private final AtomicBoolean singleRunPermit = new AtomicBoolean(false);
+    private final OperationService operationService;
+    private final AtomicBoolean singleRunPermit = new AtomicBoolean();
     private final AtomicInteger lostPartitionCounter = new AtomicInteger();
     private final AtomicInteger nextExpiryQueueToScanIndex = new AtomicInteger();
 
@@ -70,7 +71,6 @@ public abstract class ClearExpiredRecordsTask<T, S> implements Runnable {
 
     private int runningCleanupOperationsCount;
 
-    @SuppressFBWarnings({"EI_EXPOSE_REP2"})
     protected ClearExpiredRecordsTask(String serviceName,
                                       T[] containers,
                                       HazelcastProperty cleanupEnabled,
@@ -80,7 +80,7 @@ public abstract class ClearExpiredRecordsTask<T, S> implements Runnable {
                                       NodeEngine nodeEngine) {
         this.nodeEngine = nodeEngine;
         this.containers = containers;
-        this.operationService = (OperationServiceImpl) nodeEngine.getOperationService();
+        this.operationService = nodeEngine.getOperationService();
         this.partitionService = nodeEngine.getPartitionService();
         this.partitionCount = nodeEngine.getPartitionService().getPartitionCount();
         this.thisAddress = nodeEngine.getThisAddress();
@@ -98,7 +98,7 @@ public abstract class ClearExpiredRecordsTask<T, S> implements Runnable {
                 newBackupExpiryOpFilter(), nodeEngine);
     }
 
-    protected BiFunction<Integer, Integer, Boolean> newBackupExpiryOpFilter() {
+    protected BiPredicate<Integer, Integer> newBackupExpiryOpFilter() {
         return (partitionId, replicaIndex) -> {
             IPartition partition = partitionService.getPartition(partitionId);
             return partition.getReplicaAddress(replicaIndex) != null;
@@ -108,6 +108,9 @@ public abstract class ClearExpiredRecordsTask<T, S> implements Runnable {
     @Override
     public void run() {
         if (!nodeEngine.isStartCompleted()) {
+            return;
+        }
+        if (nodeEngine.getClusterService().getClusterState() == ClusterState.PASSIVE) {
             return;
         }
         if (!singleRunPermit.compareAndSet(false, true)) {
@@ -192,16 +195,16 @@ public abstract class ClearExpiredRecordsTask<T, S> implements Runnable {
 
     /**
      * This method increments a counter to count partition lost events.
-     *
+     * <p>
      * After an ungraceful shutdown, backups can have expired entries.
      * And these entries can remain forever on them. Reason for this is,
      * the lost invalidations on a primary partition. During ungraceful
      * shutdown, these invalidations can be lost before sending them to
      * backups.
-     *
+     * <p>
      * Here, the counter in this method, is used to detect the lost
      * invalidations case. If it is detected, we send expiry operations to
-     * remove leftover backup entries. Otherwise leftover entries can remain on
+     * remove leftover backup entries. Otherwise, leftover entries can remain on
      * backups forever.
      */
     public final void partitionLost(PartitionLostEvent ignored) {
@@ -270,15 +273,17 @@ public abstract class ClearExpiredRecordsTask<T, S> implements Runnable {
         }
         List<T> partitionIds = partitionContainers.subList(start, end);
         for (T container : partitionIds) {
-            // mark partition container as has on going expiration operation.
-            setHasRunningCleanup(container);
-            Operation operation = newPrimaryExpiryOp(cleanupPercentage, container);
-            operationService.execute(operation);
+            Operation operation = newPrimaryExpiryOp(container, cleanupPercentage);
+            if (operation != null) {
+                // mark partition container as has ongoing expiration operation.
+                setHasRunningCleanup(container);
+                operationService.execute(operation);
+            }
         }
     }
 
     private BiFunction<S, Collection<ExpiredKey>, Operation> newBackupExpiryOpSupplier() {
-        return (recordStore, expiredKeys) -> newBackupExpiryOp(recordStore, expiredKeys);
+        return this::newBackupExpiryOp;
     }
 
     public final void sendQueuedExpiredKeys(T container) {
@@ -319,7 +324,8 @@ public abstract class ClearExpiredRecordsTask<T, S> implements Runnable {
 
     protected abstract ProcessablePartitionType getProcessablePartitionType();
 
-    protected abstract Operation newPrimaryExpiryOp(int cleanupPercentage, T container);
+    @Nullable
+    protected abstract Operation newPrimaryExpiryOp(T container, int cleanupPercentage);
 
     protected abstract Operation newBackupExpiryOp(S store, Collection<ExpiredKey> expiredKeys);
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,11 @@
 
 package com.hazelcast.internal.partition.impl;
 
+import com.hazelcast.internal.partition.IPartition;
 import com.hazelcast.internal.partition.InternalPartition;
 import com.hazelcast.internal.partition.PartitionReplica;
 import com.hazelcast.internal.services.ServiceNamespace;
-import com.hazelcast.spi.impl.NodeEngineImpl;
+import com.hazelcast.spi.impl.NodeEngine;
 
 import java.util.Collection;
 import java.util.function.BiConsumer;
@@ -33,12 +34,12 @@ final class CheckPartitionReplicaVersionTask extends AbstractPartitionPrimaryRep
 
     private final BiConsumer<Object, Throwable> callback;
 
-    CheckPartitionReplicaVersionTask(NodeEngineImpl nodeEngine, int partitionId, int replicaIndex,
+    CheckPartitionReplicaVersionTask(NodeEngine nodeEngine, int partitionId, int replicaIndex,
                                      BiConsumer<Object, Throwable> callback) {
         super(nodeEngine, partitionId);
-        if (replicaIndex < 1 || replicaIndex > InternalPartition.MAX_BACKUP_COUNT) {
+        if (replicaIndex < 1 || replicaIndex > IPartition.MAX_BACKUP_COUNT) {
             throw new IllegalArgumentException("Replica index must be in range [1-"
-                    + InternalPartition.MAX_BACKUP_COUNT + "]");
+                    + IPartition.MAX_BACKUP_COUNT + "]");
         }
         this.replicaIndex = replicaIndex;
         checkNotNull(callback);

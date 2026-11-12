@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,11 +21,12 @@ import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.spi.impl.operationservice.Operation;
+import com.hazelcast.spi.impl.operationservice.SelfResponseOperation;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
-class NewIdBatchOperation extends Operation implements IdentifiedDataSerializable {
+class NewIdBatchOperation extends Operation implements IdentifiedDataSerializable, SelfResponseOperation {
 
     private String flakeIdGenName;
     private int batchSize;
@@ -47,12 +48,8 @@ class NewIdBatchOperation extends Operation implements IdentifiedDataSerializabl
         if (result.waitTimeMillis == 0) {
             sendResponse(result.idBatch.base());
         } else {
-            getNodeEngine().getExecutionService().schedule(new Runnable() {
-                @Override
-                public void run() {
-                    sendResponse(result.idBatch.base());
-                }
-            }, result.waitTimeMillis, TimeUnit.MILLISECONDS);
+            getNodeEngine().getExecutionService().schedule(() -> sendResponse(result.idBatch.base()),
+                    result.waitTimeMillis, TimeUnit.MILLISECONDS);
         }
     }
 

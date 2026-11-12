@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,8 +37,7 @@ import static java.util.Collections.unmodifiableCollection;
  * A special, immutable {@link MemberImpl} map type,
  * that allows querying members using address or UUID.
  */
-final class MemberMap {
-
+public final class MemberMap {
     static final int SINGLETON_MEMBER_LIST_VERSION = 1;
 
     private final int version;
@@ -79,7 +78,6 @@ final class MemberMap {
     /**
      * Creates a new {@code MemberMap} including given members.
      *
-     * @param members members
      * @return a new {@code MemberMap}
      */
     static MemberMap createNew(MemberImpl... members) {
@@ -89,8 +87,6 @@ final class MemberMap {
     /**
      * Creates a new {@code MemberMap} including given members.
      *
-     * @param version version
-     * @param members members
      * @return a new {@code MemberMap}
      */
     static MemberMap createNew(int version, MemberImpl... members) {
@@ -194,7 +190,7 @@ final class MemberMap {
         return uuidToMemberMap.containsKey(uuid);
     }
 
-    Set<MemberImpl> getMembers() {
+    public Set<MemberImpl> getMembers() {
         return members;
     }
 
@@ -206,7 +202,7 @@ final class MemberMap {
         return members.size();
     }
 
-    int getVersion() {
+    public int getVersion() {
         return version;
     }
 
@@ -261,7 +257,7 @@ final class MemberMap {
         return result;
     }
 
-    boolean isBeforeThan(Address address1, Address address2) {
+    boolean isBefore(Address address1, Address address2) {
         if (address1.equals(address2)) {
             return false;
         }

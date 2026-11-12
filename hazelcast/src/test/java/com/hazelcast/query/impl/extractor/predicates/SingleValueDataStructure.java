@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,8 @@
 
 package com.hazelcast.query.impl.extractor.predicates;
 
-import com.hazelcast.test.ObjectTestUtils;
-
 import java.io.Serializable;
+import java.util.Objects;
 
 /**
  * Data structure used in the tests of extraction in single-value attributes (not in collections).
@@ -34,16 +33,15 @@ public final class SingleValueDataStructure {
 
         @Override
         public boolean equals(Object o) {
-            if (!(o instanceof Person)) {
+            if (!(o instanceof Person other)) {
                 return false;
             }
-            Person other = (Person) o;
-            return ObjectTestUtils.equals(this.brain, other.brain);
+            return Objects.equals(this.brain, other.brain);
         }
 
         @Override
         public int hashCode() {
-            return ObjectTestUtils.hashCode(brain);
+            return Objects.hashCode(brain);
         }
     }
 
@@ -54,16 +52,15 @@ public final class SingleValueDataStructure {
 
         @Override
         public boolean equals(Object o) {
-            if (!(o instanceof Brain)) {
+            if (!(o instanceof Brain other)) {
                 return false;
             }
-            Brain other = (Brain) o;
-            return ObjectTestUtils.equals(this.iq, other.iq);
+            return Objects.equals(this.iq, other.iq);
         }
 
         @Override
         public int hashCode() {
-            return ObjectTestUtils.hashCode(iq);
+            return Objects.hashCode(iq);
         }
     }
 

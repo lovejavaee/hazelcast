@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,21 +20,36 @@ import com.hazelcast.cluster.Address;
 import com.hazelcast.core.IndeterminateOperationStateException;
 import com.hazelcast.core.OperationTimeoutException;
 import com.hazelcast.internal.cluster.MemberInfo;
+import com.hazelcast.internal.cluster.impl.MembersView;
+import com.hazelcast.internal.metrics.DynamicMetricsProvider;
+import com.hazelcast.internal.metrics.MetricDescriptor;
+import com.hazelcast.internal.metrics.MetricsCollectionContext;
+import com.hazelcast.internal.metrics.ProbeLevel;
+import com.hazelcast.internal.metrics.ProbeUnit;
+import com.hazelcast.internal.metrics.jmx.JmxPublisher;
+import com.hazelcast.jet.JetMemberSelector;
 import com.hazelcast.jet.config.DeltaJobConfig;
 import com.hazelcast.jet.config.JobConfig;
+import com.hazelcast.jet.core.DAG;
 import com.hazelcast.jet.core.JobStatus;
+import com.hazelcast.jet.core.metrics.MetricTags;
 import com.hazelcast.jet.impl.execution.init.ExecutionPlan;
+import com.hazelcast.jet.impl.metrics.JobMetricsPublisher;
 import com.hazelcast.jet.impl.operation.StartExecutionOperation;
+import com.hazelcast.jet.impl.util.Util;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
 import com.hazelcast.spi.impl.NodeEngineImpl;
+import com.hazelcast.spi.impl.eventservice.impl.Registration;
 import com.hazelcast.spi.impl.operationservice.Operation;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -46,24 +61,27 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
+import static com.hazelcast.internal.util.ExceptionUtil.withTryCatch;
 import static com.hazelcast.jet.Util.entry;
 import static com.hazelcast.jet.Util.idToString;
 import static com.hazelcast.jet.core.JobStatus.NOT_RUNNING;
+import static com.hazelcast.jet.core.JobStatus.RUNNING;
 import static com.hazelcast.jet.core.JobStatus.SUSPENDED;
 import static com.hazelcast.jet.core.JobStatus.SUSPENDED_EXPORTING_SNAPSHOT;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.peel;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.withTryCatch;
+import static com.hazelcast.jet.core.metrics.MetricNames.JOB_STATUS;
+import static com.hazelcast.jet.impl.AbstractJobProxy.cannotAddStatusListener;
+import static com.hazelcast.jet.impl.util.JetExceptionUtil.peel;
 import static com.hazelcast.jet.impl.util.Util.jobNameAndExecutionId;
 import static java.util.stream.Collectors.toConcurrentMap;
 
 /**
  * Data pertaining to single job on master member. There's one instance per job,
  * shared between multiple executions. It has 2 subcomponents:<ul>
- *      <li>{@link MasterJobContext}
- *      <li>{@link MasterSnapshotContext}
+ * <li>{@link MasterJobContext}
+ * <li>{@link MasterSnapshotContext}
  * </ul>
  */
-public class MasterContext {
+public class MasterContext implements DynamicMetricsProvider {
 
     private static final Object NULL_OBJECT = new Object() {
         @Override
@@ -72,18 +90,19 @@ public class MasterContext {
         }
     };
 
+    protected final ILogger logger;
+
     private final ReentrantLock lock = new ReentrantLock();
 
     private final NodeEngineImpl nodeEngine;
     private final JobEventService jobEventService;
     private final JobCoordinationService coordinationService;
-    private final ILogger logger;
     private final long jobId;
     private final String jobName;
     private final JobRepository jobRepository;
     private final JobRecord jobRecord;
     private final JobExecutionRecord jobExecutionRecord;
-    private volatile JobStatus jobStatus = NOT_RUNNING;
+    private volatile JobStatus jobStatus;
     private volatile long executionId;
     private volatile Map<MemberInfo, ExecutionPlan> executionPlanMap;
 
@@ -91,7 +110,7 @@ public class MasterContext {
      * Responses to {@link StartExecutionOperation}, populated as they arrive.
      * We do not store the whole response, only the error or success status.
      */
-    private volatile ConcurrentMap<Address, CompletableFuture<Void>> startOperationResponses;
+    private volatile ConcurrentMap<Address, CompletableFuture<Object>> startOperationResponses;
 
     private final MasterJobContext jobContext;
     private final MasterSnapshotContext snapshotContext;
@@ -107,9 +126,8 @@ public class MasterContext {
         this.jobExecutionRecord = jobExecutionRecord;
         this.jobId = jobRecord.getJobId();
         this.jobName = jobRecord.getJobNameOrId();
-        if (jobExecutionRecord.isSuspended()) {
-            jobStatus = SUSPENDED;
-        }
+
+        jobStatus = jobExecutionRecord.isSuspended() ? SUSPENDED : NOT_RUNNING;
 
         jobContext = new MasterJobContext(this, nodeEngine.getLogger(MasterJobContext.class));
         snapshotContext = createMasterSnapshotContext(nodeEngine);
@@ -155,6 +173,8 @@ public class MasterContext {
     void setJobStatus(JobStatus jobStatus, String description, boolean userRequested) {
         JobStatus oldStatus = this.jobStatus;
         this.jobStatus = jobStatus;
+        // Update metrics before notifying listeners, so that they can see up-to-date metrics.
+        jobContext.setJobMetrics(jobStatus, userRequested);
         jobEventService.publishEvent(jobId, oldStatus, jobStatus, description, userRequested);
         if (jobStatus.isTerminal()) {
             jobEventService.removeAllEventListeners(jobId);
@@ -165,6 +185,15 @@ public class MasterContext {
         setJobStatus(jobStatus, null, false);
     }
 
+    void setJobStatusUnderLock(JobStatus jobStatus) {
+        lock();
+        try {
+            setJobStatus(jobStatus, null, false);
+        } finally {
+            unlock();
+        }
+    }
+
     public JobConfig jobConfig() {
         return jobRecord.getConfig();
     }
@@ -172,15 +201,64 @@ public class MasterContext {
     public JobConfig updateJobConfig(DeltaJobConfig deltaConfig) {
         lock();
         try {
+            if (!Util.isJobSuspendable(jobConfig())) {
+                throw new IllegalStateException("The job " + jobName
+                        + " is not suspendable, can't perform `updateJobConfig()`");
+            }
+
             if (jobStatus != SUSPENDED && jobStatus != SUSPENDED_EXPORTING_SNAPSHOT) {
                 throw new IllegalStateException("Job not suspended, but " + jobStatus);
             }
+            boolean wasSplitBrainProtectionEnabled = jobConfig().isSplitBrainProtectionEnabled();
             deltaConfig.applyTo(jobConfig());
             jobRepository.updateJobRecord(jobRecord);
+            if (jobConfig().isSplitBrainProtectionEnabled() != wasSplitBrainProtectionEnabled) {
+                updateQuorumSize(jobConfig().isSplitBrainProtectionEnabled() ? coordinationService.getQuorumSize() : 0);
+            }
             return jobConfig();
         } finally {
             unlock();
         }
+    }
+
+    public UUID addStatusListener(Registration registration) {
+        lock();
+        try {
+            if (jobStatus.isTerminal()) {
+                throw cannotAddStatusListener(jobStatus);
+            }
+            return jobEventService.handleAllRegistrations(jobId, registration).getId();
+        } finally {
+            unlock();
+        }
+    }
+
+    boolean metricsEnabled() {
+        return jobConfig().isMetricsEnabled() && nodeEngine.getConfig().getMetricsConfig().isEnabled();
+    }
+
+    /**
+     * Dynamic metrics are only provided for {@link JmxPublisher}. They are ignored by
+     * {@link JobMetricsPublisher}, which checks execution ID, and so not persistent.
+     * Persistent metrics are generated on demand by {@link MasterJobContext#setJobMetrics}
+     * and {@link MasterJobContext#setFinalExecutionMetrics}.
+     *
+     * @see MasterJobContext#persistentMetrics()
+     */
+    @Override
+    public void provideDynamicMetrics(MetricDescriptor descriptor, MetricsCollectionContext context) {
+        if (!metricsEnabled()) {
+            return;
+        }
+        descriptor.withTag(MetricTags.JOB, idToString(jobId))
+                .withTag(MetricTags.JOB_NAME, jobName);
+
+        context.collect(descriptor, JOB_STATUS, ProbeLevel.INFO, ProbeUnit.ENUM, jobStatus.getId());
+
+        // We do not provide IS_USER_CANCELLED metric here. When the job is cancelled,
+        // MasterContext is put into FAILED state, and shortly after, it is removed by
+        // JobCoordinationService, so the probability of observing this is very low.
+        // The metric is included in the final metrics stored after job completion.
     }
 
     public JobRecord jobRecord() {
@@ -191,7 +269,7 @@ public class MasterContext {
         return jobContext;
     }
 
-    public MasterSnapshotContext snapshotContext() {
+    MasterSnapshotContext snapshotContext() {
         return snapshotContext;
     }
 
@@ -227,6 +305,20 @@ public class MasterContext {
         return executionPlanMap;
     }
 
+    ExecutionPlan getAnyExecutionPlan() {
+        return executionPlanMap.values().stream().findAny().orElseThrow();
+    }
+
+    MembersView membersView() {
+        return coordinationService.membersView(memberSelector(null));
+    }
+
+    JetMemberSelector memberSelector(@Nullable Supplier<DAG> dag) {
+        return null;
+    }
+
+    void setMemberSelector(JetMemberSelector memberSelector) { }
+
     boolean hasTimeout() {
         return jobConfig().getTimeoutMillis() > 0;
     }
@@ -238,7 +330,7 @@ public class MasterContext {
         return timeout - elapsed;
     }
 
-    ConcurrentMap<Address, CompletableFuture<Void>> startOperationResponses() {
+    ConcurrentMap<Address, CompletableFuture<Object>> startOperationResponses() {
         return startOperationResponses;
     }
 
@@ -251,23 +343,60 @@ public class MasterContext {
         executionPlanMap = executionPlans;
     }
 
+    /**
+     * Checks if the job is running on all members and maybe restart it.
+     * <p>
+     * Returns {@code false}, if this method should be scheduled to
+     * be called later. That is, when the job is running, but we've
+     * failed to request the restart.
+     * <p>
+     * Returns {@code true}, if the job is not running, has
+     * auto-scaling disabled, is already running on all members or if
+     * we've managed to request a restart.
+     */
+    boolean maybeScaleUp(int dataMembersWithPartitionsCount) {
+        coordinationService().assertOnCoordinatorThread();
+        if (!jobConfig().isAutoScaling()) {
+            return true;
+        }
+
+        // We only compare the number of our participating members and current members.
+        // If there is any member in our participants that is not among current data members,
+        // this job will be restarted anyway. If it's the other way, then the sizes won't match.
+        if (executionPlanMap() == null || executionPlanMap().size() == dataMembersWithPartitionsCount) {
+            logger.fine("Not scaling up %s: not running or already running on all members", jobIdString());
+            return true;
+        }
+
+        if (jobStatus() == RUNNING
+                && jobContext().requestTermination(TerminationMode.RESTART_GRACEFUL, false, false).f1() == null) {
+            logger.info("Requested restart of " + jobIdString() + " to make use of added member(s). "
+                    + "Job was running on " + executionPlanMap().size() + " members, cluster now has "
+                    + dataMembersWithPartitionsCount + " data members with assigned partitions");
+            return true;
+        }
+
+        // if status was not RUNNING or requestTermination didn't succeed, we'll try again later.
+        return false;
+    }
+
     void updateQuorumSize(int newQuorumSize) {
         coordinationService().assertOnCoordinatorThread();
         // This method can be called in parallel if multiple members are added. We don't synchronize here,
         // but the worst that can happen is that we write the JobRecord out unnecessarily.
-        if (jobExecutionRecord.getQuorumSize() < newQuorumSize) {
-            jobExecutionRecord.setLargerQuorumSize(newQuorumSize);
-            writeJobExecutionRecord(false);
-            logger.info("Current quorum size: " + jobExecutionRecord.getQuorumSize() + " of job "
-                    + idToString(jobRecord.getJobId()) + " is updated to: " + newQuorumSize);
-        }
+        int quorumSize = newQuorumSize > 0
+                ? jobExecutionRecord.setLargerQuorumSize(newQuorumSize)
+                : jobExecutionRecord.resetQuorumSize();
+        writeJobExecutionRecord(false);
+        logger.info("Quorum size of job " + jobIdString() + " is updated from " + quorumSize
+                + " to " + (newQuorumSize > 0 ? Math.max(quorumSize, newQuorumSize) : 0));
     }
 
     void writeJobExecutionRecord(boolean canCreate) {
         coordinationService.assertOnCoordinatorThread();
         try {
-            coordinationService.jobRepository().writeJobExecutionRecord(jobRecord.getJobId(), jobExecutionRecord,
-                    canCreate);
+            coordinationService.jobRepository().writeJobExecutionRecord(
+                    jobRecord.getJobId(), jobExecutionRecord, canCreate);
         } catch (RuntimeException e) {
             // We don't bubble up the exceptions, if we can't write the record out, the universe is
             // probably crumbling apart anyway. And we don't depend on it, we only write out for
@@ -288,7 +417,7 @@ public class MasterContext {
         // However, there is only one instance of MasterContext for a given job in the cluster
         // so there is no risk of lost updates.
         while (!coordinationService.jobRepository().writeJobExecutionRecord(
-                    jobRecord.getJobId(), jobExecutionRecord, canCreate)) {
+                jobRecord.getJobId(), jobExecutionRecord, canCreate)) {
             logger.info("Repeating JobExecutionRecord update to be safe");
         }
     }
@@ -310,12 +439,36 @@ public class MasterContext {
      */
     void invokeOnParticipants(
             Function<ExecutionPlan, Operation> operationCtor,
-            @Nullable Consumer<Collection<Map.Entry<MemberInfo, Object>>> completionCallback,
+            @Nullable Consumer<Collection<Entry<MemberInfo, Object>>> completionCallback,
+            @Nullable BiConsumer<Address, Object> individualCallback,
+            boolean retryOnTimeoutException
+    ) {
+        invokeOnParticipants(executionPlanMap, operationCtor, completionCallback, individualCallback, retryOnTimeoutException);
+    }
+
+    void invokeOnParticipants(
+            List<Address> participants,
+            Function<ExecutionPlan, Operation> operationCtor,
+            @Nullable Consumer<Collection<Entry<MemberInfo, Object>>> completionCallback,
+            @Nullable BiConsumer<Address, Object> individualCallback,
+            boolean retryOnTimeoutException
+    ) {
+        Map<MemberInfo, ExecutionPlan> entitiesInvokeOn = executionPlanMap.entrySet().stream()
+                .filter(member -> participants.contains(member.getKey().getAddress()))
+                .collect(Collectors.toMap(Entry::getKey, Entry::getValue));
+        invokeOnParticipants(entitiesInvokeOn, operationCtor, completionCallback, individualCallback, retryOnTimeoutException);
+    }
+
+    private void invokeOnParticipants(
+            Map<MemberInfo, ExecutionPlan> executionPlanMap,
+            Function<ExecutionPlan, Operation> operationCtor,
+            @Nullable Consumer<Collection<Entry<MemberInfo, Object>>> completionCallback,
             @Nullable BiConsumer<Address, Object> individualCallback,
             boolean retryOnTimeoutException
     ) {
         ConcurrentMap<MemberInfo, Object> responses = new ConcurrentHashMap<>();
         AtomicInteger remainingCount = new AtomicInteger(executionPlanMap.size());
+
         for (Entry<MemberInfo, ExecutionPlan> entry : executionPlanMap.entrySet()) {
             MemberInfo memberInfo = entry.getKey();
             Supplier<Operation> opSupplier = () -> operationCtor.apply(entry.getValue());
@@ -327,7 +480,7 @@ public class MasterContext {
     private void invokeOnParticipant(
             MemberInfo memberInfo,
             Supplier<Operation> operationSupplier,
-            @Nullable Consumer<Collection<Map.Entry<MemberInfo, Object>>> completionCallback,
+            @Nullable Consumer<Collection<Entry<MemberInfo, Object>>> completionCallback,
             @Nullable BiConsumer<Address, Object> individualCallback,
             boolean retryOnTimeoutException,
             ConcurrentMap<MemberInfo, Object> collectedResponses,

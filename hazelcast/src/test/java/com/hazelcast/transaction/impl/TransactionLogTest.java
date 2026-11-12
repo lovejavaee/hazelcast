@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,8 +29,6 @@ import org.junit.runner.RunWith;
 
 import java.net.InetAddress;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.contains;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
@@ -38,6 +36,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
@@ -64,7 +63,7 @@ public class TransactionLogTest {
         log.add(record);
 
         assertEquals(1, log.size());
-        assertThat(log.getRecords(), contains(record));
+        assertThat(log.getRecords()).containsExactlyInAnyOrder(record);
     }
 
     @Test
@@ -105,7 +104,7 @@ public class TransactionLogTest {
     }
 
     @Test
-    public void prepare_partitionSpecificRecord() throws Exception {
+    public void prepare_partitionSpecificRecord() {
         OperationService operationService = mock(OperationService.class);
         NodeEngine nodeEngine = mock(NodeEngine.class);
         when(nodeEngine.getOperationService()).thenReturn(operationService);
@@ -125,7 +124,7 @@ public class TransactionLogTest {
     }
 
     @Test
-    public void rollback_partitionSpecificRecord() throws Exception {
+    public void rollback_partitionSpecificRecord() {
         OperationService operationService = mock(OperationService.class);
         NodeEngine nodeEngine = mock(NodeEngine.class);
         when(nodeEngine.getOperationService()).thenReturn(operationService);
@@ -145,7 +144,7 @@ public class TransactionLogTest {
     }
 
     @Test
-    public void commit_partitionSpecificRecord() throws Exception {
+    public void commit_partitionSpecificRecord() {
         OperationService operationService = mock(OperationService.class);
         NodeEngine nodeEngine = mock(NodeEngine.class);
         when(nodeEngine.getOperationService()).thenReturn(operationService);
@@ -236,7 +235,7 @@ public class TransactionLogTest {
         }
 
         @Override
-        public void run() throws Exception {
+        public void run() {
         }
 
         @Override
@@ -247,7 +246,7 @@ public class TransactionLogTest {
 
     private static class DummyTargetOperation extends Operation {
         @Override
-        public void run() throws Exception {
+        public void run() {
         }
 
         @Override

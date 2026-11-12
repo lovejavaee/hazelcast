@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,7 +51,7 @@ public final class ColumnExpression<T> implements Expression<T> {
         // like QueryDataType.VARCHAR_CHARACTER, are canonicalized to values of
         // some other canonical type, like QueryDataType.VARCHAR. That kind of
         // changes the observed type of a column to a canonical one.
-        if (type.getTypeFamily().equals(QueryDataTypeFamily.OBJECT)) {
+        if (type.getTypeFamily() == QueryDataTypeFamily.OBJECT) {
             return new ColumnExpression<>(index, type);
         } else {
             Class<?> canonicalClass = type.getConverter().getNormalizedValueClass();
@@ -66,15 +66,13 @@ public final class ColumnExpression<T> implements Expression<T> {
         // Don't use lazy deserialization for compact and portable, we need to return a deserialized generic record
         // if the column expression is the top expression.
         Object res = row.get(index, false);
-        if (res instanceof LazyTarget) {
-            assert type.equals(QueryDataType.OBJECT);
-            LazyTarget lazyTarget = (LazyTarget) res;
+        if (res instanceof LazyTarget lazyTarget) {
+            assert type.getTypeFamily() == QueryDataTypeFamily.OBJECT;
             res = lazyTarget.getDeserialized() != null ? lazyTarget.getDeserialized() : lazyTarget.getSerialized();
         }
         return res;
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public T eval(Row row, ExpressionEvalContext context) {
         // Lazy deserialization is disabled by default, and it has to be requested explicitly.
@@ -85,9 +83,9 @@ public final class ColumnExpression<T> implements Expression<T> {
     public T eval(Row row, ExpressionEvalContext context, boolean useLazyDeserialization) {
         Object res = row.get(index, useLazyDeserialization);
 
-        if (res instanceof LazyTarget) {
-            assert type.equals(QueryDataType.OBJECT);
-            res = ((LazyTarget) res).deserialize(context.getSerializationService());
+        if (res instanceof LazyTarget target) {
+            assert type.getTypeFamily() == QueryDataTypeFamily.OBJECT;
+            res = target.deserialize(context.getSerializationService());
         }
 
         return (T) res;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
+import java.io.Serial;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
@@ -47,7 +48,7 @@ import static org.junit.Assert.assertNull;
 public class MapLiteMemberTest
         extends HazelcastTestSupport {
 
-    private Config liteConfig = new Config().setLiteMember(true);
+    private final Config liteConfig = new Config().setLiteMember(true);
 
     private TestHazelcastInstanceFactory factory;
 
@@ -87,7 +88,7 @@ public class MapLiteMemberTest
     public void testMapLocalKeysOnLiteMember() {
         map.put(1, 1);
 
-        final Set resultSet = map.localKeySet();
+        final Set<Integer> resultSet = map.localKeySet();
         assertNotNull(resultSet);
         assertEquals(0, resultSet.size());
     }
@@ -115,7 +116,7 @@ public class MapLiteMemberTest
     public void testMapEntryProcessorOnLiteMember() {
         map.put(1, 2);
 
-        final Map resultMap = this.map.executeOnEntries(new DummyEntryProcessor());
+        final Map<Integer, String> resultMap = this.map.executeOnEntries(new DummyEntryProcessor());
         assertEquals("dummy", map.get(1));
         assertEquals(1, resultMap.size());
         assertEquals("done", resultMap.get(1));
@@ -166,16 +167,9 @@ public class MapLiteMemberTest
         }
     }
 
-    private static class DummyMapInterceptor implements MapInterceptor {
-
-        @Override
-        public Object interceptGet(Object value) {
-            return null;
-        }
-
-        @Override
-        public void afterGet(Object value) {
-        }
+    private static class DummyMapInterceptor extends MapInterceptorAdaptor {
+        @Serial
+        private static final long serialVersionUID = 1L;
 
         @Override
         public Object interceptPut(Object oldValue, Object newValue) {
@@ -184,19 +178,6 @@ public class MapLiteMemberTest
             } else {
                 throw new RuntimeException("no put");
             }
-        }
-
-        @Override
-        public void afterPut(Object value) {
-        }
-
-        @Override
-        public Object interceptRemove(Object removedValue) {
-            return null;
-        }
-
-        @Override
-        public void afterRemove(Object value) {
         }
     }
 

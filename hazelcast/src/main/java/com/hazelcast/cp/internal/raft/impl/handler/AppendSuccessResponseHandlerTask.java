@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ import static com.hazelcast.cp.internal.raft.impl.RaftRole.LEADER;
 /**
  * Handles {@link AppendSuccessResponse} sent by
  * {@link AppendRequestHandlerTask} after an append-entries request or
- * {@link InstallSnapshotHandlerTask} after an install snapshot request.
+ * {@link InstallSnapshotRequestHandlerTask} after an install snapshot request.
  * <p>
  * Advances {@link RaftState#commitIndex()} according to {@code matchIndex}es
  * of followers.
@@ -45,6 +45,7 @@ import static com.hazelcast.cp.internal.raft.impl.RaftRole.LEADER;
  * @see AppendFailureResponse
  */
 public class AppendSuccessResponseHandlerTask extends AbstractResponseHandlerTask {
+
     private final AppendSuccessResponse resp;
 
     public AppendSuccessResponseHandlerTask(RaftNodeImpl raftNode, AppendSuccessResponse response) {
@@ -64,7 +65,7 @@ public class AppendSuccessResponseHandlerTask extends AbstractResponseHandlerTas
         assert resp.term() <= state.term() : "Invalid " + resp + " for current term: " + state.term();
 
         if (logger.isFineEnabled()) {
-            logger.fine("Received " + resp);
+            logger.fine("Received %s", resp);
         }
 
         if (updateFollowerIndices(state)) {
@@ -88,17 +89,18 @@ public class AppendSuccessResponseHandlerTask extends AbstractResponseHandlerTas
 
         if (queryState.tryAck(resp.queryRound(), follower)) {
             if (logger.isFineEnabled()) {
-                logger.fine("Ack from " + follower + " for query round: " + resp.queryRound());
+                logger.fine("Ack from %s for query round: %s", follower, resp.queryRound());
             }
         }
 
         long matchIndex = followerState.matchIndex();
         long followerLastLogIndex = resp.lastLogIndex();
 
-        if (followerLastLogIndex > matchIndex) {
-            // Received a response for the last append request. Resetting the flag...
-            followerState.appendRequestAckReceived();
+        // Received a response for the append request.
+        // Check if the backoff state should be reset.
+        followerState.appendRequestAckReceived(resp.flowControlSequenceNumber());
 
+        if (followerLastLogIndex > matchIndex) {
             long newNextIndex = followerLastLogIndex + 1;
             followerState.matchIndex(followerLastLogIndex);
             followerState.nextIndex(newNextIndex);
@@ -109,9 +111,6 @@ public class AppendSuccessResponseHandlerTask extends AbstractResponseHandlerTas
             }
 
             return true;
-        } else if (followerLastLogIndex == matchIndex) {
-            // Received a response for the last append request. Resetting the flag...
-            followerState.appendRequestAckReceived();
         } else if (logger.isFineEnabled()) {
             logger.fine("Will not update match index for follower: " + follower + ". follower last log index: "
                     + followerLastLogIndex + ", match index: " + matchIndex);

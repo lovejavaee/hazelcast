@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,16 @@
 
 package com.hazelcast.instance;
 
-import com.hazelcast.core.HazelcastException;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
+import com.hazelcast.version.MemberVersion;
 
-import java.lang.reflect.Field;
+import javax.annotation.Nullable;
 
 import static com.hazelcast.internal.util.EmptyStatement.ignore;
+import static com.hazelcast.jet.impl.util.ReflectionUtils.readStaticField;
+import static com.hazelcast.jet.impl.util.ReflectionUtils.readStaticFieldOrNull;
+import static java.util.Objects.requireNonNull;
 
 /**
  * Provides information about current Hazelcast build.
@@ -31,6 +34,8 @@ public final class BuildInfoProvider {
 
     public static final String HAZELCAST_INTERNAL_OVERRIDE_VERSION = "hazelcast.internal.override.version";
     public static final String HAZELCAST_INTERNAL_OVERRIDE_ENTERPRISE = "hazelcast.internal.override.enterprise";
+    public static final String HAZELCAST_INTERNAL_OVERRIDE_LAST_LTS = "hazelcast.internal.override.lastLtsVersion";
+    public static final String HAZELCAST_INTERNAL_OVERRIDE_PREV_VERSION = "hazelcast.internal.override.previousVersion";
     private static final String HAZELCAST_INTERNAL_OVERRIDE_BUILD = "hazelcast.build";
 
     private static final ILogger LOGGER;
@@ -68,14 +73,14 @@ public final class BuildInfoProvider {
     private static BuildInfo getBuildInfoInternalVersion(Overrides overrides) {
         // If you have a compilation error at GeneratedBuildProperties then run 'mvn clean install'
         // the GeneratedBuildProperties class is generated at a compile-time
-        BuildInfo buildInfo = readBuildPropertiesClass(GeneratedBuildProperties.class, null, overrides);
+        BuildInfo buildInfo = readBuildPropertiesClass(GeneratedBuildProperties.class, null, overrides, false);
         try {
             Class<?> enterpriseClass = BuildInfoProvider.class.getClassLoader()
                     .loadClass("com.hazelcast.instance.GeneratedEnterpriseBuildProperties");
             if (enterpriseClass.getClassLoader() == BuildInfoProvider.class.getClassLoader()) {
                 //only read the enterprise properties if there were loaded by the same classloader
                 //as BuildInfoProvider and not e.g. a parent classloader.
-                buildInfo = readBuildPropertiesClass(enterpriseClass, buildInfo, overrides);
+                buildInfo = readBuildPropertiesClass(enterpriseClass, buildInfo, overrides, true);
             }
         } catch (ClassNotFoundException e) {
             ignore(e);
@@ -84,38 +89,29 @@ public final class BuildInfoProvider {
         return buildInfo;
     }
 
-    private static BuildInfo readBuildPropertiesClass(Class<?> clazz, BuildInfo upstreamBuildInfo, Overrides overrides) {
-        String version = readStaticStringField(clazz, "VERSION");
-        String build = readStaticStringField(clazz, "BUILD");
-        String revision = readStaticStringField(clazz, "REVISION");
-        String distribution = readStaticStringField(clazz, "DISTRIBUTION");
-        String commitId = readStaticStringField(clazz, "COMMIT_ID");
+    private static BuildInfo readBuildPropertiesClass(Class<?> clazz, BuildInfo upstreamBuildInfo, Overrides overrides,
+            boolean enterprise) {
+        String version = readStaticField(clazz, "VERSION");
+        String build = readStaticField(clazz, "BUILD");
+        String revision = readStaticField(clazz, "REVISION");
+        String commitId = readStaticFieldOrNull(clazz, "COMMIT_ID");
 
         revision = checkMissingExpressionValue(revision, "${git.commit.id.abbrev}");
         commitId = checkMissingExpressionValue(commitId, "${git.commit.id}");
+        String lastLtsVersion = readStaticField(clazz, "LAST_LTS_VERSION");
+        String previousVersion = readStaticField(clazz, "PREVIOUS_MINOR_VERSION");
 
         int buildNumber = Integer.parseInt(build);
-        boolean enterprise = !"Hazelcast".equals(distribution);
 
-        String serialVersionString = readStaticStringField(clazz, "SERIALIZATION_VERSION");
+        String serialVersionString = readStaticFieldOrNull(clazz, "SERIALIZATION_VERSION");
+        requireNonNull(serialVersionString, "serialization version must not be null");
         byte serialVersion = Byte.parseByte(serialVersionString);
-        return overrides.apply(version, build, revision, buildNumber, enterprise, serialVersion, commitId, upstreamBuildInfo);
+        return overrides.apply(version, build, revision, buildNumber, enterprise, serialVersion, commitId, upstreamBuildInfo,
+                MemberVersion.of(lastLtsVersion), MemberVersion.of(previousVersion));
     }
 
-    //todo: move elsewhere
-    private static String readStaticStringField(Class<?> clazz, String fieldName) {
-        try {
-            Field field = clazz.getField(fieldName);
-            return (String) field.get(null);
-        } catch (NoSuchFieldException e) {
-            throw new HazelcastException(e);
-        } catch (IllegalAccessException e) {
-            throw new HazelcastException(e);
-        }
-    }
-
-    private static String checkMissingExpressionValue(String value, String expression) {
-        if (!value.isEmpty() && value.equals(expression)) {
+    private static String checkMissingExpressionValue(@Nullable String value, String expression) {
+        if (value != null && !value.isEmpty() && value.equals(expression)) {
             return "";
         } else {
             return value;
@@ -123,20 +119,27 @@ public final class BuildInfoProvider {
     }
 
     private static final class Overrides {
-        private static final Overrides DISABLED = new Overrides(null, -1, null);
+        private static final Overrides DISABLED = new Overrides(null, -1, null, null, null);
 
-        private String version;
-        private int buildNo;
-        private Boolean enterprise;
+        private final String version;
+        private final int buildNo;
+        private final Boolean enterprise;
+        private final MemberVersion lastLtsVersion;
+        private final MemberVersion previousVersion;
 
-        private Overrides(String version, int build, Boolean enterprise) {
+        private Overrides(String version, int build, Boolean enterprise,
+                          MemberVersion lastLtsVersion, MemberVersion previousVersion) {
             this.version = version;
             this.buildNo = build;
             this.enterprise = enterprise;
+            this.lastLtsVersion = lastLtsVersion;
+            this.previousVersion = previousVersion;
         }
 
+        @SuppressWarnings("checkstyle:ParameterNumber")
         private BuildInfo apply(String version, String build, String revision, int buildNumber,
-                                boolean enterprise, byte serialVersion, String commitId, BuildInfo upstreamBuildInfo) {
+                                boolean enterprise, byte serialVersion, String commitId, BuildInfo upstreamBuildInfo,
+                                MemberVersion lastLtsVersion, MemberVersion previousVersion) {
             if (buildNo != -1) {
                 build = String.valueOf(buildNo);
                 buildNumber = buildNo;
@@ -149,8 +152,16 @@ public final class BuildInfoProvider {
                 LOGGER.info("Overriding hazelcast enterprise flag with system property value " + this.enterprise);
                 enterprise = this.enterprise;
             }
+            if (this.lastLtsVersion != null) {
+                LOGGER.info("Overriding hazelcast last LTS version with system property value " + this.lastLtsVersion);
+                lastLtsVersion = this.lastLtsVersion;
+            }
+            if (this.previousVersion != null) {
+                LOGGER.info("Overriding hazelcast previous version with system property value " + this.previousVersion);
+                previousVersion = this.previousVersion;
+            }
             return new BuildInfo(version, build, revision, buildNumber, enterprise, serialVersion,
-                    commitId, upstreamBuildInfo);
+                                 commitId, upstreamBuildInfo, lastLtsVersion, previousVersion);
 
         }
 
@@ -168,8 +179,18 @@ public final class BuildInfoProvider {
             if (enterpriseOverride != null) {
                 enterprise = Boolean.valueOf(enterpriseOverride);
             }
+            String lastLts = System.getProperty(HAZELCAST_INTERNAL_OVERRIDE_LAST_LTS);
+            MemberVersion lastLtsVersion = null;
+            if (lastLts != null) {
+                lastLtsVersion = MemberVersion.of(lastLts);
+            }
+            String prev = System.getProperty(HAZELCAST_INTERNAL_OVERRIDE_PREV_VERSION);
+            MemberVersion prevVersion = null;
+            if (prev != null) {
+                prevVersion = MemberVersion.of(prev);
+            }
 
-            return new Overrides(version, build, enterprise);
+            return new Overrides(version, build, enterprise, lastLtsVersion, prevVersion);
         }
     }
 

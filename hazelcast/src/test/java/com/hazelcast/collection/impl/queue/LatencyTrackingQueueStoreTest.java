@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +19,9 @@ package com.hazelcast.collection.impl.queue;
 import com.hazelcast.collection.QueueStore;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.internal.diagnostics.StoreLatencyPlugin;
+import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
-import com.hazelcast.test.TestCollectionUtils;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.Before;
@@ -55,9 +55,10 @@ public class LatencyTrackingQueueStoreTest extends HazelcastTestSupport {
     @Before
     public void setup() {
         HazelcastInstance hz = createHazelcastInstance();
-        plugin = new StoreLatencyPlugin(getNodeEngineImpl(hz));
+        NodeEngineImpl nodeEngine = getNodeEngineImpl(hz);
+        plugin = new StoreLatencyPlugin(nodeEngine.getLogger(StoreLatencyPlugin.class), nodeEngine.getProperties());
         delegate = mock(QueueStore.class);
-        queueStore = new LatencyTrackingQueueStore<String>(delegate, plugin, NAME);
+        queueStore = new LatencyTrackingQueueStore<>(delegate, plugin, NAME);
     }
 
     @Test
@@ -76,7 +77,7 @@ public class LatencyTrackingQueueStoreTest extends HazelcastTestSupport {
     @Test
     public void loadAll() {
         Collection<Long> keys = Arrays.asList(1L, 2L);
-        Map<Long, String> values = new HashMap<Long, String>();
+        Map<Long, String> values = new HashMap<>();
         values.put(1L, "value1");
         values.put(2L, "value2");
 
@@ -90,7 +91,7 @@ public class LatencyTrackingQueueStoreTest extends HazelcastTestSupport {
 
     @Test
     public void loadAllKeys() {
-        Set<Long> keys = TestCollectionUtils.setOf(1L, 2L);
+        Set<Long> keys = Set.of(1L, 2L);
 
         when(delegate.loadAllKeys()).thenReturn(keys);
 
@@ -133,7 +134,7 @@ public class LatencyTrackingQueueStoreTest extends HazelcastTestSupport {
 
     @Test
     public void storeAll() {
-        Map<Long, String> values = new HashMap<Long, String>();
+        Map<Long, String> values = new HashMap<>();
         values.put(1L, "value1");
         values.put(2L, "value2");
 

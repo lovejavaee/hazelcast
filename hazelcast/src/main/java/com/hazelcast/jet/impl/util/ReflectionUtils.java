@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,28 +16,38 @@
 
 package com.hazelcast.jet.impl.util;
 
+import com.hazelcast.core.HazelcastException;
 import com.hazelcast.internal.nio.ClassLoaderUtil;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import com.hazelcast.jet.JetException;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ClassInfo;
 import io.github.classgraph.ScanResult;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.net.URL;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static com.hazelcast.internal.util.ExceptionUtil.sneakyThrow;
 import static java.lang.Character.toUpperCase;
 import static java.util.Arrays.stream;
+import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
 import static java.util.stream.Stream.concat;
@@ -51,7 +61,7 @@ public final class ReflectionUtils {
      * Load a class using the current thread's context class loader as a
      * classLoaderHint. Exceptions are sneakily thrown.
      */
-    public static Class<?> loadClass(String name) {
+    public static <T> Class<T> loadClass(String name) {
         return loadClass(Thread.currentThread().getContextClassLoader(), name);
     }
 
@@ -59,23 +69,41 @@ public final class ReflectionUtils {
      * See {@link ClassLoaderUtil#loadClass(ClassLoader, String)}. Exceptions
      * are sneakily thrown.
      */
-    public static Class<?> loadClass(ClassLoader classLoaderHint, String name) {
+    public static <T> Class<T> loadClass(ClassLoader classLoaderHint, String name) {
         try {
             return ClassLoaderUtil.loadClass(classLoaderHint, name);
         } catch (ClassNotFoundException e) {
             throw sneakyThrow(e);
         }
     }
+    /**
+     * See {@link ClassLoaderUtil#newInstance(ClassLoader, String)}. Exceptions
+     * are sneakily thrown.
+     */
+    public static <T> T newInstance(ClassLoader classLoader, String  typeName) {
+        return newInstance(classLoader, typeName, typeName);
+    }
 
     /**
      * See {@link ClassLoaderUtil#newInstance(ClassLoader, String)}. Exceptions
      * are sneakily thrown.
      */
-    public static <T> T newInstance(ClassLoader classLoader, String name) {
+    public static <T> T newInstance(ClassLoader classLoader, String  typeName, String type) {
         try {
-            return ClassLoaderUtil.newInstance(classLoader, name);
+            return ClassLoaderUtil.newInstance(classLoader, typeName);
+        } catch (ClassNotFoundException e) {
+            throw new JetException(String.format("%s class %s not found", type, typeName));
+        } catch (InstantiationException e) {
+            throw new JetException(String.format("%s class %s can't be instantiated", type, typeName));
+        } catch (IllegalArgumentException | NoSuchMethodException e) {
+            throw new JetException(String.format("%s class %s has no default constructor", type, typeName));
+        } catch (IllegalAccessException e) {
+            throw new JetException(String.format("Default constructor of %s class %s is not accessible", type, typeName));
+        } catch (InvocationTargetException e) {
+            throw new JetException(
+                    String.format("%s class %s failed on construction: %s", type, typeName, e.getMessage()), e);
         } catch (Exception e) {
-            throw sneakyThrow(e);
+            throw new JetException(e);
         }
     }
 
@@ -86,17 +114,42 @@ public final class ReflectionUtils {
     public static <T> T readStaticFieldOrNull(String className, String fieldName) {
         try {
             Class<?> clazz = Class.forName(className);
-            return readStaticField(clazz, fieldName);
-        } catch (ClassNotFoundException | NoSuchFieldException | IllegalAccessException | SecurityException e) {
+            return readStaticFieldOrNull(clazz, fieldName);
+        } catch (ClassNotFoundException | SecurityException e) {
             return null;
         }
     }
 
+    /**
+     * Reads a value of a static field. In case of any exceptions it returns
+     * null.
+     */
+    public static <T> T readStaticFieldOrNull(Class<?> clazz, String fieldName) {
+        try {
+            return readStaticFieldInternal(clazz, fieldName);
+        } catch (NoSuchFieldException | IllegalAccessException | SecurityException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Reads a value of a static field. In case of any exceptions it returns
+     * null.
+     */
+    @Nonnull
+    public static <T> T readStaticField(Class<?> clazz, String fieldName) {
+        try {
+            return requireNonNull(readStaticFieldInternal(clazz, fieldName), fieldName + " must be non-null");
+        } catch (NoSuchFieldException | IllegalAccessException | SecurityException e) {
+            throw new HazelcastException("Error when accessing field " + fieldName, e);
+        }
+    }
+
     @SuppressWarnings("unchecked")
-    private static <T> T readStaticField(Class<?> clazz, String fieldName) throws NoSuchFieldException,
+    private static <T> T readStaticFieldInternal(Class<?> clazz, String fieldName) throws NoSuchFieldException,
             IllegalAccessException {
         Field field = clazz.getDeclaredField(fieldName);
-        if (!field.isAccessible()) {
+        if (!field.canAccess(null)) {
             field.setAccessible(true);
         }
         return (T) field.get(null);
@@ -175,7 +228,7 @@ public final class ReflectionUtils {
     private static Method findPropertyAccessor(
             @Nonnull Class<?> clazz,
             @Nonnull String propertyName,
-            @Nonnull String ...prefixes
+            @Nonnull String... prefixes
     ) {
         final Set<String> accessorNames = stream(prefixes)
                 .map(prefix -> prefix + toUpperCase(propertyName.charAt(0)) + propertyName.substring(1))
@@ -221,14 +274,14 @@ public final class ReflectionUtils {
     }
 
     @Nonnull
-    @SuppressFBWarnings(value = "RCN_REDUNDANT_NULLCHECK_WOULD_HAVE_BEEN_A_NPE", justification =
-            "False positive on try-with-resources as of JDK11")
+//    @SuppressFBWarnings(value = "RCN_REDUNDANT_NULLCHECK_WOULD_HAVE_BEEN_A_NPE", justification =
+//            "False positive on try-with-resources as of JDK11")
     public static Collection<Class<?>> nestedClassesOf(Class<?>... classes) {
         ClassGraph classGraph = new ClassGraph()
                 .enableClassInfo()
                 .ignoreClassVisibility();
         stream(classes).map(Class::getClassLoader).distinct().forEach(classGraph::addClassLoader);
-        stream(classes).map(ReflectionUtils::toPackageName).distinct().forEach(classGraph::whitelistPackages);
+        stream(classes).map(ReflectionUtils::toPackageName).distinct().forEach(classGraph::acceptPackages);
         try (ScanResult scanResult = classGraph.scan()) {
             Set<String> classNames = stream(classes).map(Class::getName).collect(toSet());
             return concat(
@@ -247,19 +300,21 @@ public final class ReflectionUtils {
     }
 
     @Nonnull
-    @SuppressFBWarnings(value = "RCN_REDUNDANT_NULLCHECK_WOULD_HAVE_BEEN_A_NPE", justification =
-            "False positive on try-with-resources as of JDK11")
+//    @SuppressFBWarnings(value = "RCN_REDUNDANT_NULLCHECK_WOULD_HAVE_BEEN_A_NPE", justification =
+//            "False positive on try-with-resources as of JDK11")
     public static Resources resourcesOf(String... packages) {
         String[] paths = stream(packages).map(ReflectionUtils::toPath).toArray(String[]::new);
         ClassGraph classGraph = new ClassGraph()
-                .whitelistPackages(packages)
-                .whitelistPaths(paths)
+                .acceptPackages(packages)
+                .acceptPaths(paths)
                 .ignoreClassVisibility();
         try (ScanResult scanResult = classGraph.scan()) {
             Collection<ClassResource> classes =
                     scanResult.getAllClasses().stream().map(ClassResource::new).collect(toList());
-            Collection<URL> nonClasses = scanResult.getAllResources().nonClassFilesOnly().getURLs();
-            return new Resources(classes, nonClasses);
+            try (var res = scanResult.getAllResources().nonClassFilesOnly()) {
+                Collection<URL> nonClasses = res.getURLs();
+                return new Resources(classes, nonClasses);
+            }
         }
     }
 
@@ -269,6 +324,21 @@ public final class ReflectionUtils {
 
     public static String toClassResourceId(String name) {
         return toPath(name) + ".class";
+    }
+
+    public static String toClassResourceId(Class<?> clazz) {
+        return toClassResourceId(clazz.getName());
+    }
+
+    @Nullable
+    public static byte[] getClassContent(String name, ClassLoader classLoader) throws IOException {
+        try (InputStream is = classLoader.getResourceAsStream(toClassResourceId(name))) {
+            if (is == null) {
+                return null;
+            } else {
+                return is.readAllBytes();
+            }
+        }
     }
 
     public static Object getFieldValue(String fieldName, Object obj) {
@@ -289,6 +359,100 @@ public final class ReflectionUtils {
         } catch (IllegalAccessException ignored) {
             return null;
         }
+    }
+
+    /**
+     * Reads only the necessary amount of bytes for the provided {@link Class} to find and return
+     * the internal binary name for this class, as determined by the {@code CONSTANT_Class} found
+     * in the constants pool at the index determined by the {@code this_class} field.
+     *
+     * @see <a href="https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html">Java Class file format</a>
+     *
+     * @param classBytes the bytes of a Java {@link Class} to extract binary name from
+     * @return           the binary name of the class
+     */
+    @SuppressWarnings("checkstyle:magicnumber")
+    public static String getInternalBinaryName(byte[] classBytes) {
+        try {
+            ByteBuffer buffer = ByteBuffer.wrap(classBytes);
+            buffer.order(ByteOrder.BIG_ENDIAN);
+
+            // Skip magic number and major/minor versions
+            buffer.position(8);
+
+            int constantPoolCount = buffer.getShort() & 0xFFFF;
+            Object[] constantPool = new Object[constantPoolCount];
+
+            // Iterate constant pool, collecting UTF8 strings (could be our class name) and looking for CONSTANT_Class tags
+            //   to identify our desired UTF8 string representing the class name. Skips appropriate bytes for all other tags.
+            // While it is generally convention for the index referenced by a CONSTANT_Class value to already be populated in
+            //   the constant pool (forward references), it is not forbidden by JVM Spec to use backward references.
+            // We need to skip the payload of all irrelevant tags, by the amount defined in the JVM spec (see javadoc)
+            for (int i = 1; i < constantPoolCount; i++) {
+                int tag = buffer.get() & 0xFF;
+                switch (tag) {
+                    case 1: // CONSTANT_Utf8
+                        int length = buffer.getShort() & 0xFFFF;
+                        byte[] bytes = new byte[length];
+                        buffer.get(bytes);
+                        constantPool[i] = new String(bytes, StandardCharsets.UTF_8);
+                        break;
+                    case 7: // CONSTANT_Class
+                        constantPool[i] = buffer.getShort() & 0xFFFF; // Store index
+                        break;
+                    case 8: // CONSTANT_String
+                    case 16: // CONSTANT_MethodType
+                    case 19: // CONSTANT_Module
+                    case 20: // CONSTANT_Package
+                        skipBytes(buffer, 2);
+                        break;
+                    case 15: // CONSTANT_MethodHandle
+                        skipBytes(buffer, 3);
+                        break;
+                    case 3: // CONSTANT_Integer
+                    case 4: // CONSTANT_Float
+                    case 9: // CONSTANT_Fieldref
+                    case 10: // CONSTANT_Methodref
+                    case 11: // CONSTANT_InterfaceMethodref
+                    case 12: // CONSTANT_NameAndType
+                    case 18: // CONSTANT_InvokeDynamic
+                    case 17: // CONSTANT_Dynamic
+                        skipBytes(buffer, 4);
+                        break;
+                    case 5: // CONSTANT_Long
+                    case 6: // CONSTANT_Double
+                        skipBytes(buffer, 8);
+                        i++;
+                        break;
+                    default:
+                        throw new IllegalArgumentException("Invalid constant pool tag: " + tag);
+                }
+            }
+
+            // Skip access flag
+            skipBytes(buffer, 2);
+
+            // Read this_class index which points to the constantPool index which holds the value of
+            //     the index to find the current classes' internal binary name
+            int thisClassIndex = buffer.getShort() & 0xFFFF;
+            return (String) constantPool[(int) constantPool[thisClassIndex]];
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Unable to local package/class names from class bytes!", e);
+        }
+    }
+
+    private static void skipBytes(ByteBuffer buffer, int toSkip) {
+        buffer.position(buffer.position() + toSkip);
+    }
+
+    public static String getStackTrace(Thread thread) {
+        return getStackTrace(thread, 3);
+    }
+
+    public static String getStackTrace(Thread thread, int skip) {
+        return Arrays.stream(thread.getStackTrace()).skip(skip)
+                .map(Object::toString)
+                .collect(Collectors.joining(System.lineSeparator() + "\t"));
     }
 
     public static final class Resources {

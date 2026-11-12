@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,12 +21,13 @@ import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.internal.serialization.SerializationService;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.internal.util.UnmodifiableListIterator;
 
+import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.util.AbstractList;
 import java.util.AbstractMap;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -34,11 +35,13 @@ import java.util.ListIterator;
 import java.util.Map;
 import java.util.function.Predicate;
 
-import static com.hazelcast.internal.util.EmptyStatement.ignore;
-
 /**
- * This is an unmodifiable lazy list which is not parametrized (no generic. needed for Jackson serializer).
+* This is an unmodifiable lazy list which is not parameterized (no generic. needed for Jackson serializer).
+ * <p>
+ * If the underlying list contain {@link Data} elements, they will be deserialized and replaced with deserialized
+ * form on access (thus the "Lazy" in the name).
  */
+@SuppressWarnings({"rawtypes", "unchecked"})
 public class UnmodifiableLazyList extends AbstractList implements IdentifiedDataSerializable {
 
     private final transient SerializationService serializationService;
@@ -64,7 +67,7 @@ public class UnmodifiableLazyList extends AbstractList implements IdentifiedData
     }
 
     @Override
-    public boolean addAll(Collection c) {
+    public boolean addAll(@Nonnull Collection c) {
         throw new UnsupportedOperationException();
     }
 
@@ -74,12 +77,12 @@ public class UnmodifiableLazyList extends AbstractList implements IdentifiedData
     }
 
     @Override
-    public boolean removeAll(Collection c) {
+    public boolean removeAll(@Nonnull Collection c) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public boolean removeIf(Predicate filter) {
+    public boolean removeIf(@Nonnull Predicate filter) {
         throw new UnsupportedOperationException();
     }
 
@@ -89,7 +92,7 @@ public class UnmodifiableLazyList extends AbstractList implements IdentifiedData
     }
 
     @Override
-    public boolean retainAll(Collection coll) {
+    public boolean retainAll(@Nonnull Collection coll) {
         throw new UnsupportedOperationException();
     }
 
@@ -98,51 +101,44 @@ public class UnmodifiableLazyList extends AbstractList implements IdentifiedData
         Object o = list.get(index);
         if (o instanceof Data) {
             Object item = serializationService.toObject(o);
-            try {
-                list.set(index, item);
-            } catch (Exception e) {
-                ignore(e);
-            }
+            list.set(index, item);
             return item;
         }
         return o;
     }
 
     @Override
+    @Nonnull
     public Iterator iterator() {
         return listIterator(0);
     }
 
     @Override
+    @Nonnull
     public ListIterator listIterator() {
         return listIterator(0);
     }
 
     @Override
+    @Nonnull
     public ListIterator listIterator(int index) {
         return new UnmodifiableLazyListIterator(list.listIterator(index));
     }
 
     @Override
+    @Nonnull
     public List subList(int fromIndex, int toIndex) {
         return new UnmodifiableLazyList(list.subList(fromIndex, toIndex), serializationService);
     }
 
     @Override
     public void writeData(ObjectDataOutput out) throws IOException {
-        out.writeInt(list.size());
-        for (Object o : this) {
-            out.writeObject(o);
-        }
+        SerializationUtil.writeList(this, out);
     }
 
     @Override
     public void readData(ObjectDataInput in) throws IOException {
-        int size = in.readInt();
-        list = new ArrayList(size);
-        for (int i = 0; i < size; i++) {
-            list.add(in.readObject());
-        }
+        list = SerializationUtil.readList(in);
     }
 
     private class UnmodifiableLazyListIterator extends UnmodifiableListIterator {
@@ -186,22 +182,13 @@ public class UnmodifiableLazyList extends AbstractList implements IdentifiedData
         private Object deserializeAndSet(Object o) {
             if (o instanceof Data) {
                 Object item = serializationService.toObject(o);
-                try {
-                    listIterator.set(item);
-                } catch (Exception e) {
-                    ignore(e);
-                }
+                listIterator.set(item);
                 return item;
-            } else if (o instanceof Map.Entry) {
-                Map.Entry entry = (Map.Entry) o;
+            } else if (o instanceof Map.Entry entry) {
                 Object key = serializationService.toObject(entry.getKey());
                 Object value = serializationService.toObject(entry.getValue());
                 AbstractMap.SimpleImmutableEntry item = new AbstractMap.SimpleImmutableEntry(key, value);
-                try {
-                    listIterator.set(item);
-                } catch (Exception e) {
-                    ignore(e);
-                }
+                listIterator.set(item);
 
                 return item;
             }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,16 +19,12 @@ package com.hazelcast.client.serialization;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import java.io.IOException;
-
 import com.hazelcast.config.IndexConfig;
 import com.hazelcast.config.IndexType;
 import org.junit.AfterClass;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import com.hazelcast.client.config.ClientConfig;
@@ -54,18 +50,16 @@ import example.serialization.TestExternalizableDeserialized;
 @Category(QuickTest.class)
 public class ExternalizableDeserializationProtectionTest extends HazelcastTestSupport {
 
-    @Rule
-    public ExpectedException expected = ExpectedException.none();
 
     protected static TestHazelcastFactory hazelcastFactory = new TestHazelcastFactory();
 
     @AfterClass
-    public static final void stopHazelcastInstances() {
+    public static void stopHazelcastInstances() {
         hazelcastFactory.terminateAll();
     }
 
     @Before
-    public void killAllHazelcastInstances() throws IOException {
+    public void killAllHazelcastInstances() {
         hazelcastFactory.terminateAll();
         TestExternalizableDeserialized.isDeserialized = false;
     }
@@ -84,8 +78,8 @@ public class ExternalizableDeserializationProtectionTest extends HazelcastTestSu
 
         HazelcastInstance client = hazelcastFactory.newHazelcastClient();
 
-        expected.expect(HazelcastSerializationException.class);
-        client.getMap("test").put("key", new TestExternalizableDeserialized());
+        assertThrows(HazelcastSerializationException.class,
+                () -> client.getMap("test").put("key", new TestExternalizableDeserialized()));
     }
 
     @Test
@@ -110,8 +104,8 @@ public class ExternalizableDeserializationProtectionTest extends HazelcastTestSu
         ClientConfig clientConfig2 = new ClientConfig();
         clientConfig2.getSerializationConfig().setJavaSerializationFilterConfig(javaSerializationFilterConfig);
         HazelcastInstance client2 = hazelcastFactory.newHazelcastClient(clientConfig2);
-        expected.expect(HazelcastSerializationException.class);
-        client2.getMap("test").get("key");
+
+        assertThrows(HazelcastSerializationException.class, () -> client2.getMap("test").get("key"));
     }
 
     @Test

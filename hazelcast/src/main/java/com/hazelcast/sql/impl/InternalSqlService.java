@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,8 @@
 
 package com.hazelcast.sql.impl;
 
+import com.hazelcast.internal.serialization.ReflectionClassNameFilter;
+import com.hazelcast.spi.annotation.PrivateApi;
 import com.hazelcast.sql.SqlResult;
 import com.hazelcast.sql.SqlService;
 import com.hazelcast.sql.SqlStatement;
@@ -33,6 +35,7 @@ public interface InternalSqlService extends SqlService {
 
     String SERVICE_NAME = "hz:impl:sqlService";
 
+    void ensureSqlIsEnabled();
     void start();
     void reset();
     void shutdown();
@@ -49,4 +52,9 @@ public interface InternalSqlService extends SqlService {
     long getSqlStreamingQueriesExecutedCount();
 
     String mappingDdl(String name);
+
+    ReflectionClassNameFilter getReflectionClassNameFilter();
+
+    @PrivateApi
+    Object getOptimizer();
 }

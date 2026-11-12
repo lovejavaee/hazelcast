@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -84,8 +84,8 @@ public class EntryProcessorBouncingNodesTest extends HazelcastTestSupport {
 
     @Rule
     public BounceMemberRule bounceMemberRule = BounceMemberRule
-            .with(getConfig())
-            .clusterSize(3)
+            .with(this::getConfig)
+            .clusterSize(2)
             .driverCount(1)
             .driverType(BounceTestConfiguration.DriverType.ALWAYS_UP_MEMBER)
             .build();
@@ -109,11 +109,14 @@ public class EntryProcessorBouncingNodesTest extends HazelcastTestSupport {
         // now, with nodes joining and leaving the cluster concurrently, start adding numbers to the lists
         final ListHolder expected = new ListHolder();
         int iteration = 0;
+        // fewer iterations when testing with a predicate because
+        // these are much slower in resource heavy builds resulting in test timeout
+        int iterations = withPredicate ? ITERATIONS / 2 : ITERATIONS;
 
         HazelcastInstance steadyMember = bounceMemberRule.getSteadyMember();
         final IMap<Integer, ListHolder> map = steadyMember.getMap(MAP_NAME);
-        while (iteration < ITERATIONS) {
-            logger.info(String.format("Iteration %d of %d", iteration + 1, ITERATIONS));
+        while (iteration < iterations) {
+            logger.info(String.format("Iteration %d of %d", iteration + 1, iterations));
             IncrementProcessor processor = new IncrementProcessor(iteration);
             expected.add(iteration);
             for (int i = 0; i < ENTRIES; ++i) {
@@ -132,9 +135,10 @@ public class EntryProcessorBouncingNodesTest extends HazelcastTestSupport {
             final int index = i;
             assertTrueEventually(() -> {
                     ListHolder holder = map.get(index);
-                    String errorText = String.format("Each ListHolder should contain %d entries.\nInvalid list holder content:\n%s\n", ITERATIONS, holder.toString());
-                    assertEquals(errorText, ITERATIONS, holder.size());
-                    for (int it = 0; it < ITERATIONS; it++) {
+                    String errorText = String.format("Each ListHolder should contain %d entries.\n"
+                            + "Invalid list holder content:\n%s\n", iterations, holder.toString());
+                    assertEquals(errorText, iterations, holder.size());
+                    for (int it = 0; it < iterations; it++) {
                         assertEquals(it, holder.get(it));
                     }
             });

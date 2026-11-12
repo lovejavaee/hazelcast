@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,12 +44,12 @@ public class ClientMapQueryStressTest extends HazelcastTestSupport {
     private final AtomicBoolean stop = new AtomicBoolean();
     private final AtomicInteger mapSizeHolder = new AtomicInteger();
     private final AtomicInteger keySetSizeHolder = new AtomicInteger();
-    private final List<Thread> threads = new ArrayList<Thread>();
+    private final List<Thread> threads = new ArrayList<>();
 
     private IMap map;
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         for (int i = 0; i < 3; i++) {
             factory.newHazelcastInstance();
         }
@@ -60,7 +60,7 @@ public class ClientMapQueryStressTest extends HazelcastTestSupport {
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         factory.shutdownAll();
     }
 

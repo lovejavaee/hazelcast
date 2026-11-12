@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,18 +17,16 @@
 package com.hazelcast.jet.kafka.impl;
 
 import com.hazelcast.jet.datamodel.Tuple2;
-import com.hazelcast.test.HazelcastParallelClassRunner;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import com.hazelcast.test.ParallelTest;
+import org.junit.jupiter.api.Test;
 
 import java.util.HashSet;
 import java.util.Set;
 
 import static com.hazelcast.jet.datamodel.Tuple2.tuple2;
-import static java.util.Arrays.asList;
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
-@RunWith(HazelcastParallelClassRunner.class)
+@ParallelTest
 public class KafkaPartitionAssignmentTest {
 
     @Test
@@ -120,7 +118,7 @@ public class KafkaPartitionAssignmentTest {
             }
         }
 
-        assertEquals(new HashSet<>(asList(expectedAssignment)), actualAssignment);
+        assertEquals(Set.of(expectedAssignment), actualAssignment);
     }
 
     private static Tuple2<Integer, Integer> tp(int topicIndex, int partition) {

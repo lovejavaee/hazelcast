@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,16 +16,12 @@
 
 package com.hazelcast.spi.impl;
 
-import com.hazelcast.internal.util.RootCauseMatcher;
-import com.hazelcast.test.AssertTask;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import java.util.concurrent.CancellationException;
@@ -36,6 +32,8 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.BiConsumer;
 
 import static com.hazelcast.internal.util.ConcurrencyUtil.CALLER_RUNS;
+import static com.hazelcast.internal.util.RootCauseMatcher.rootCause;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
@@ -56,10 +54,7 @@ public class AbstractCompletableFutureTest extends HazelcastTestSupport {
     private static final String EXCEPTION_MESSAGE = "You screwed buddy!";
     private static final Exception EXCEPTION = new RuntimeException(EXCEPTION_MESSAGE);
 
-    private Executor executor = CALLER_RUNS;
-
-    @Rule
-    public ExpectedException expected = ExpectedException.none();
+    private final Executor executor = CALLER_RUNS;
 
     @Test
     public void future_notExecuted_notDoneNotCancelled() {
@@ -172,23 +167,22 @@ public class AbstractCompletableFutureTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void get_exceptionResultSet_exceptionThrown() throws Exception {
+    public void get_exceptionResultSet_exceptionThrown() {
         TestFutureImpl future = new TestFutureImpl();
         future.completeExceptionally(EXCEPTION);
 
-        expected.expect(ExecutionException.class);
-        expected.expectCause(new RootCauseMatcher(EXCEPTION.getClass(), EXCEPTION_MESSAGE));
-        future.get();
+        assertThatThrownBy(future::get).isInstanceOf(ExecutionException.class)
+                .cause().has(rootCause(EXCEPTION.getClass(), EXCEPTION_MESSAGE));
     }
 
     @Test
-    public void getWithTimeout_exceptionResultSet_exceptionThrown_noTimeout() throws Exception {
+    public void getWithTimeout_exceptionResultSet_exceptionThrown_noTimeout() {
         TestFutureImpl future = new TestFutureImpl();
         future.completeExceptionally(EXCEPTION);
 
-        expected.expect(ExecutionException.class);
-        expected.expectCause(new RootCauseMatcher(EXCEPTION.getClass(), EXCEPTION_MESSAGE));
-        future.get(1, TimeUnit.NANOSECONDS);
+        assertThatThrownBy(() -> future.get(1, TimeUnit.NANOSECONDS))
+                .isInstanceOf(ExecutionException.class)
+                .cause().has(rootCause(EXCEPTION.getClass(), EXCEPTION_MESSAGE));
     }
 
     @Test
@@ -240,13 +234,13 @@ public class AbstractCompletableFutureTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void getWithTimeout_threadInterrupted_exceptionThrown() throws Exception {
+    public void getWithTimeout_threadInterrupted_exceptionThrown() {
         TestFutureImpl future = new TestFutureImpl();
 
         Thread.currentThread().interrupt();
 
-        expected.expect(InterruptedException.class);
-        future.get(100, TimeUnit.MILLISECONDS);
+        assertThatThrownBy(() -> future.get(100, TimeUnit.MILLISECONDS))
+                .isInstanceOf(InterruptedException.class);
     }
 
     @Test(timeout = 60000)
@@ -260,13 +254,13 @@ public class AbstractCompletableFutureTest extends HazelcastTestSupport {
     }
 
     @Test(timeout = 60000)
-    public void getWithTimeout_waited_waited_notifiedOnCancel() throws Exception {
+    public void getWithTimeout_waited_waited_notifiedOnCancel() {
         TestFutureImpl future = new TestFutureImpl();
 
         submitCancelAfterTimeInMillis(future, 200);
 
-        expected.expect(CancellationException.class);
-        future.get(30000, TimeUnit.MILLISECONDS);
+        assertThatThrownBy(() -> future.get(30000, TimeUnit.MILLISECONDS))
+                .isInstanceOf(CancellationException.class);
     }
 
     @Test
@@ -326,30 +320,24 @@ public class AbstractCompletableFutureTest extends HazelcastTestSupport {
         future.whenCompleteAsync(callback1);
         future.whenCompleteAsync(callback2);
 
-        if (result instanceof Throwable) {
-            future.completeExceptionally((Throwable) result);
+        if (result instanceof Throwable throwable) {
+            future.completeExceptionally(throwable);
         } else {
             future.complete(result);
         }
 
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                if (result instanceof Throwable) {
-                    verify(callback1).accept(null, result);
-                } else {
-                    verify(callback1).accept(result, null);
-                }
+        assertTrueEventually(() -> {
+            if (result instanceof Throwable) {
+                verify(callback1).accept(null, result);
+            } else {
+                verify(callback1).accept(result, null);
             }
         });
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                if (result instanceof Throwable) {
-                    verify(callback2).accept(null, result);
-                } else {
-                    verify(callback2).accept(result, null);
-                }
+        assertTrueEventually(() -> {
+            if (result instanceof Throwable) {
+                verify(callback2).accept(null, result);
+            } else {
+                verify(callback2).accept(result, null);
             }
         });
     }
@@ -424,36 +412,25 @@ public class AbstractCompletableFutureTest extends HazelcastTestSupport {
         future.whenCompleteAsync(callback, executor);
 
         assertSame(result, future.get());
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() {
-                verify(callback).accept(result, null);
-            }
-        });
+        assertTrueEventually(() -> verify(callback).accept(result, null));
     }
 
     private void submitCancelAfterTimeInMillis(final TestFutureImpl future, final int timeInMillis) {
-        submit(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    sleepMillis(timeInMillis);
-                } finally {
-                    future.cancel(false);
-                }
+        submit(() -> {
+            try {
+                sleepMillis(timeInMillis);
+            } finally {
+                future.cancel(false);
             }
         });
     }
 
     private void submitSetResultAfterTimeInMillis(final TestFutureImpl future, final Object result, final int timeInMillis) {
-        submit(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    sleepMillis(timeInMillis);
-                } finally {
-                    future.complete(result);
-                }
+        submit(() -> {
+            try {
+                sleepMillis(timeInMillis);
+            } finally {
+                future.complete(result);
             }
         });
     }
@@ -462,6 +439,6 @@ public class AbstractCompletableFutureTest extends HazelcastTestSupport {
         new Thread(runnable).start();
     }
 
-    private class TestFutureImpl extends InternalCompletableFuture<Object> {
+    private static class TestFutureImpl extends InternalCompletableFuture<Object> {
     }
 }

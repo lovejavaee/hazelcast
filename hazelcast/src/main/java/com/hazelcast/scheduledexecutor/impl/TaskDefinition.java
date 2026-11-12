@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,13 @@
 
 package com.hazelcast.scheduledexecutor.impl;
 
-import com.hazelcast.internal.cluster.Versions;
+import com.hazelcast.internal.namespace.NamespaceUtil;
+import com.hazelcast.spi.impl.NodeEngineThreadLocalContext;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
+import com.hazelcast.nio.serialization.impl.Versioned;
+import com.hazelcast.spi.impl.NodeEngine;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -27,7 +30,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
 public class TaskDefinition<V>
-        implements IdentifiedDataSerializable {
+        implements IdentifiedDataSerializable, Versioned {
 
     public enum Type {
 
@@ -131,9 +134,13 @@ public class TaskDefinition<V>
         out.writeLong(initialDelay);
         out.writeLong(period);
         out.writeString(unit.name());
-        if (out.getVersion().isGreaterOrEqual(Versions.V4_1)) {
-            out.writeBoolean(autoDisposable);
-        }
+        // RU_COMPAT_5_3
+        // Write this field regardless of the version
+        // Up to 5.3 (included) this field was never written because of missing Versioned
+        // It was never read because of missing Versioned
+        // In 5.4 we added Versioned, also 5.4 and above will read the field
+        // In 5.3 and below when it receives a Versioned TaskDefinition it also expects the field
+        out.writeBoolean(autoDisposable);
     }
 
     @Override
@@ -141,11 +148,21 @@ public class TaskDefinition<V>
             throws IOException {
         type = Type.valueOf(in.readString());
         name = in.readString();
-        command = in.readObject();
+        NodeEngine engine = NodeEngineThreadLocalContext.getNodeEngineThreadLocalContext();
+        String namespace = DistributedScheduledExecutorService.lookupNamespace(engine, name);
+        command = NamespaceUtil.callWithNamespace(engine, namespace, in::readObject);
         initialDelay = in.readLong();
         period = in.readLong();
         unit = TimeUnit.valueOf(in.readString());
-        if (in.getVersion().isGreaterOrEqual(Versions.V4_1)) {
+
+        // During RU from older version to 5.5
+        // - the cluster version is set to older version,
+        // - the 5.5 member writes the field & version
+        // - if older member is 5.4 it writes the field & version
+        // - if older member is up to 5.3 the field is not written and version is missing (due to missing Versioned)
+        // - so if the version is present we need to read the field - it either comes from 5.4 older member,
+        // or 5.5 member
+        if (!in.getVersion().isUnknown()) {
             autoDisposable = in.readBoolean();
         }
     }

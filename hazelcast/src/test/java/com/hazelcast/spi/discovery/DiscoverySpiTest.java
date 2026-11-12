@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.instance.BuildInfoProvider;
 import com.hazelcast.instance.impl.Node;
+import com.hazelcast.internal.cluster.Versions;
 import com.hazelcast.internal.partition.membergroup.DefaultMemberGroup;
 import com.hazelcast.internal.partition.membergroup.MemberGroupFactory;
 import com.hazelcast.internal.partition.membergroup.SPIAwareMemberGroupFactory;
@@ -70,6 +71,7 @@ import java.lang.reflect.Field;
 import java.net.InetAddress;
 import java.net.URL;
 import java.net.UnknownHostException;
+import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -121,8 +123,7 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
 
     @Test
     public void givenDiscoveryStrategyFactoryExistOnClassPath_whenTheSameFactoryIsConfiguredExplicitly_thenOnlyOneInstanceOfStrategyIsCreated() {
-        // ParametrizedDiscoveryStrategy has a static counter and throws an exception when its instantiated  more than
-        // than once.
+        // ParametrizedDiscoveryStrategy has a static counter and throws an exception when its instantiated  more than once
 
         Config config = new Config();
         config.setProperty(ClusterProperty.DISCOVERY_SPI_ENABLED.getName(), "true");
@@ -180,7 +181,7 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void test_metadata_discovery_on_node_startup() throws Exception {
+    public void test_metadata_discovery_on_node_startup() {
         String xmlFileName = "test-hazelcast-discovery-spi-metadata.xml";
         InputStream xmlResource = DiscoverySpiTest.class.getClassLoader().getResourceAsStream(xmlFileName);
         Config config = new XmlConfigBuilder(xmlResource).build();
@@ -198,7 +199,7 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void test_metadata_discovery_on_node_startup_overrides_what_is_configured_on_member() throws Exception {
+    public void test_metadata_discovery_on_node_startup_overrides_what_is_configured_on_member() {
         final String overridenAttribute = "test-string";
 
         String xmlFileName = "test-hazelcast-discovery-spi-metadata.xml";
@@ -222,20 +223,25 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
     public void testSchema() throws Exception {
         String xmlFileName = "test-hazelcast-discovery-spi.xml";
 
-        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
-        URL schemaResource = DiscoverySpiTest.class.getClassLoader().getResource("hazelcast-config-5.3.xsd");
-        assertNotNull(schemaResource);
+        String resource = "hazelcast-config-" + Versions.CURRENT_CLUSTER_VERSION + ".xsd";
+        URL schemaResource = DiscoverySpiTest.class.getClassLoader()
+                .getResource(resource);
+        assertNotNull(MessageFormat.format("Failed to find resource {0}", resource), schemaResource);
 
-        InputStream xmlResource = DiscoverySpiTest.class.getClassLoader().getResourceAsStream(xmlFileName);
-        Source source = new StreamSource(xmlResource);
+        try (InputStream xmlResource = DiscoverySpiTest.class.getClassLoader()
+                .getResourceAsStream(xmlFileName)) {
+            assertNotNull(MessageFormat.format("Failed to find resource {0}", xmlFileName), xmlResource);
+            Source source = new StreamSource(xmlResource);
 
-        Schema schema = factory.newSchema(schemaResource);
-        Validator validator = schema.newValidator();
-        validator.validate(source);
+            SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+            Schema schema = factory.newSchema(schemaResource);
+            Validator validator = schema.newValidator();
+            validator.validate(source);
+        }
     }
 
     @Test
-    public void testParsing() throws Exception {
+    public void testParsing() {
         String xmlFileName = "test-hazelcast-discovery-spi.xml";
         InputStream xmlResource = DiscoverySpiTest.class.getClassLoader().getResourceAsStream(xmlFileName);
         Config config = new XmlConfigBuilder(xmlResource).build();
@@ -313,7 +319,7 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void test_AbstractDiscoveryStrategy_getOrNull() throws Exception {
+    public void test_AbstractDiscoveryStrategy_getOrNull() {
         PropertyDefinition first = new SimplePropertyDefinition("first", PropertyTypeConverter.STRING);
         PropertyDefinition second = new SimplePropertyDefinition("second", BOOLEAN);
         PropertyDefinition third = new SimplePropertyDefinition("third", PropertyTypeConverter.INTEGER);
@@ -356,7 +362,7 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void test_AbstractDiscoveryStrategy_getOrDefault() throws Exception {
+    public void test_AbstractDiscoveryStrategy_getOrDefault() {
         PropertyDefinition value = new SimplePropertyDefinition("value", PropertyTypeConverter.INTEGER);
 
         Map<String, Comparable> properties = Collections.emptyMap();
@@ -391,9 +397,9 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
         Collection<Member> members = createMembers();
         Collection<MemberGroup> memberGroups = groupFactory.createMemberGroups(members);
 
-        assertEquals("Member Groups: " + String.valueOf(memberGroups), 2, memberGroups.size());
+        assertEquals("Member Groups: " + memberGroups, 2, memberGroups.size());
         for (MemberGroup memberGroup : memberGroups) {
-            assertEquals("Member Group: " + String.valueOf(memberGroup), 2, memberGroup.size());
+            assertEquals("Member Group: " + memberGroup, 2, memberGroup.size());
         }
         hazelcastInstance.shutdown();
     }
@@ -411,9 +417,9 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
         Collection<Member> members = createMembers();
         Collection<MemberGroup> memberGroups = groupFactory.createMemberGroups(members);
 
-        assertEquals("Member Groups: " + String.valueOf(memberGroups), 2, memberGroups.size());
+        assertEquals("Member Groups: " + memberGroups, 2, memberGroups.size());
         for (MemberGroup memberGroup : memberGroups) {
-            assertEquals("Member Group: " + String.valueOf(memberGroup), 2, memberGroup.size());
+            assertEquals("Member Group: " + memberGroup, 2, memberGroup.size());
         }
         hazelcastInstance.shutdown();
     }
@@ -431,12 +437,10 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
         Config config = new Config();
         config.setProperty(ClusterProperty.DISCOVERY_SPI_ENABLED.getName(), "true");
 
-        DiscoveryServiceProvider discoveryServiceProvider = new DiscoveryServiceProvider() {
-            public DiscoveryService newDiscoveryService(DiscoveryServiceSettings arg0) {
-                DiscoveryService mocked = mock(DiscoveryService.class);
-                when(mocked.discoverNodes()).thenReturn(null);
-                return mocked;
-            }
+        DiscoveryServiceProvider discoveryServiceProvider = arg0 -> {
+            DiscoveryService mocked = mock(DiscoveryService.class);
+            when(mocked.discoverNodes()).thenReturn(null);
+            return mocked;
         };
         config.getNetworkConfig().getJoin().getDiscoveryConfig().setDiscoveryServiceProvider(discoveryServiceProvider);
 
@@ -453,11 +457,9 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
         config.setProperty(ClusterProperty.DISCOVERY_SPI_ENABLED.getName(), "true");
 
         final DiscoveryService discoveryService = mock(DiscoveryService.class);
-        DiscoveryServiceProvider discoveryServiceProvider = new DiscoveryServiceProvider() {
-            public DiscoveryService newDiscoveryService(DiscoveryServiceSettings arg0) {
-                when(discoveryService.discoverNodes()).thenReturn(Collections.<DiscoveryNode>emptyList());
-                return discoveryService;
-            }
+        DiscoveryServiceProvider discoveryServiceProvider = arg0 -> {
+            when(discoveryService.discoverNodes()).thenReturn(Collections.emptyList());
+            return discoveryService;
         };
         config.getNetworkConfig().getJoin().getDiscoveryConfig().setDiscoveryServiceProvider(discoveryServiceProvider);
 
@@ -503,7 +505,7 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
 
     static class TestBreakingChangesDiscoveryStrategy extends AbstractDiscoveryStrategy {
         TestBreakingChangesDiscoveryStrategy() {
-            super(null, Collections.<String, Comparable>emptyMap());
+            super(null, Collections.emptyMap());
         }
 
         @Override
@@ -563,7 +565,7 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
         @Override
         public Collection<DiscoveryNode> discoverNodes() {
             try {
-                List<DiscoveryNode> discoveryNodes = new ArrayList<DiscoveryNode>(4);
+                List<DiscoveryNode> discoveryNodes = new ArrayList<>(4);
                 Address address = new Address("127.0.0.1", 50001);
                 discoveryNodes.add(new SimpleDiscoveryNode(address));
                 address = new Address("127.0.0.1", 50002);
@@ -606,7 +608,7 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
         private final Collection<PropertyDefinition> propertyDefinitions;
 
         public TestDiscoveryStrategyFactory() {
-            List<PropertyDefinition> propertyDefinitions = new ArrayList<PropertyDefinition>();
+            List<PropertyDefinition> propertyDefinitions = new ArrayList<>();
             propertyDefinitions.add(new SimplePropertyDefinition("key-string", PropertyTypeConverter.STRING));
             propertyDefinitions.add(new SimplePropertyDefinition("key-int", PropertyTypeConverter.INTEGER));
             propertyDefinitions.add(new SimplePropertyDefinition("key-boolean", BOOLEAN));
@@ -699,7 +701,7 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
 
         @Override
         public Iterable<DiscoveryNode> discoverNodes() {
-            return new ArrayList<DiscoveryNode>(discoveryNodes);
+            return new ArrayList<>(discoveryNodes);
         }
 
         @Override
@@ -723,7 +725,7 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
 
     public static class TestNodeFilter implements NodeFilter {
 
-        private final List<DiscoveryNode> nodes = new ArrayList<DiscoveryNode>();
+        private final List<DiscoveryNode> nodes = new ArrayList<>();
 
         @Override
         public boolean test(DiscoveryNode candidate) {
@@ -752,7 +754,7 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
 
         @Override
         public Collection<PropertyDefinition> getConfigurationProperties() {
-            return asList((PropertyDefinition) new SimplePropertyDefinition("key-string", true, STRING),
+            return asList(new SimplePropertyDefinition("key-string", true, STRING),
                     new SimplePropertyDefinition("key-int", true, INTEGER),
                     new SimplePropertyDefinition("key-boolean", true, BOOLEAN));
         }
@@ -800,7 +802,7 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
 
         @Override
         public Iterable<MemberGroup> getMemberGroups() {
-            List<MemberGroup> groups = new ArrayList<MemberGroup>();
+            List<MemberGroup> groups = new ArrayList<>();
             try {
                 groups.add(new DefaultMemberGroup(createMembers()));
                 groups.add(new DefaultMemberGroup(createMembers()));
@@ -812,7 +814,7 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
     }
 
     private static Collection<Member> createMembers() throws UnknownHostException {
-        Collection<Member> members = new HashSet<Member>();
+        Collection<Member> members = new HashSet<>();
         InetAddress fakeAddress = InetAddress.getLocalHost();
         members.add(new MemberImpl(new Address("192.192.0.1", fakeAddress, 5701), VERSION, true));
         members.add(new MemberImpl(new Address("192.192.0.1", fakeAddress, 5702), VERSION, false));
@@ -830,14 +832,14 @@ public class DiscoverySpiTest extends HazelcastTestSupport {
         interfaces.setEnabled(true);
         interfaces.addInterface("127.0.0.1");
 
-        List<DiscoveryNode> discoveryNodes = new CopyOnWriteArrayList<DiscoveryNode>();
+        List<DiscoveryNode> discoveryNodes = new CopyOnWriteArrayList<>();
         DiscoveryStrategyFactory factory = isDeprecated ? new DeprecatedCollectingDiscoveryStrategyFactory(discoveryNodes)
                 : new CollectingDiscoveryStrategyFactory(discoveryNodes);
 
         DiscoveryConfig discoveryConfig = config.getNetworkConfig().getJoin().getDiscoveryConfig();
         discoveryConfig.getDiscoveryStrategyConfigs().clear();
 
-        DiscoveryStrategyConfig strategyConfig = new DiscoveryStrategyConfig(factory, Collections.<String, Comparable>emptyMap());
+        DiscoveryStrategyConfig strategyConfig = new DiscoveryStrategyConfig(factory, Collections.emptyMap());
         discoveryConfig.addDiscoveryStrategyConfig(strategyConfig);
         return config;
     }

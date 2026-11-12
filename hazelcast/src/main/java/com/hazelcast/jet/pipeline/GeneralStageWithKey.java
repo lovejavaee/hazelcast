@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -252,7 +252,7 @@ public interface GeneralStageWithKey<T, K> {
      * item independently and emits the function's result as the output item.
      * The mapping function receives another parameter, the service object,
      * which Jet will create using the supplied {@code serviceFactory}. If the
-     * mapping result is {@code null}, it emits nothing. Therefore this stage
+     * mapping result is {@code null}, it emits nothing. Therefore, this stage
      * can be used to implement filtering semantics as well.
      * <p>
      * Jet uses the {@linkplain #keyFn() key-extracting function} specified on
@@ -290,6 +290,7 @@ public interface GeneralStageWithKey<T, K> {
      * @deprecated Jet now has first-class support for data rebalancing, see
      * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
      */
+    @Deprecated(since = "5.4", forRemoval = true)
     @Nonnull
     <S, R> GeneralStage<R> mapUsingService(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -331,6 +332,7 @@ public interface GeneralStageWithKey<T, K> {
      * @deprecated Jet now has first-class support for data rebalancing, see
      * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
      */
+    @Deprecated(since = "5.4", forRemoval = true)
     @Nonnull
     default <S, R> GeneralStage<R> mapUsingServiceAsync(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -372,6 +374,7 @@ public interface GeneralStageWithKey<T, K> {
      * @deprecated Jet now has first-class support for data rebalancing, see
      * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
      */
+    @Deprecated(since = "5.4", forRemoval = true)
     @Nonnull
     <S, R> GeneralStage<R> mapUsingServiceAsync(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -423,6 +426,7 @@ public interface GeneralStageWithKey<T, K> {
      * @deprecated Jet now has first-class support for data rebalancing, see
      * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
      */
+    @Deprecated(since = "5.4", forRemoval = true)
     @Nonnull
     <S, R> GeneralStage<R> mapUsingServiceAsyncBatched(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -478,6 +482,7 @@ public interface GeneralStageWithKey<T, K> {
      * @deprecated Jet now has first-class support for data rebalancing, see
      * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
      */
+    @Deprecated(since = "5.4", forRemoval = true)
     @Nonnull
     <S, R> GeneralStage<R> mapUsingServiceAsyncBatched(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -531,6 +536,7 @@ public interface GeneralStageWithKey<T, K> {
      * @deprecated Jet now has first-class support for data rebalancing, see
      * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
      */
+    @Deprecated(since = "5.4", forRemoval = true)
     @Nonnull
     <S> GeneralStage<T> filterUsingService(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -584,6 +590,7 @@ public interface GeneralStageWithKey<T, K> {
      * @deprecated Jet now has first-class support for data rebalancing, see
      * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
      */
+    @Deprecated(since = "5.4", forRemoval = true)
     @Nonnull
     <S, R> GeneralStage<R> flatMapUsingService(
             @Nonnull ServiceFactory<?, S> serviceFactory,
@@ -596,7 +603,7 @@ public interface GeneralStageWithKey<T, K> {
      * and the result of the lookup is merged with the item and emitted.
      * <p>
      * If the result of the mapping is {@code null}, it emits nothing.
-     * Therefore this stage can be used to implement filtering semantics as well.
+     * Therefore, this stage can be used to implement filtering semantics as well.
      * <p>
      * The mapping logic is equivalent to:
      * <pre>{@code
@@ -626,7 +633,11 @@ public interface GeneralStageWithKey<T, K> {
      * @param <V> type of the value in the {@code IMap}
      * @param <R> type of the output item
      * @return the newly attached stage
+     *
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
      */
+    @Deprecated(since = "5.7", forRemoval = true)
     @Nonnull
     default <V, R> GeneralStage<R> mapUsingIMap(
             @Nonnull String mapName,
@@ -644,7 +655,7 @@ public interface GeneralStageWithKey<T, K> {
      * and the result of the lookup is merged with the item and emitted.
      * <p>
      * If the result of the mapping is {@code null}, it emits nothing.
-     * Therefore this stage can be used to implement filtering semantics as well.
+     * Therefore, this stage can be used to implement filtering semantics as well.
      * <p>
      * The mapping logic is equivalent to:
      * <pre>{@code
@@ -672,7 +683,11 @@ public interface GeneralStageWithKey<T, K> {
      * @param <V> type of the value in the {@code IMap}
      * @param <R> type of the output item
      * @return the newly attached stage
+     *
+     * @deprecated Jet now has first-class support for data rebalancing, see
+     * {@link GeneralStage#rebalance()} and {@link GeneralStage#rebalance(FunctionEx)}.
      */
+    @Deprecated(since = "5.7", forRemoval = true)
     @Nonnull
     default <V, R> GeneralStage<R> mapUsingIMap(
             @Nonnull IMap<K, V> iMap,

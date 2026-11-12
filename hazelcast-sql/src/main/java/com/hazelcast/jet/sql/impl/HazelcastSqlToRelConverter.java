@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -102,7 +102,7 @@ import static org.apache.calcite.avatica.util.TimeUnit.YEAR;
  * the default Calcite sql-to-rel converter and to facilitate generation of
  * literals and casts with more precise types assigned during the validation.
  */
-@SuppressWarnings({"checkstyle:classfanoutcomplexity"})
+@SuppressWarnings("checkstyle:classfanoutcomplexity")
 public final class HazelcastSqlToRelConverter extends SqlToRelConverter {
 
     private static final SqlIntervalQualifier INTERVAL_YEAR_MONTH = new SqlIntervalQualifier(YEAR, MONTH, SqlParserPos.ZERO);
@@ -256,8 +256,8 @@ public final class HazelcastSqlToRelConverter extends SqlToRelConverter {
     /**
      * This method overrides Apache Calcite's approach for IN operator.
      *
-     * @see org.apache.calcite.sql2rel.SqlToRelConverter##substituteSubQuery
-     * @see org.apache.calcite.sql2rel.SqlToRelConverter##convertInToOr
+     * @see org.apache.calcite.sql2rel.SqlToRelConverter#substituteSubQuery
+     * @see org.apache.calcite.sql2rel.SqlToRelConverter#convertInToOr
      */
     private RexNode convertIn(SqlCall call, Blackboard blackboard) {
         assert call.getOperandList().size() == 2;

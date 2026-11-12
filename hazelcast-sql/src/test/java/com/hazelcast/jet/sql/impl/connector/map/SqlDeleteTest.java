@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,8 +20,10 @@ import com.hazelcast.jet.sql.SqlTestSupport;
 import com.hazelcast.jet.sql.impl.connector.map.model.PersonId;
 import com.hazelcast.map.IMap;
 import com.hazelcast.sql.SqlResult;
+import com.hazelcast.test.HazelcastSerialClassRunner;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 
 import java.io.Serializable;
 import java.util.Map;
@@ -29,6 +31,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+@RunWith(HazelcastSerialClassRunner.class)
 public class SqlDeleteTest extends SqlTestSupport {
 
     @BeforeClass
@@ -122,11 +125,20 @@ public class SqlDeleteTest extends SqlTestSupport {
     }
 
     @Test
-    public void doNotDelete_whenKeyFieldOccursMoreThanOneWithConjunctionPredicate() {
+    public void doNotDelete_whenKeyFieldOccursMoreThanOnceWithConjunctionPredicate() {
         createMapping("test_map", int.class, int.class);
         put(1);
 
         checkUpdateCount("delete from test_map where __key = 1 and __key = 2", 0);
+        assertMapContainsKey(1);
+    }
+
+    @Test
+    public void doNotDelete_whenAlwaysFalsePredicate() {
+        createMapping("test_map", int.class, int.class);
+        put(1);
+
+        checkUpdateCount("delete from test_map where 1 = 2", 0);
         assertMapContainsKey(1);
     }
 

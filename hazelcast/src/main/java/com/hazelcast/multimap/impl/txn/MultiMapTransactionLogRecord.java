@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import com.hazelcast.multimap.impl.MultiMapDataSerializerHook;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.internal.serialization.Data;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.spi.impl.operationservice.Operation;
 import com.hazelcast.transaction.impl.TransactionLogRecord;
 
@@ -70,10 +71,7 @@ public class MultiMapTransactionLogRecord implements TransactionLogRecord {
     public void writeData(ObjectDataOutput out) throws IOException {
         out.writeString(name);
         out.writeInt(partitionId);
-        out.writeInt(opList.size());
-        for (Operation op : opList) {
-            out.writeObject(op);
-        }
+        SerializationUtil.writeList(opList, out);
         IOUtil.writeData(out, key);
         out.writeLong(ttl);
         out.writeLong(threadId);
@@ -98,27 +96,23 @@ public class MultiMapTransactionLogRecord implements TransactionLogRecord {
     }
 
     public void addOperation(Operation op) {
-        if (op instanceof TxnRemoveOperation) {
-            TxnRemoveOperation removeOperation = (TxnRemoveOperation) op;
+        if (op instanceof TxnRemoveOperation removeOperation) {
             Iterator<Operation> iter = opList.iterator();
             while (iter.hasNext()) {
                 Operation opp = iter.next();
-                if (opp instanceof TxnPutOperation) {
-                    TxnPutOperation putOperation = (TxnPutOperation) opp;
+                if (opp instanceof TxnPutOperation putOperation) {
                     if (putOperation.getRecordId() == removeOperation.getRecordId()) {
                         iter.remove();
                         return;
                     }
                 }
             }
-        } else if (op instanceof TxnRemoveAllOperation) {
-            TxnRemoveAllOperation removeAllOperation = (TxnRemoveAllOperation) op;
+        } else if (op instanceof TxnRemoveAllOperation removeAllOperation) {
             Collection<Long> recordIds = removeAllOperation.getRecordIds();
             Iterator<Operation> iterator = opList.iterator();
             while (iterator.hasNext()) {
                 Operation opp = iterator.next();
-                if (opp instanceof TxnPutOperation) {
-                    TxnPutOperation putOperation = (TxnPutOperation) opp;
+                if (opp instanceof TxnPutOperation putOperation) {
                     if (recordIds.remove(putOperation.getRecordId())) {
                         iterator.remove();
                     }
@@ -134,8 +128,7 @@ public class MultiMapTransactionLogRecord implements TransactionLogRecord {
     public int size() {
         int size = 0;
         for (Operation operation : opList) {
-            if (operation instanceof TxnRemoveAllOperation) {
-                TxnRemoveAllOperation removeAllOperation = (TxnRemoveAllOperation) operation;
+            if (operation instanceof TxnRemoveAllOperation removeAllOperation) {
                 size -= removeAllOperation.getRecordIds().size();
             } else if (operation instanceof TxnRemoveOperation) {
                 size--;

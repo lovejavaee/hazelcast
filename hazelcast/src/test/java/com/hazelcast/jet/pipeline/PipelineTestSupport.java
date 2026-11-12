@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +33,10 @@ import org.junit.Before;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.cache.Cache;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -44,7 +48,8 @@ import java.util.function.Function;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
-import static com.hazelcast.jet.impl.util.ExceptionUtil.peel;
+import static com.hazelcast.jet.impl.util.JetExceptionUtil.peel;
+import static java.nio.file.Files.readAllBytes;
 import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toList;
@@ -86,9 +91,9 @@ public abstract class PipelineTestSupport extends TestInClusterSupport {
         return execute(p, config);
     }
 
-    protected Job executeAndPeel() throws Throwable {
+    protected void executeAndPeel() throws Throwable {
         try {
-            return execute();
+            execute();
         } catch (CompletionException e) {
             throw peel(e);
         }
@@ -98,12 +103,20 @@ public abstract class PipelineTestSupport extends TestInClusterSupport {
         return hz().getJet().newJob(p);
     }
 
+    protected Job start(JobConfig jobConfig) {
+        return hz().getJet().newJob(p, jobConfig);
+    }
+
     protected BatchStage<Integer> batchStageFromList(List<Integer> input) {
         return p.readFrom(TestSources.items(input));
     }
 
     protected static String journaledMapName() {
         return randomMapName(JOURNALED_MAP_PREFIX);
+    }
+
+    protected static String journaledCacheName() {
+        return randomMapName(JOURNALED_CACHE_PREFIX);
     }
 
     protected void addToSrcList(Collection<Integer> data) {
@@ -214,5 +227,13 @@ public abstract class PipelineTestSupport extends TestInClusterSupport {
         clientConfig.getNetworkConfig().addAddress(address.getHost() + ':' + address.getPort());
         clientConfig.setClusterName(instance.getConfig().getClusterName());
         return clientConfig;
+    }
+
+    static String readLocalClusterConfig(String file, String clusterName, @Nonnull HazelcastInstance instance) throws IOException {
+        int port = ((InetSocketAddress) instance.getLocalEndpoint().getSocketAddress()).getPort();
+        byte[] bytes = readAllBytes(Paths.get("src", "test", "resources", file));
+        return new String(bytes, StandardCharsets.UTF_8)
+                .replace("$CLUSTER_NAME$", clusterName)
+                .replace("$PORT_NUMBER$", String.valueOf(port));
     }
 }

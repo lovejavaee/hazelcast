@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ import com.hazelcast.internal.cluster.impl.SplitBrainJoinMessage.SplitBrainMerge
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
-import com.hazelcast.spi.impl.NodeEngineImpl;
+import com.hazelcast.spi.impl.NodeEngine;
 
 import java.io.IOException;
 
@@ -53,7 +53,7 @@ public class SplitBrainMergeValidationOp extends AbstractJoinOperation {
 
     @Override
     public void run() {
-        NodeEngineImpl nodeEngine = (NodeEngineImpl) getNodeEngine();
+        NodeEngine nodeEngine = getNodeEngine();
         Node node = nodeEngine.getNode();
 
         if (!preCheck(node)) {
@@ -75,7 +75,7 @@ public class SplitBrainMergeValidationOp extends AbstractJoinOperation {
             }
 
             if (logger.isFineEnabled()) {
-                logger.fine("Returning " + response + " to " + getCallerAddress());
+                logger.fine("Returning %s to %s", response, getCallerAddress());
             }
         }
     }
@@ -169,7 +169,7 @@ public class SplitBrainMergeValidationOp extends AbstractJoinOperation {
             return result != CANNOT_MERGE;
         } catch (Exception e) {
             if (logger.isFineEnabled()) {
-                logger.fine("Could not validate split-brain join message! -> " + e.getMessage());
+                logger.fine("Could not validate split-brain join message! -> %s", e.getMessage());
             }
             return false;
         }

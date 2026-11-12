@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package com.hazelcast.internal.util.executor;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -51,7 +50,7 @@ public final class CachedExecutorServiceDelegate implements ExecutorService, Man
     private final ExecutorService cachedExecutor;
     private final BlockingQueue<Runnable> taskQ;
     private final Lock lock = new ReentrantLock();
-    private final AtomicBoolean shutdown = new AtomicBoolean(false);
+    private final AtomicBoolean shutdown = new AtomicBoolean();
     private volatile int size;
 
     public CachedExecutorServiceDelegate(String name, ExecutorService cachedExecutor,
@@ -65,7 +64,7 @@ public final class CachedExecutorServiceDelegate implements ExecutorService, Man
         this.name = name;
         this.maxPoolSize = maxPoolSize;
         this.cachedExecutor = cachedExecutor;
-        this.taskQ = new LinkedBlockingQueue<Runnable>(queueCapacity);
+        this.taskQ = new LinkedBlockingQueue<>(queueCapacity);
     }
 
     @Override
@@ -112,7 +111,7 @@ public final class CachedExecutorServiceDelegate implements ExecutorService, Man
 
     @Override
     public <T> Future<T> submit(Callable<T> task) {
-        final RunnableFuture<T> rf = new CompletableFutureTask<T>(task);
+        final RunnableFuture<T> rf = new CompletableFutureTask<>(task);
         execute(rf);
         return rf;
     }
@@ -129,7 +128,6 @@ public final class CachedExecutorServiceDelegate implements ExecutorService, Man
         return submit(task, null);
     }
 
-    @SuppressFBWarnings("VO_VOLATILE_INCREMENT")
     private void addNewWorkerIfRequired() {
         if (size < maxPoolSize) {
             try {
@@ -158,11 +156,11 @@ public final class CachedExecutorServiceDelegate implements ExecutorService, Man
         if (!shutdown.compareAndSet(false, true)) {
             return Collections.emptyList();
         }
-        List<Runnable> tasks = new LinkedList<Runnable>();
+        List<Runnable> tasks = new LinkedList<>();
         taskQ.drainTo(tasks);
         for (Runnable task : tasks) {
-            if (task instanceof RunnableFuture) {
-                ((RunnableFuture) task).cancel(false);
+            if (task instanceof RunnableFuture future) {
+                future.cancel(false);
             }
         }
         return tasks;

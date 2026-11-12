@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,17 +16,18 @@
 
 package com.hazelcast.jet.sql.impl.connector.jdbc;
 
+import com.hazelcast.mock.MockUtil;
 import org.apache.calcite.sql.dialect.MysqlSqlDialect;
 import org.apache.calcite.sql.dialect.SybaseSqlDialect;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Mockito.when;
+import static org.mockito.MockitoAnnotations.openMocks;
 
 public class SupportedDatabasesTest {
 
@@ -40,24 +41,27 @@ public class SupportedDatabasesTest {
     @Mock
     MysqlSqlDialect mysqlSqlDialect;
 
+    private AutoCloseable openMocks;
+
     @Before
     public void setUp() {
-        MockitoAnnotations.openMocks(this);
+        openMocks = openMocks(this);
+    }
+
+    @After
+    public void cleanUp() {
+        MockUtil.closeMocks(openMocks);
     }
 
     @Test
     public void testUpsertDialectNotSupported() {
-        when(jdbcTable.sqlDialect()).thenReturn(sybaseSqlDialect);
-
-        boolean result = SupportedDatabases.isDialectSupported(jdbcTable);
+        boolean result = SupportedDatabases.isDialectSupported(sybaseSqlDialect);
         assertFalse(result);
     }
 
     @Test
     public void testUpsertDialectSupported() {
-        when(jdbcTable.sqlDialect()).thenReturn(mysqlSqlDialect);
-
-        boolean result = SupportedDatabases.isDialectSupported(jdbcTable);
+        boolean result = SupportedDatabases.isDialectSupported(mysqlSqlDialect);
         assertTrue(result);
     }
 

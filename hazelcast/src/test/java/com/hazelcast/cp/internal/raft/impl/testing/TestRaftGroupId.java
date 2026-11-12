@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,11 +50,10 @@ public class TestRaftGroupId implements CPGroupId, DataSerializable {
         if (this == o) {
             return true;
         }
-        if (!(o instanceof TestRaftGroupId)) {
+        if (!(o instanceof TestRaftGroupId that)) {
             return false;
         }
 
-        TestRaftGroupId that = (TestRaftGroupId) o;
         return name.equals(that.name);
     }
 

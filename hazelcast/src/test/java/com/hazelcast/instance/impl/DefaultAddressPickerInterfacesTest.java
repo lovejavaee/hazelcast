@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,48 +24,32 @@ import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
 import com.hazelcast.spi.properties.ClusterProperty;
 import com.hazelcast.test.HazelcastParallelClassRunner;
-import com.hazelcast.test.OverridePropertyRule;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
 import java.net.InetAddress;
 
-import static com.hazelcast.instance.impl.DefaultAddressPicker.PREFER_IPV4_STACK;
-import static com.hazelcast.instance.impl.DefaultAddressPicker.PREFER_IPV6_ADDRESSES;
-import static com.hazelcast.instance.impl.TestUtil.setSystemProperty;
 import static com.hazelcast.internal.util.NetworkInterfaceInfo.builder;
-import static com.hazelcast.test.OverridePropertyRule.clear;
-import static com.hazelcast.test.OverridePropertyRule.set;
-import static org.hamcrest.CoreMatchers.anyOf;
-import static org.hamcrest.CoreMatchers.equalTo;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThat;
 
 /**
  * Tests if the {@link DefaultAddressPicker} chooses an expected bind address.
  * <br/>
  * Given: The default Hazelcast Config is used and no Interface definition network configuration is set.
- * The System property {@link DefaultAddressPicker#PREFER_IPV4_STACK} is set to {@code true}.
+ * The System property java.net.preferIPv4Stack is set to {@code true}.
  */
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class DefaultAddressPickerInterfacesTest {
 
     private final ILogger logger = Logger.getLogger(AddressPicker.class);
-    private final Config config = new Config();
-
-    @Rule
-    public final OverridePropertyRule ruleSysPropPreferIpv4 = set(PREFER_IPV4_STACK, "true");
-    @Rule
-    public final OverridePropertyRule ruleSysPropPreferIpv6 = clear(PREFER_IPV6_ADDRESSES);
-    @Rule
-    public final OverridePropertyRule ruleSysPropHzPreferIpv4 = set(ClusterProperty.PREFER_IPv4_STACK.getName(), "false");
+    private final Config config = new Config().setProperty(ClusterProperty.PREFER_IPv4_STACK.getName(), "false");
 
     private DummyNetworkInterfacesEnumerator networkInterfacesEnumerator = new DummyNetworkInterfacesEnumerator();
 
@@ -230,7 +214,7 @@ public class DefaultAddressPickerInterfacesTest {
 
         InetAddress inetAddress = getInetAddressFromDefaultAddressPicker();
         assertNotNull("Not-null InetAddress is expected", inetAddress);
-        assertThat(inetAddress.getHostAddress(), anyOf(equalTo("192.168.1.1"), equalTo("172.172.172.172")));
+        assertThat(inetAddress.getHostAddress()).isIn("192.168.1.1", "172.172.172.172");
     }
 
     /**
@@ -239,29 +223,44 @@ public class DefaultAddressPickerInterfacesTest {
      */
     @Test
     public void testIPv4Preferred() throws Exception {
-        NetworkInterfaceInfo eth0 = builder("eth0").withAddresses("fe80::9711:82f4:383a:e254", "192.168.1.1", "::cace").build();
+        NetworkInterfaceInfo eth0 = builder("eth0")
+                .withAddresses("fe80::9711:82f4:383a:e254", "192.168.1.1", "176.74.156.21", "127.0.0.3", "::cace").build();
         networkInterfacesEnumerator = new DummyNetworkInterfacesEnumerator(eth0);
 
         InetAddress inetAddress = getInetAddressFromDefaultAddressPicker();
         assertNotNull("Not-null InetAddress is expected", inetAddress);
-        assertEquals("192.168.1.1", inetAddress.getHostAddress());
+        assertEquals("176.74.156.21", inetAddress.getHostAddress());
     }
 
     /**
      * When: Network interface has both IPv4 and IPv6 addresses and IPv6 is preferred.<br>
-     * Then: The IPv6 address is picked.
+     * Then: The global IPv6 address is picked.
      */
     @Test
     public void testIPv6Preferred() throws Exception {
-        setSystemProperty(PREFER_IPV4_STACK, "false");
-        setSystemProperty(PREFER_IPV6_ADDRESSES, "true");
-
-        NetworkInterfaceInfo eth0 = builder("eth0").withAddresses("fe80::9711:82f4:383a:e254", "172.17.0.1").build();
+        //try interface with several IPv6 (link-local, global, site-local) and a IPv4
+        NetworkInterfaceInfo eth0 = builder("eth0")
+                .withAddresses("fe80::9711:82f4:383a:e254", "2600:1f11:f04:eb50:3e7d::2", "fec0::aabb", "172.17.0.1").build();
         networkInterfacesEnumerator = new DummyNetworkInterfacesEnumerator(eth0);
 
-        InetAddress inetAddress = getInetAddressFromDefaultAddressPicker();
+        InetAddress inetAddress = getInetAddressFromDefaultAddressPicker(new JavaIPvXProperties(false, true));
         assertNotNull("Not-null InetAddress is expected", inetAddress);
-        assertEquals("fe80:0:0:0:9711:82f4:383a:e254", inetAddress.getHostAddress());
+        assertEquals("2600:1f11:f04:eb50:3e7d:0:0:2", inetAddress.getHostAddress());
+    }
+
+    /**
+     * When: Network interface has only IPv4 addresses and IPv6 is preferred.<br>
+     * Then: Global IPv4 address is picked.
+     */
+    @Test
+    public void testIPv6PreferredButUnavailable() throws Exception {
+        NetworkInterfaceInfo eth0 = builder("eth0").withAddresses("127.0.0.5", "10.0.0.6", "176.74.156.21", "172.17.0.1")
+                .build();
+        networkInterfacesEnumerator = new DummyNetworkInterfacesEnumerator(eth0);
+
+        InetAddress inetAddress = getInetAddressFromDefaultAddressPicker(new JavaIPvXProperties(false, true));
+        assertNotNull("Not-null InetAddress is expected", inetAddress);
+        assertEquals("176.74.156.21", inetAddress.getHostAddress());
     }
 
     /**
@@ -284,13 +283,17 @@ public class DefaultAddressPickerInterfacesTest {
         assertEquals("192.168.1.4", inetAddress.getHostAddress());
     }
 
+    private InetAddress getInetAddressFromDefaultAddressPicker() throws Exception {
+        return getInetAddressFromDefaultAddressPicker(new JavaIPvXProperties(true, false));
+    }
+
     /**
      * This method executes {@code DefaultAddressPicker.pickMatchingAddress()}
      * and returns the {@code inetAddress} field from the method result
      * or {@code null} if the result was {@code null}.
      */
-    private InetAddress getInetAddressFromDefaultAddressPicker() throws Exception {
-        DefaultAddressPicker picker = new DefaultAddressPicker(config, logger);
+    private InetAddress getInetAddressFromDefaultAddressPicker(JavaIPvXProperties javaNetProps) throws Exception {
+        DefaultAddressPicker picker = new DefaultAddressPicker(config, logger, javaNetProps);
         picker.setNetworkInterfacesEnumerator(networkInterfacesEnumerator);
         DefaultAddressPicker.AddressDefinition addressDefinition = picker.pickMatchingAddress(null);
         return addressDefinition == null ? null : addressDefinition.inetAddress;

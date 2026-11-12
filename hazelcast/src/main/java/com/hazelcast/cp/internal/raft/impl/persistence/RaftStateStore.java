@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.hazelcast.cp.internal.raft.impl.persistence;
 import com.hazelcast.config.cp.RaftAlgorithmConfig;
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
 import com.hazelcast.cp.internal.raft.impl.log.LogEntry;
+import com.hazelcast.cp.internal.raft.impl.log.SnapshotChunk;
 import com.hazelcast.cp.internal.raft.impl.log.SnapshotEntry;
 
 import javax.annotation.Nonnull;
@@ -31,6 +32,14 @@ import java.util.Collection;
  * Defines the contract of the Raft storage.
  */
 public interface RaftStateStore extends Closeable {
+
+    String RAFT_LOG_PREFIX = "raftlog-";
+
+    int RAFT_LOG_FILE_NAME_RADIX = 16;
+
+    String MEMBERS_FILENAME = "members";
+
+    String TERM_FILENAME = "term";
 
     /**
      * Initializes the store before starting to persist Raft state. This method
@@ -87,7 +96,12 @@ public interface RaftStateStore extends Closeable {
     void persistEntry(@Nonnull LogEntry entry) throws IOException;
 
     /**
-     * Persists the given snapshot entry.
+     * Persists the given snapshot chunk.
+     * <p>
+     * All chunks of a snapshot share the same snapshot index.
+     * <p>
+     * Below is an explanation of the general snapshotting
+     * process, which remains valid for the chunking approach:
      * <p>
      * After a snapshot is persisted at <em>index=i</em> and {@link #flushLogs()}
      * is called, the log entry at <em>index=i</em> and all the preceding
@@ -115,13 +129,23 @@ public interface RaftStateStore extends Closeable {
      * the follower receives a snapshot from the leader. There is no upper bound
      * on the gap between the newest log entry and the index of the received
      * snapshot.
-     * </ul>
      *
      * @see #flushLogs()
      * @see #persistEntry(LogEntry)
      * @see RaftAlgorithmConfig
      */
-    void persistSnapshot(@Nonnull SnapshotEntry entry) throws IOException;
+    void persistSnapshotChunk(@Nonnull SnapshotChunk snapshotChunk) throws IOException;
+
+    /**
+     * Deletes all snapshot chunks associated with the given snapshot index from disk storage.
+     * <p>
+     * This method is called by {@link SnapshotInstaller} when a more recent snapshot is detected,
+     * to clean up obsolete snapshot state and free up disk space.
+     *
+     * @param snapshotIndex the index of the snapshot whose chunks should be deleted.
+     * @throws IOException if an I/O error occurs while deleting the snapshot chunks
+     */
+    void deleteSnapshotChunks(long snapshotIndex) throws IOException;
 
     /**
      * Rolls back the log by deleting all entries starting with the given index.
@@ -145,7 +169,6 @@ public interface RaftStateStore extends Closeable {
      * to the storage layer and returns after those changes are written.
      *
      * @see #persistEntry(LogEntry)
-     * @see #persistSnapshot(SnapshotEntry)
      * @see #deleteEntriesFrom(long)
      */
     void flushLogs() throws IOException;

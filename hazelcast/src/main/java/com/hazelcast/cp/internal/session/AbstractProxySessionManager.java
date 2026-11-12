@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,17 +43,12 @@ import static com.hazelcast.internal.util.ThreadUtil.getThreadId;
 /**
  * Implements session management APIs for Raft-based server and client proxies
  */
-public abstract class AbstractProxySessionManager {
-
-    /**
-     * Represents absence of a Raft session
-     */
-    public static final long NO_SESSION_ID = -1;
+public abstract class AbstractProxySessionManager implements ProxySessionManager {
 
     private final ConcurrentMap<RaftGroupId, Object> mutexes = new ConcurrentHashMap<>();
     private final ConcurrentMap<RaftGroupId, SessionState> sessions = new ConcurrentHashMap<>();
     private final ConcurrentMap<BiTuple<RaftGroupId, Long>, Long> threadIds = new ConcurrentHashMap<>();
-    private final AtomicBoolean scheduleHeartbeat = new AtomicBoolean(false);
+    private final AtomicBoolean scheduleHeartbeat = new AtomicBoolean();
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
     private boolean running = true;
 
@@ -93,7 +88,7 @@ public abstract class AbstractProxySessionManager {
         }
     }
 
-
+    @Override
     public final Long getOrCreateUniqueThreadId(RaftGroupId groupId) {
         lock.readLock().lock();
         try {
@@ -116,6 +111,7 @@ public abstract class AbstractProxySessionManager {
      * Increments acquire count of the session.
      * Creates a new session if there is no session yet.
      */
+    @Override
     public final long acquireSession(RaftGroupId groupId) {
         return getOrCreateSession(groupId).acquire(1);
     }
@@ -124,6 +120,7 @@ public abstract class AbstractProxySessionManager {
      * Increments acquire count of the session.
      * Creates a new session if there is no session yet.
      */
+    @Override
     public final long acquireSession(RaftGroupId groupId, int count) {
         return getOrCreateSession(groupId).acquire(count);
     }
@@ -132,6 +129,7 @@ public abstract class AbstractProxySessionManager {
      * Decrements acquire count of the session.
      * Returns silently if no session exists for the given id.
      */
+    @Override
     public final void releaseSession(RaftGroupId groupId, long id) {
         releaseSession(groupId, id, 1);
     }
@@ -140,6 +138,7 @@ public abstract class AbstractProxySessionManager {
      * Decrements acquire count of the session.
      * Returns silently if no session exists for the given id.
      */
+    @Override
     public final void releaseSession(RaftGroupId groupId, long id, int count) {
         SessionState session = sessions.get(groupId);
         if (session != null && session.id == id) {
@@ -151,6 +150,7 @@ public abstract class AbstractProxySessionManager {
      * Invalidates the given session.
      * No more heartbeats will be sent for the given session.
      */
+    @Override
     public final void invalidateSession(RaftGroupId groupId, long id) {
         SessionState session = sessions.get(groupId);
         if (session != null && session.id == id) {
@@ -162,6 +162,7 @@ public abstract class AbstractProxySessionManager {
      * Returns id of the session opened for the given Raft group.
      * Returns {@link #NO_SESSION_ID} if no session exists.
      */
+    @Override
     public final long getSession(RaftGroupId groupId) {
         SessionState session = sessions.get(groupId);
         return session != null ? session.id : NO_SESSION_ID;
@@ -170,6 +171,7 @@ public abstract class AbstractProxySessionManager {
     /**
      * Invokes a shutdown call on server to close all existing sessions.
      */
+    @Override
     public Map<RaftGroupId, InternalCompletableFuture<Object>> shutdown() {
         lock.writeLock().lock();
         try {
@@ -237,6 +239,7 @@ public abstract class AbstractProxySessionManager {
     }
 
     // For testing
+    @Override
     public final long getSessionAcquireCount(RaftGroupId groupId, long sessionId) {
         SessionState session = sessions.get(groupId);
         return session != null && session.id == sessionId ? session.acquireCount.get() : 0;

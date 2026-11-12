@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import com.hazelcast.config.IndexType;
 import com.hazelcast.config.MapStoreConfig;
 import com.hazelcast.core.HazelcastException;
 import com.hazelcast.core.HazelcastInstance;
-import com.hazelcast.internal.util.RootCauseMatcher;
 import com.hazelcast.map.IMap;
 import com.hazelcast.map.MapStoreAdapter;
 import com.hazelcast.map.listener.EntryExpiredListener;
@@ -39,10 +38,8 @@ import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import java.io.IOException;
@@ -54,7 +51,9 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static com.hazelcast.internal.util.RootCauseMatcher.rootCause;
 import static com.hazelcast.map.impl.eviction.MapClearExpiredRecordsTask.PROP_CLEANUP_ENABLED;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -63,8 +62,9 @@ import static org.junit.Assert.assertTrue;
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class QueryAdvancedTest extends HazelcastTestSupport {
 
-    @Rule
-    public ExpectedException expected = ExpectedException.none();
+    protected void configureMap(String name, Config config) {
+        // do nothing
+    }
 
     @Override
     protected Config getConfig() {
@@ -74,12 +74,17 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
     @Test
     public void testQueryOperationAreNotSentToLiteMembers() {
         TestHazelcastInstanceFactory nodeFactory = createHazelcastInstanceFactory(2);
-        HazelcastInstance fullMember = nodeFactory.newHazelcastInstance(getConfig());
-        HazelcastInstance liteMember = nodeFactory.newHazelcastInstance(getConfig().setLiteMember(true));
+        String mapName = randomMapName();
+        Config fullConfig = getConfig();
+        configureMap(mapName, fullConfig);
+        HazelcastInstance fullMember = nodeFactory.newHazelcastInstance(fullConfig);
+        Config liteConfig = getConfig().setLiteMember(true);
+        configureMap(mapName, liteConfig);
+        nodeFactory.newHazelcastInstance(liteConfig);
 
         assertClusterSizeEventually(2, fullMember);
 
-        IMap<Integer, Integer> map = fullMember.getMap(randomMapName());
+        IMap<Integer, Integer> map = fullMember.getMap(mapName);
         DeserializationCountingPredicate predicate = new DeserializationCountingPredicate();
 
         // initialize all partitions
@@ -122,6 +127,7 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
         String mapName = "default";
         config.getMapConfig(mapName)
               .setTimeToLiveSeconds(3);
+        configureMap(mapName, config);
 
         HazelcastInstance instance = createHazelcastInstance(config);
 
@@ -175,6 +181,7 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
     @Test
     public void testTwoNodesWithPartialIndexes() {
         Config config = getConfig();
+        configureMap("employees", config);
         TestHazelcastInstanceFactory nodeFactory = createHazelcastInstanceFactory(2);
         HazelcastInstance instance1 = nodeFactory.newHazelcastInstance(config);
         HazelcastInstance instance2 = nodeFactory.newHazelcastInstance(config);
@@ -221,6 +228,7 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
     @Test
     public void testTwoNodesWithIndexes() {
         Config config = getConfig();
+        configureMap("employees", config);
         TestHazelcastInstanceFactory nodeFactory = createHazelcastInstanceFactory(2);
         HazelcastInstance instance1 = nodeFactory.newHazelcastInstance(config);
         HazelcastInstance instance2 = nodeFactory.newHazelcastInstance(config);
@@ -268,14 +276,18 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
 
     @Test
     public void testOneMemberWithoutIndex() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("employees", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<String, Employee> map = instance.getMap("employees");
         QueryBasicTest.doFunctionalQueryTest(map);
     }
 
     @Test
     public void testOneMemberWithIndex() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("employees", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<String, Employee> map = instance.getMap("employees");
         map.addIndex(IndexType.HASH, "name");
         map.addIndex(IndexType.SORTED, "age");
@@ -285,7 +297,9 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
 
     @Test
     public void testOneMemberSQLWithoutIndex() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("employees", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<String, Employee> map = instance.getMap("employees");
         QueryBasicTest.doFunctionalSQLQueryTest(map);
         Set<Map.Entry<String, Employee>> entries = map.entrySet(Predicates.sql("active and age>23"));
@@ -294,7 +308,9 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
 
     @Test
     public void testOneMemberSQLWithIndex() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("employees", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<String, Employee> map = instance.getMap("employees");
         map.addIndex(IndexType.HASH, "name");
         map.addIndex(IndexType.SORTED, "age");
@@ -305,6 +321,7 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
     @Test
     public void testTwoMembers() {
         Config config = getConfig();
+        configureMap("employees", config);
         TestHazelcastInstanceFactory nodeFactory = createHazelcastInstanceFactory(2);
         HazelcastInstance instance = nodeFactory.newHazelcastInstance(config);
         nodeFactory.newHazelcastInstance(config);
@@ -316,6 +333,7 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
     @Test
     public void testTwoMembersWithIndexes() {
         Config config = getConfig();
+        configureMap("employees", config);
         TestHazelcastInstanceFactory nodeFactory = createHazelcastInstanceFactory(2);
         HazelcastInstance instance = nodeFactory.newHazelcastInstance(config);
         nodeFactory.newHazelcastInstance(config);
@@ -330,6 +348,7 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
     @Test
     public void testTwoMembersWithIndexesAndShutdown() {
         Config config = getConfig();
+        configureMap("employees", config);
         TestHazelcastInstanceFactory nodeFactory = createHazelcastInstanceFactory(2);
         HazelcastInstance instance1 = nodeFactory.newHazelcastInstance(config);
         HazelcastInstance instance2 = nodeFactory.newHazelcastInstance(config);
@@ -356,6 +375,7 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
     @Test
     public void testTwoMembersWithIndexesAndShutdown2() {
         Config config = getConfig();
+        configureMap("employees", config);
         TestHazelcastInstanceFactory nodeFactory = createHazelcastInstanceFactory(2);
         HazelcastInstance instance1 = nodeFactory.newHazelcastInstance(config);
         HazelcastInstance instance2 = nodeFactory.newHazelcastInstance(config);
@@ -383,6 +403,7 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
     @Test
     public void testTwoMembersWithIndexesAndShutdown3() {
         Config config = getConfig();
+        configureMap("employees", config);
         TestHazelcastInstanceFactory nodeFactory = createHazelcastInstanceFactory(2);
         HazelcastInstance instance1 = nodeFactory.newHazelcastInstance(config);
 
@@ -412,6 +433,7 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
     @Test
     public void testSecondMemberAfterAddingIndexes() {
         Config config = getConfig();
+        configureMap("employees", config);
         TestHazelcastInstanceFactory nodeFactory = createHazelcastInstanceFactory(2);
         HazelcastInstance instance = nodeFactory.newHazelcastInstance(config);
         IMap<String, Employee> map = instance.getMap("employees");
@@ -428,6 +450,7 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
         Config config = getConfig();
         String mapName = "default";
         config.getMapConfig(mapName).addIndexConfig(new IndexConfig(IndexType.HASH, "typeName"));
+        configureMap(mapName, config);
 
         HazelcastInstance[] instances = createHazelcastInstanceFactory(3).newInstances(config);
 
@@ -495,6 +518,7 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
         });
 
         config.getMapConfig(name).setMapStoreConfig(mapStoreConfig);
+        configureMap(name, config);
         HazelcastInstance instance = createHazelcastInstance(config);
         final IMap map = instance.getMap(name);
         assertTrueEventually(() -> {
@@ -509,6 +533,7 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
         String mapName = randomMapName();
         Config config = getConfig();
         config.getSerializationConfig().addPortableFactory(666, classId -> new PortableEmployee());
+        configureMap(mapName, config);
         HazelcastInstance hazelcastInstance = createHazelcastInstance(config);
 
         IMap<Integer, PortableEmployee> map = hazelcastInstance.getMap(mapName);
@@ -529,6 +554,7 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
         config.getMapConfig(mapName)
               .addIndexConfig(new IndexConfig(IndexType.HASH, "notExist"))
               .addIndexConfig(new IndexConfig(IndexType.HASH, "n"));
+        configureMap(mapName, config);
 
         HazelcastInstance hazelcastInstance = createHazelcastInstance(config);
 
@@ -544,6 +570,7 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
     @Test
     public void testClassNotFoundErrorDelegatedToCallerOnQuery() {
         Config config = getConfig();
+        configureMap("map", config);
         HazelcastInstance hazelcastInstance = createHazelcastInstance(config);
 
         IMap<Integer, Integer> map = hazelcastInstance.getMap("map");
@@ -552,8 +579,8 @@ public class QueryAdvancedTest extends HazelcastTestSupport {
         //A remote predicate can throw Error in case of Usercodeployment and missing sub classes
         //See the issue for actual problem https://github.com/hazelcast/hazelcast/issues/18052
         //We are throwing error to see if the error is delegated to the caller
-        expected.expect(HazelcastException.class);
-        expected.expectCause(new RootCauseMatcher(NoClassDefFoundError.class));
-        map.values(new ErrorThrowingPredicate());
+        assertThatThrownBy(() -> map.values(new ErrorThrowingPredicate()))
+                .isInstanceOf(HazelcastException.class)
+                .cause().has(rootCause(NoClassDefFoundError.class));
     }
 }

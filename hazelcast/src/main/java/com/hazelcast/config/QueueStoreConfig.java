@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.hazelcast.config;
 
+import com.hazelcast.client.impl.protocol.util.PropertiesUtil;
 import com.hazelcast.collection.QueueStore;
 import com.hazelcast.collection.QueueStoreFactory;
 import com.hazelcast.internal.config.ConfigDataSerializerHook;
@@ -77,11 +78,12 @@ public class QueueStoreConfig implements IdentifiedDataSerializable {
     private boolean enabled = true;
     private String className;
     private String factoryClassName;
-    private Properties properties = new Properties();
+    private Properties properties;
     private QueueStore storeImplementation;
     private QueueStoreFactory factoryImplementation;
 
     public QueueStoreConfig() {
+        properties = new Properties();
     }
 
     public QueueStoreConfig(QueueStoreConfig config) {
@@ -90,7 +92,7 @@ public class QueueStoreConfig implements IdentifiedDataSerializable {
         storeImplementation = config.getStoreImplementation();
         factoryClassName = config.getFactoryClassName();
         factoryImplementation = config.getFactoryImplementation();
-        properties.putAll(config.getProperties());
+        properties = PropertiesUtil.clone(config.getProperties());
     }
 
     /**
@@ -207,7 +209,7 @@ public class QueueStoreConfig implements IdentifiedDataSerializable {
      * @return this configuration
      */
     public QueueStoreConfig setProperty(String name, String value) {
-        properties.put(name, value);
+        properties.setProperty(name, value);
         return this;
     }
 
@@ -257,6 +259,7 @@ public class QueueStoreConfig implements IdentifiedDataSerializable {
         return this;
     }
 
+    @Override
     public String toString() {
         return "QueueStoreConfig{"
                 + "enabled=" + enabled
@@ -294,8 +297,8 @@ public class QueueStoreConfig implements IdentifiedDataSerializable {
         className = in.readString();
         factoryClassName = in.readString();
         properties = in.readObject();
-        storeImplementation = in.readObject();
-        factoryImplementation = in.readObject();
+        storeImplementation = ConfigDeserializationUtil.readObject(in, getClass(), "storeImplementation");
+        factoryImplementation = ConfigDeserializationUtil.readObject(in, getClass(), "factoryImplementation");
     }
 
     @Override
@@ -303,11 +306,10 @@ public class QueueStoreConfig implements IdentifiedDataSerializable {
         if (this == o) {
             return true;
         }
-        if (!(o instanceof QueueStoreConfig)) {
+        if (!(o instanceof QueueStoreConfig that)) {
             return false;
         }
 
-        QueueStoreConfig that = (QueueStoreConfig) o;
         return isEnabled() == that.isEnabled()
                 && Objects.equals(getProperties(), that.getProperties())
                 && Objects.equals(className, that.className)

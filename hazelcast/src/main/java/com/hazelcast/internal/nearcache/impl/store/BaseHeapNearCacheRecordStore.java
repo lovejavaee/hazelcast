@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,13 +22,17 @@ import com.hazelcast.config.NearCacheConfig;
 import com.hazelcast.config.NearCachePreloaderConfig;
 import com.hazelcast.internal.adapter.DataStructureAdapter;
 import com.hazelcast.internal.eviction.EvictionChecker;
+import com.hazelcast.internal.eviction.BoundedExpirationStrategy;
+import com.hazelcast.internal.nearcache.NearCache;
 import com.hazelcast.internal.nearcache.NearCacheRecord;
 import com.hazelcast.internal.nearcache.impl.maxsize.EntryCountNearCacheEvictionChecker;
 import com.hazelcast.internal.nearcache.impl.preloader.NearCachePreloader;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.serialization.SerializationService;
+import com.hazelcast.spi.properties.HazelcastProperties;
 
 import javax.annotation.Nullable;
+import java.time.Duration;
 import java.util.Map;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -40,7 +44,7 @@ import static java.lang.String.format;
  *
  * @param <K> the type of the key stored in Near Cache
  * @param <V> the type of the value stored in Near Cache
- * @param <R> the type of the value of the underlying {@link com.hazelcast.internal.nearcache.impl.NearCacheRecordMap}
+ * @param <R> the type of the value of the underlying {@link com.hazelcast.internal.nearcache.impl.SampleableNearCacheRecordMap}
  */
 public abstract class BaseHeapNearCacheRecordStore<K, V, R extends NearCacheRecord>
         extends AbstractNearCacheRecordStore<K, V, K, R, HeapNearCacheRecordMap<K, R>> {
@@ -49,14 +53,19 @@ public abstract class BaseHeapNearCacheRecordStore<K, V, R extends NearCacheReco
 
     private final NearCachePreloader<K> nearCachePreloader;
     private final BiFunction<? super K, ? super R, ? extends R> invalidatorFunction = createInvalidatorFunction();
+    private final BoundedExpirationStrategy<Map.Entry<K, R>> expirationStrategy;
 
     BaseHeapNearCacheRecordStore(String name, NearCacheConfig nearCacheConfig, SerializationService serializationService,
-                                 ClassLoader classLoader) {
+                                 ClassLoader classLoader, HazelcastProperties properties) {
         super(nearCacheConfig, serializationService, classLoader);
 
         NearCachePreloaderConfig preloaderConfig = nearCacheConfig.getPreloaderConfig();
         this.nearCachePreloader = preloaderConfig.isEnabled()
                 ? new NearCachePreloader<>(name, preloaderConfig, nearCacheStats, serializationService) : null;
+
+        this.expirationStrategy = new BoundedExpirationStrategy<>(() -> records.entrySet().iterator(), this::tryExpire,
+                properties.getInteger(NearCache.EXPIRATION_TASK_MAX_BATCH_SIZE),
+                Duration.ofMillis(properties.getMillis(NearCache.EXPIRATION_TASK_LIMIT_MILLIS)));
     }
 
     @Override
@@ -98,19 +107,24 @@ public abstract class BaseHeapNearCacheRecordStore<K, V, R extends NearCacheReco
 
     @Override
     public void onEvict(K key, R record, boolean wasExpired) {
+        if (!canUpdateStats(record)) {
+            return;
+        }
         super.onEvict(key, record, wasExpired);
         nearCacheStats.decrementOwnedEntryMemoryCost(getTotalStorageMemoryCost(key, record));
     }
 
     @Override
     public void doExpiration() {
-        for (Map.Entry<K, R> entry : records.entrySet()) {
-            K key = entry.getKey();
-            R value = entry.getValue();
-            if (isRecordExpired(value)) {
-                invalidate(key);
-                onExpire(key, value);
-            }
+        expirationStrategy.doExpiration();
+    }
+
+    private void tryExpire(Map.Entry<K, R> entry) {
+        K key = entry.getKey();
+        R record = entry.getValue();
+        if (isRecordExpired(record)) {
+            invalidate(key);
+            onExpire(key, record);
         }
     }
 

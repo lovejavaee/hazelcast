@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ package com.hazelcast.cp.internal.exception;
 
 import com.hazelcast.core.HazelcastException;
 
+import java.io.Serial;
+
 /**
  * An internal exception thrown when a Raft group is attempted to be created
  * with a Hazelcast node that is not an active CP member. This situation can
@@ -25,6 +27,7 @@ import com.hazelcast.core.HazelcastException;
  * will be handled internally and will not be exposed to the user.
  */
 public class CannotCreateRaftGroupException extends HazelcastException {
+    @Serial
     private static final long serialVersionUID = 3849291601278316593L;
 
     public CannotCreateRaftGroupException(String message) {

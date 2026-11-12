@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,8 +28,9 @@ import com.hazelcast.test.AssertTask;
 import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
-import org.junit.Rule;
-import org.junit.rules.ExpectedException;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 
 import javax.annotation.Nonnull;
 import java.util.List;
@@ -47,10 +48,8 @@ public abstract class StreamSourceStageTestBase extends JetTestSupport {
 
     protected static HazelcastInstance instance;
     static final String JOURNALED_MAP_NAME = "journaledMap";
-    private static TestHazelcastFactory factory = new TestHazelcastFactory();
+    private static final TestHazelcastFactory factory = new TestHazelcastFactory();
 
-    @Rule
-    public ExpectedException expectedException = ExpectedException.none();
 
     // we must use local parallelism 1 on the stages to avoid wm coalescing
     protected final Function<StreamSourceStage<Integer>, StreamStage<Integer>> withoutTimestampsFn =
@@ -61,11 +60,13 @@ public abstract class StreamSourceStageTestBase extends JetTestSupport {
             s -> s.withTimestamps(i -> i + 1, 0).setLocalParallelism(1);
 
     @Before
+    @BeforeEach
     public void before() {
         WatermarkCollector.watermarks.clear();
     }
 
     @BeforeClass
+    @BeforeAll
     public static void beforeClass() {
         Config config = new Config();
         config.getMapConfig("*")
@@ -77,6 +78,7 @@ public abstract class StreamSourceStageTestBase extends JetTestSupport {
     }
 
     @AfterClass
+    @AfterAll
     public static void afterClass() {
         factory.terminateAll();
     }
@@ -118,8 +120,7 @@ public abstract class StreamSourceStageTestBase extends JetTestSupport {
         assertTrueAllTheTime(assertTask, 1);
         assertTrueEventually(() -> assertEquals(RUNNING, job.getStatus()));
         job.cancel();
-        expectedException.expect(CancellationException.class);
-        job.join();
+        assertThrows(CancellationException.class, job::join);
     }
 
     private static class WatermarkCollector extends AbstractProcessor {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,6 @@ import com.hazelcast.scheduledexecutor.impl.ScheduledExecutorServiceTestSupport.
 import com.hazelcast.spi.merge.DiscardMergePolicy;
 import com.hazelcast.spi.merge.PassThroughMergePolicy;
 import com.hazelcast.spi.merge.PutIfAbsentMergePolicy;
-import com.hazelcast.spi.merge.SplitBrainMergePolicy;
 import com.hazelcast.test.HazelcastParallelParametersRunnerFactory;
 import com.hazelcast.test.HazelcastParametrizedRunner;
 import com.hazelcast.test.SplitBrainTestSupport;
@@ -42,7 +41,6 @@ import org.junit.runners.Parameterized.UseParametersRunnerFactory;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -56,12 +54,8 @@ import static java.lang.Integer.MAX_VALUE;
 import static java.lang.Integer.parseInt;
 import static java.lang.String.valueOf;
 import static java.util.Arrays.asList;
-import static java.util.Collections.sort;
 import static java.util.concurrent.TimeUnit.SECONDS;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
-import static org.hamcrest.Matchers.lessThan;
-import static org.hamcrest.core.AllOf.allOf;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -84,30 +78,31 @@ public class ScheduledExecutorSplitBrainTest extends SplitBrainTestSupport {
     @Parameters(name = "mergePolicy:{0}")
     public static Collection<Object> parameters() {
         return asList(new Object[]{
-                DiscardMergePolicy.class,
-                PassThroughMergePolicy.class,
-                PutIfAbsentMergePolicy.class,
+                DiscardMergePolicy.class.getName(),
+                PassThroughMergePolicy.class.getName(),
+                PutIfAbsentMergePolicy.class.getName(),
         });
     }
 
     @Parameter
-    public Class<? extends SplitBrainMergePolicy> mergePolicyClass;
+    @SuppressWarnings("rawtypes")
+    public String mergePolicyClassName;
 
     // the ConcurrentMap just for the convenience of the putIfAbsent(), no real concurrency needs here
     private final ConcurrentMap<String, IScheduledFuture<Double>> expectedScheduledFutures
-            = new ConcurrentHashMap<String, IScheduledFuture<Double>>();
+            = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, IScheduledFuture<Double>> unexpectedScheduledFutures
-            = new ConcurrentHashMap<String, IScheduledFuture<Double>>();
+            = new ConcurrentHashMap<>();
 
-    private String scheduledExecutorName = randomMapName("scheduledExecutor-");
-    private IScheduledExecutorService scheduledExecutorService1;
-    private IScheduledExecutorService scheduledExecutorService2;
+    protected final String scheduledExecutorName = randomMapName("scheduledExecutor-");
+    protected IScheduledExecutorService scheduledExecutorService1;
+    protected IScheduledExecutorService scheduledExecutorService2;
     private MergeLifecycleListener mergeLifecycleListener;
 
     @Override
     protected Config config() {
         MergePolicyConfig mergePolicyConfig = new MergePolicyConfig()
-                .setPolicy(mergePolicyClass.getName())
+                .setPolicy(mergePolicyClassName)
                 .setBatchSize(10);
 
         Config config = super.config();
@@ -148,15 +143,19 @@ public class ScheduledExecutorSplitBrainTest extends SplitBrainTestSupport {
         scheduledExecutorService1 = firstBrain[0].getScheduledExecutorService(scheduledExecutorName);
         scheduledExecutorService2 = secondBrain[0].getScheduledExecutorService(scheduledExecutorName);
 
-        if (mergePolicyClass == DiscardMergePolicy.class) {
+        if (mergePolicyClassName.equals(DiscardMergePolicy.class.getName())) {
             onAfterSplitDiscardPolicy();
-        } else if (mergePolicyClass == PassThroughMergePolicy.class) {
+        } else if (mergePolicyClassName.equals(PassThroughMergePolicy.class.getName())) {
             onAfterSplitPassThroughPolicy();
-        } else if (mergePolicyClass == PutIfAbsentMergePolicy.class) {
+        } else if (mergePolicyClassName.equals(PutIfAbsentMergePolicy.class.getName())) {
             onAfterSplitPutIfAbsentPolicy();
         } else {
-            fail();
+            onAfterSplitBrainCreatedExtension();
         }
+    }
+
+    protected void onAfterSplitBrainCreatedExtension() {
+        fail("Unexpected merge policy parameter");
     }
 
     @Override
@@ -164,15 +163,19 @@ public class ScheduledExecutorSplitBrainTest extends SplitBrainTestSupport {
         // wait until merge completes
         mergeLifecycleListener.await();
 
-        if (mergePolicyClass == DiscardMergePolicy.class) {
+        if (mergePolicyClassName.equals(DiscardMergePolicy.class.getName())) {
             onAfterMergeDiscardMergePolicy();
-        } else if (mergePolicyClass == PassThroughMergePolicy.class) {
+        } else if (mergePolicyClassName.equals(PassThroughMergePolicy.class.getName())) {
             onAfterMergePassThroughMergePolicy();
-        } else if (mergePolicyClass == PutIfAbsentMergePolicy.class) {
+        } else if (mergePolicyClassName.equals(PutIfAbsentMergePolicy.class.getName())) {
             onAfterMergePutIfAbsentMergePolicy();
         } else {
-            fail();
+            onAfterSplitBrainHealedExtension();
         }
+    }
+
+    protected void onAfterSplitBrainHealedExtension() throws Exception {
+        fail("Unexpected merge policy parameter");
     }
 
     private void onAfterSplitDiscardPolicy() {
@@ -180,9 +183,9 @@ public class ScheduledExecutorSplitBrainTest extends SplitBrainTestSupport {
     }
 
     private void onAfterMergeDiscardMergePolicy() throws Exception {
-        // assert everything else (ie. tasks created before split) is in order
-        assertContents(scheduledExecutorService1.<Double>getAllScheduledFutures());
-        assertContents(scheduledExecutorService2.<Double>getAllScheduledFutures());
+        // assert everything else (i.e. tasks created before split) is in order
+        assertContents(scheduledExecutorService1.getAllScheduledFutures());
+        assertContents(scheduledExecutorService2.getAllScheduledFutures());
         assertHandlersAreStillCorrect();
         assertDiscardedFutures();
     }
@@ -202,13 +205,13 @@ public class ScheduledExecutorSplitBrainTest extends SplitBrainTestSupport {
     }
 
     private void onAfterMergePassThroughMergePolicy() throws Exception {
-        assertContents(scheduledExecutorService1.<Double>getAllScheduledFutures());
-        assertContents(scheduledExecutorService2.<Double>getAllScheduledFutures());
+        assertContents(scheduledExecutorService1.getAllScheduledFutures());
+        assertContents(scheduledExecutorService2.getAllScheduledFutures());
         assertHandlersAreStillCorrect();
         assertUnexpectedFuturesHaveMergedValue();
     }
 
-    private void onAfterSplitPutIfAbsentPolicy() {
+    protected void onAfterSplitPutIfAbsentPolicy() {
         // we should not see the tasks with UNEXPECTED_VALUE in the final tasks,
         // since they have the same name as existing tasks
         for (int i = INITIAL_COUNT; i < AFTER_SPLIT_COMMON_COUNT; i++) {
@@ -222,9 +225,9 @@ public class ScheduledExecutorSplitBrainTest extends SplitBrainTestSupport {
         }
     }
 
-    private void onAfterMergePutIfAbsentMergePolicy() throws Exception {
-        assertContents(scheduledExecutorService1.<Double>getAllScheduledFutures());
-        assertContents(scheduledExecutorService2.<Double>getAllScheduledFutures());
+    protected void onAfterMergePutIfAbsentMergePolicy() throws Exception {
+        assertContents(scheduledExecutorService1.getAllScheduledFutures());
+        assertContents(scheduledExecutorService2.getAllScheduledFutures());
         assertHandlersAreStillCorrect();
         assertUnexpectedFuturesHaveMergedValue();
     }
@@ -249,14 +252,15 @@ public class ScheduledExecutorSplitBrainTest extends SplitBrainTestSupport {
 
         assertEquals(expectedScheduledFutures.size(), total);
 
-        Set<String> seenSoFar = new HashSet<String>();
+        Set<String> seenSoFar = new HashSet<>();
         for (List<IScheduledFuture<Double>> memberFutures : futuresPerMember.values()) {
             for (IScheduledFuture<Double> future : memberFutures) {
                 String taskName = future.getHandler().getTaskName();
                 double value = future.get();
 
-                assertThat(parseInt(future.getHandler().getTaskName()),
-                        allOf(greaterThanOrEqualTo(0), lessThan(expectedScheduledFutures.size())));
+                assertThat(parseInt(future.getHandler().getTaskName()))
+                        .isGreaterThanOrEqualTo(0)
+                                .isLessThan(expectedScheduledFutures.size());
                 assertEquals(EXPECTED_RESULT, value, 0);
                 assertFalse(seenSoFar.contains(taskName));
                 seenSoFar.add(taskName);
@@ -265,14 +269,11 @@ public class ScheduledExecutorSplitBrainTest extends SplitBrainTestSupport {
     }
 
     private void assertHandlersAreStillCorrect() throws Exception {
-        List<IScheduledFuture<Double>> allFutures = new ArrayList<IScheduledFuture<Double>>(expectedScheduledFutures.values());
-        sort(allFutures, new Comparator<IScheduledFuture<Double>>() {
-            @Override
-            public int compare(IScheduledFuture<Double> o1, IScheduledFuture<Double> o2) {
-                int a = parseInt(o1.getHandler().getTaskName());
-                int b = parseInt(o2.getHandler().getTaskName());
-                return new Integer(a).compareTo(b);
-            }
+        List<IScheduledFuture<Double>> allFutures = new ArrayList<>(expectedScheduledFutures.values());
+        allFutures.sort((o1, o2) -> {
+            int a = parseInt(o1.getHandler().getTaskName());
+            int b = parseInt(o2.getHandler().getTaskName());
+            return Integer.compare(a, b);
         });
 
         int counter = 0;

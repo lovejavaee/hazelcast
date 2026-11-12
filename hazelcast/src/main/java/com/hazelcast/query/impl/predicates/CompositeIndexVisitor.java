@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,9 +18,8 @@ package com.hazelcast.query.impl.predicates;
 
 import com.hazelcast.query.Predicate;
 import com.hazelcast.query.impl.CompositeValue;
-import com.hazelcast.query.impl.Indexes;
+import com.hazelcast.query.impl.IndexRegistry;
 import com.hazelcast.query.impl.InternalIndex;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -40,7 +39,7 @@ public class CompositeIndexVisitor extends AbstractVisitor {
 
     @SuppressWarnings({"checkstyle:cyclomaticcomplexity", "checkstyle:methodlength", "checkstyle:npathcomplexity"})
     @Override
-    public Predicate visit(AndPredicate andPredicate, Indexes indexes) {
+    public Predicate visit(AndPredicate andPredicate, IndexRegistry indexes) {
         int originalSize = andPredicate.predicates.length;
         if (originalSize < 2) {
             // can't optimize further
@@ -63,8 +62,7 @@ public class CompositeIndexVisitor extends AbstractVisitor {
         Map<String, RangePredicate> comparisons = null;
         Output output = null;
         for (Predicate predicate : andPredicate.predicates) {
-            if (predicate instanceof EqualPredicate) {
-                EqualPredicate equalPredicate = (EqualPredicate) predicate;
+            if (predicate instanceof EqualPredicate equalPredicate) {
                 prefixes = obtainHashMap(prefixes, originalSize);
 
                 EqualPredicate replaced = prefixes.put(equalPredicate.attributeName, equalPredicate);
@@ -84,8 +82,7 @@ public class CompositeIndexVisitor extends AbstractVisitor {
                 continue;
             }
 
-            if (predicate instanceof RangePredicate) {
-                RangePredicate rangePredicate = (RangePredicate) predicate;
+            if (predicate instanceof RangePredicate rangePredicate) {
                 comparisons = obtainHashMap(comparisons, originalSize);
 
                 RangePredicate replaced = comparisons.put(rangePredicate.getAttribute(), rangePredicate);
@@ -194,7 +191,7 @@ public class CompositeIndexVisitor extends AbstractVisitor {
             }
 
             if (bestIndex == null || bestPrefix == 1) {
-                // Nothing matched or we have a single-attribute prefix which
+                // Nothing matched, or we have a single-attribute prefix which
                 // should be handled by AttributeIndexRegistry.
                 break;
             }
@@ -398,7 +395,6 @@ public class CompositeIndexVisitor extends AbstractVisitor {
         return output == null ? new Output(capacity) : output;
     }
 
-    @SuppressFBWarnings(value = "EQ_DOESNT_OVERRIDE_EQUALS")
     private static class Output extends ArrayList<Predicate> {
 
         private boolean requiresGeneration;

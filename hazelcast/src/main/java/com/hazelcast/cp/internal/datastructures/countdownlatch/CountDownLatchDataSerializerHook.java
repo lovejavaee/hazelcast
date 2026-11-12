@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,27 +50,16 @@ public class CountDownLatchDataSerializerHook implements DataSerializerHook {
 
     @Override
     public DataSerializableFactory createFactory() {
-        return typeId -> {
-            switch (typeId) {
-                case COUNT_DOWN_LATCH_REGISTRY:
-                    return new CountDownLatchRegistry();
-                case COUNT_DOWN_LATCH:
-                    return new CountDownLatch();
-                case AWAIT_INVOCATION_KEY:
-                    return new AwaitInvocationKey();
-                case AWAIT_OP:
-                    return new AwaitOp();
-                case COUNT_DOWN_OP:
-                    return new CountDownOp();
-                case GET_COUNT_OP:
-                    return new GetCountOp();
-                case GET_ROUND_OP:
-                    return new GetRoundOp();
-                case TRY_SET_COUNT_OP:
-                    return new TrySetCountOp();
-                default:
-                    throw new IllegalArgumentException("Undefined type: " + typeId);
-            }
+        return typeId -> switch (typeId) {
+            case COUNT_DOWN_LATCH_REGISTRY -> new CountDownLatchRegistry();
+            case COUNT_DOWN_LATCH -> new CountDownLatch();
+            case AWAIT_INVOCATION_KEY -> new AwaitInvocationKey();
+            case AWAIT_OP -> new AwaitOp();
+            case COUNT_DOWN_OP -> new CountDownOp();
+            case GET_COUNT_OP -> new GetCountOp();
+            case GET_ROUND_OP -> new GetRoundOp();
+            case TRY_SET_COUNT_OP -> new TrySetCountOp();
+            default -> throw new IllegalArgumentException("Undefined type: " + typeId);
         };
     }
 }

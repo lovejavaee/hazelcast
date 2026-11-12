@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,31 +51,18 @@ public class SemaphoreDataSerializerHook implements DataSerializerHook {
 
     @Override
     public DataSerializableFactory createFactory() {
-        return typeId -> {
-            switch (typeId) {
-                case RAFT_SEMAPHORE_REGISTRY:
-                    return new SemaphoreRegistry();
-                case RAFT_SEMAPHORE:
-                    return new Semaphore();
-                case ACQUIRE_INVOCATION_KEY:
-                    return new AcquireInvocationKey();
-                case SEMAPHORE_ENDPOINT:
-                    return new SemaphoreEndpoint();
-                case ACQUIRE_PERMITS_OP:
-                    return new AcquirePermitsOp();
-                case AVAILABLE_PERMITS_OP:
-                    return new AvailablePermitsOp();
-                case CHANGE_PERMITS_OP:
-                    return new ChangePermitsOp();
-                case DRAIN_PERMITS_OP:
-                    return new DrainPermitsOp();
-                case INIT_SEMAPHORE_OP:
-                    return new InitSemaphoreOp();
-                case RELEASE_PERMITS_OP:
-                    return new ReleasePermitsOp();
-                default:
-                    throw new IllegalArgumentException("Undefined type: " + typeId);
-            }
+        return typeId -> switch (typeId) {
+            case RAFT_SEMAPHORE_REGISTRY -> new SemaphoreRegistry();
+            case RAFT_SEMAPHORE -> new Semaphore();
+            case ACQUIRE_INVOCATION_KEY -> new AcquireInvocationKey();
+            case SEMAPHORE_ENDPOINT -> new SemaphoreEndpoint();
+            case ACQUIRE_PERMITS_OP -> new AcquirePermitsOp();
+            case AVAILABLE_PERMITS_OP -> new AvailablePermitsOp();
+            case CHANGE_PERMITS_OP -> new ChangePermitsOp();
+            case DRAIN_PERMITS_OP -> new DrainPermitsOp();
+            case INIT_SEMAPHORE_OP -> new InitSemaphoreOp();
+            case RELEASE_PERMITS_OP -> new ReleasePermitsOp();
+            default -> throw new IllegalArgumentException("Undefined type: " + typeId);
         };
     }
 }

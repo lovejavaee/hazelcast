@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ import static org.junit.Assert.assertTrue;
 public class CountDownLatchSnapshotTest extends AbstractAtomicRegisterSnapshotTest<Integer> {
 
     private ICountDownLatch latch;
-    private String name = "latch";
+    private final String name = "latch";
 
     @Before
     public void createProxy() {
@@ -52,11 +52,6 @@ public class CountDownLatchSnapshotTest extends AbstractAtomicRegisterSnapshotTe
     protected Integer setAndGetInitialValue() {
         assertTrue(latch.trySetCount(5));
         latch.countDown();
-        return latch.getCount();
-    }
-
-    @Override
-    protected Integer readValue() {
         return latch.getCount();
     }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,16 +20,15 @@ import com.hazelcast.internal.partition.AbstractInternalPartition;
 import com.hazelcast.internal.partition.InternalPartition;
 import com.hazelcast.internal.partition.PartitionReplica;
 import com.hazelcast.internal.partition.PartitionReplicaInterceptor;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import static java.util.Arrays.copyOf;
 
 public class InternalPartitionImpl extends AbstractInternalPartition implements InternalPartition {
 
-    @SuppressFBWarnings(value = "VO_VOLATILE_REFERENCE_TO_ARRAY", justification =
-            "The contents of this array will never be updated, so it can be safely read using a volatile read."
-                    + " Writing to `replicas` is done under InternalPartitionServiceImpl.lock,"
-                    + " so there's no need to guard `replicas` field or to use a CAS.")
+//    @SuppressFBWarnings(value = "VO_VOLATILE_REFERENCE_TO_ARRAY", justification =
+//            "The contents of this array will never be updated, so it can be safely read using a volatile read."
+//                    + " Writing to `replicas` is done under InternalPartitionServiceImpl.lock,"
+//                    + " so there's no need to guard `replicas` field or to use a CAS.")
     private volatile PartitionReplica[] replicas = new PartitionReplica[MAX_REPLICA_COUNT];
     private final PartitionReplicaInterceptor interceptor;
     private volatile int version;
@@ -42,7 +41,6 @@ public class InternalPartitionImpl extends AbstractInternalPartition implements 
         this.interceptor = interceptor;
     }
 
-    @SuppressFBWarnings("EI_EXPOSE_REP")
     public InternalPartitionImpl(int partitionId, PartitionReplica localReplica, PartitionReplica[] replicas, int version,
             PartitionReplicaInterceptor interceptor) {
         this(partitionId, localReplica, interceptor);
@@ -104,9 +102,17 @@ public class InternalPartitionImpl extends AbstractInternalPartition implements 
         onReplicaChange(index2, a2, a1);
     }
 
-    void setReplicasAndVersion(InternalPartition partition) {
-        setReplicas(partition.getReplicasCopy());
+    /**
+     * This method is always called from batch partition update situations, so it does
+     * not invoke interceptors individually per partition.
+     * (apply partition assignments from master while joining, apply partition table recovered
+     * from hot restart)
+     * @return {@code true} if partition owner was changed, otherwise {@code false}.
+     */
+    boolean setReplicasAndVersion(InternalPartition partition) {
+        boolean ownerChanged = setReplicas(partition.getReplicasCopy(), false);
         version = partition.version();
+        return ownerChanged;
     }
 
     void setVersion(int version) {
@@ -122,6 +128,17 @@ public class InternalPartitionImpl extends AbstractInternalPartition implements 
         onReplicasChange(newReplicas, oldReplicas);
     }
 
+    /**
+     * Variant of {@link #setReplicas(PartitionReplica[])} that's suitable for batch partition replica updates.
+     *
+     * @return {@code true} if partition owner was changed, otherwise {@code false}.
+     */
+    boolean setReplicas(PartitionReplica[] newReplicas, boolean invokeInterceptor) {
+        PartitionReplica[] oldReplicas = replicas;
+        replicas = newReplicas;
+        return onReplicasChange(newReplicas, oldReplicas, invokeInterceptor);
+    }
+
     void setReplica(int replicaIndex, PartitionReplica newReplica) {
         PartitionReplica[] newReplicas = copyOf(replicas, MAX_REPLICA_COUNT);
         PartitionReplica oldReplica = newReplicas[replicaIndex];
@@ -130,19 +147,46 @@ public class InternalPartitionImpl extends AbstractInternalPartition implements 
         onReplicaChange(replicaIndex, oldReplica, newReplica);
     }
 
-    /** Calls the partition replica change interceptor for all changed replicas. */
-    private void onReplicasChange(PartitionReplica[] newReplicas, PartitionReplica[] oldReplicas) {
-        for (int replicaIndex = 0; replicaIndex < MAX_REPLICA_COUNT; replicaIndex++) {
-            PartitionReplica oldReplicasId = oldReplicas[replicaIndex];
-            PartitionReplica newReplicasId = newReplicas[replicaIndex];
-            onReplicaChange(replicaIndex, oldReplicasId, newReplicasId);
-        }
+    /**
+     * Calls the partition replica change interceptor for all changed replicas.
+     * @return {@code true} if partition owner change was detected, otherwise {@code false}.
+     */
+    private boolean onReplicasChange(PartitionReplica[] newReplicas, PartitionReplica[] oldReplicas) {
+        return onReplicasChange(newReplicas, oldReplicas, true);
     }
 
-    /** Calls the partition replica change interceptor for the changed replica. */
-    @SuppressFBWarnings(value = "VO_VOLATILE_INCREMENT",
-            justification = "This method is called under InternalPartitionServiceImpl.lock")
-    private void onReplicaChange(int replicaIndex, PartitionReplica oldReplica, PartitionReplica newReplica) {
+    private boolean onReplicasChange(PartitionReplica[] newReplicas, PartitionReplica[] oldReplicas, boolean invokeInterceptor) {
+        PartitionReplica oldReplicasOwner = oldReplicas[0];
+        PartitionReplica newReplicasOwner = newReplicas[0];
+        boolean partitionOwnerChanged = onReplicaChange(0, oldReplicasOwner, newReplicasOwner, invokeInterceptor);
+
+        for (int replicaIndex = 1; replicaIndex < MAX_REPLICA_COUNT; replicaIndex++) {
+            PartitionReplica oldReplicasId = oldReplicas[replicaIndex];
+            PartitionReplica newReplicasId = newReplicas[replicaIndex];
+            onReplicaChange(replicaIndex, oldReplicasId, newReplicasId, invokeInterceptor);
+        }
+        return partitionOwnerChanged;
+    }
+
+    /**
+     * If a replica change is detected, then increments partition version and calls the partition replica change interceptor
+     * for the changed replica.
+     * @return {@code true} if a replica change was detected, otherwise {@code false}.
+     */
+//    @SuppressFBWarnings(value = "VO_VOLATILE_INCREMENT",
+//            justification = "This method is called under InternalPartitionServiceImpl.lock")
+    private boolean onReplicaChange(int replicaIndex, PartitionReplica oldReplica, PartitionReplica newReplica) {
+        return onReplicaChange(replicaIndex, oldReplica, newReplica, true);
+    }
+
+    /**
+     * Calls the partition replica change interceptor for the changed replica.
+     * @return {@code true} if a replica change was detected, otherwise {@code false}.
+     */
+//    @SuppressFBWarnings(value = "VO_VOLATILE_INCREMENT",
+//            justification = "This method is called under InternalPartitionServiceImpl.lock")
+    private boolean onReplicaChange(int replicaIndex, PartitionReplica oldReplica, PartitionReplica newReplica,
+                                 boolean invokeInterceptor) {
         boolean changed;
         if (oldReplica == null) {
             changed = newReplica != null;
@@ -150,12 +194,13 @@ public class InternalPartitionImpl extends AbstractInternalPartition implements 
             changed = !oldReplica.equals(newReplica);
         }
         if (!changed) {
-            return;
+            return false;
         }
         version++;
-        if (interceptor != null) {
+        if (interceptor != null && invokeInterceptor) {
             interceptor.replicaChanged(partitionId, replicaIndex, oldReplica, newReplica);
         }
+        return true;
     }
 
     InternalPartitionImpl copy(PartitionReplicaInterceptor interceptor) {

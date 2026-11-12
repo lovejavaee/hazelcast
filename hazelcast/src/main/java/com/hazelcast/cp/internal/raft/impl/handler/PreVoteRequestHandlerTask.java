@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ import com.hazelcast.cp.internal.raft.impl.log.RaftLog;
 import com.hazelcast.cp.internal.raft.impl.state.RaftState;
 import com.hazelcast.cp.internal.raft.impl.task.PreVoteTask;
 import com.hazelcast.cp.internal.raft.impl.task.RaftNodeStatusAwareTask;
-import com.hazelcast.internal.util.Clock;
 
 /**
  * Handles {@link PreVoteRequest} and responds to the sender
@@ -60,22 +59,40 @@ public class PreVoteRequestHandlerTask extends RaftNodeStatusAwareTask implement
             return;
         }
 
-        // Reply false if last AppendEntries call was received less than election timeout ago (leader stickiness)
-        if (raftNode.lastAppendEntriesTimestamp() > Clock.currentTimeMillis() - raftNode.getLeaderElectionTimeoutInMillis()) {
+        // Reply false if the leader is available (leader stickiness)
+        if (raftNode.isLeaderAvailable()) {
             logger.info("Rejecting " + req + " since received append entries recently.");
             raftNode.send(new PreVoteResponse(localEndpoint, state.term(), false), req.candidate());
             return;
         }
 
         RaftLog raftLog = state.log();
-        if (raftLog.lastLogOrSnapshotTerm() > req.lastLogTerm()) {
-            logger.info("Rejecting " + req + " since our last log term: " + raftLog.lastLogOrSnapshotTerm() + " is greater");
+        long localLastTerm = raftLog.lastLogOrSnapshotTerm();
+        long localLastIndex = raftLog.lastLogOrSnapshotIndex();
+
+        if (localLastTerm > req.lastLogTerm()) {
+            logger.info("Rejecting " + req + " since our last log term: " + localLastTerm + " is greater");
             raftNode.send(new PreVoteResponse(localEndpoint, req.nextTerm(), false), req.candidate());
             return;
         }
 
-        if (raftLog.lastLogOrSnapshotTerm() == req.lastLogTerm() && raftLog.lastLogOrSnapshotIndex() > req.lastLogIndex()) {
-            logger.info("Rejecting " + req + " since our last log index: " + raftLog.lastLogOrSnapshotIndex() + " is greater");
+        if (localLastTerm == req.lastLogTerm() && localLastIndex > req.lastLogIndex()) {
+            logger.info("Rejecting " + req + " since our last log index: " + localLastIndex + " is greater");
+            raftNode.send(new PreVoteResponse(localEndpoint, req.nextTerm(), false), req.candidate());
+            return;
+        }
+
+        // Optimization for auto-step-down-leaders:
+        // At this point, candidate's log is not worse than ours.
+        // If logs are exactly equal, and the candidate is an auto-step-down member
+        // while we are a normal (leader-capable) member, then reject the prevote
+        // so a leader-capable node is preferred in tie situations.
+        boolean logsEqual = localLastTerm == req.lastLogTerm()
+                        && localLastIndex == req.lastLogIndex();
+        if (logsEqual && req.isAutoStepDownLeader()
+                && !raftNode.autoStepDownWhenLeaderForGroup()) {
+            logger.fine("Rejecting " + req + " from auto step-down candidate: " + req.candidate()
+                    + " with equal log; preferring non-auto-step-down member as leader");
             raftNode.send(new PreVoteResponse(localEndpoint, req.nextTerm(), false), req.candidate());
             return;
         }

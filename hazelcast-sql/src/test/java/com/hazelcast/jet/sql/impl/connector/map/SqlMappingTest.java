@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,15 @@
 
 package com.hazelcast.jet.sql.impl.connector.map;
 
+import com.hazelcast.jet.impl.JetServiceBackend;
+import com.hazelcast.jet.impl.JobRepository;
 import com.hazelcast.jet.sql.SqlTestSupport;
 import com.hazelcast.sql.HazelcastSqlException;
 import com.hazelcast.sql.SqlService;
+import com.hazelcast.test.HazelcastSerialClassRunner;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 
 import static com.hazelcast.jet.sql.impl.connector.SqlConnector.JAVA_FORMAT;
 import static com.hazelcast.jet.sql.impl.connector.SqlConnector.OPTION_KEY_CLASS;
@@ -29,6 +33,7 @@ import static com.hazelcast.jet.sql.impl.connector.SqlConnector.OPTION_VALUE_CLA
 import static com.hazelcast.jet.sql.impl.connector.SqlConnector.OPTION_VALUE_FORMAT;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+@RunWith(HazelcastSerialClassRunner.class)
 public class SqlMappingTest extends SqlTestSupport {
 
     private static SqlService sqlService;
@@ -55,6 +60,34 @@ public class SqlMappingTest extends SqlTestSupport {
         assertThatThrownBy(() -> sqlService.execute(query))
                 .isInstanceOf(HazelcastSqlException.class)
                 .hasMessageContaining("Invalid external name \"schema1\".\"mapName\"");
+    }
+
+    @Test
+    public void testSqlCatalogCannotBeMapped() {
+        testInternalMapCannotBeMapped(JetServiceBackend.SQL_CATALOG_MAP_NAME);
+    }
+
+    @Test
+    public void testJetImapsCannotBeMapped() {
+        testInternalMapCannotBeMapped(JobRepository.JOB_RECORDS_MAP_NAME);
+        testInternalMapCannotBeMapped(JobRepository.JOB_EXECUTION_RECORDS_MAP_NAME);
+        testInternalMapCannotBeMapped(JobRepository.JOB_RESULTS_MAP_NAME);
+        testInternalMapCannotBeMapped(JobRepository.JOB_METRICS_MAP_NAME);
+    }
+
+    private void testInternalMapCannotBeMapped(String name) {
+        String query = "CREATE MAPPING map EXTERNAL NAME \"" + name + "\" "
+                + "TYPE " + IMapSqlConnector.TYPE_NAME + ' '
+                + "OPTIONS ("
+                + '\'' + OPTION_KEY_FORMAT + "'='" + JAVA_FORMAT + '\''
+                + ", '" + OPTION_KEY_CLASS + "'='" + Object.class.getName() + '\''
+                + ", '" + OPTION_VALUE_FORMAT + "'='" + JAVA_FORMAT + '\''
+                + ", '" + OPTION_VALUE_CLASS + "'='" + Object.class.getName() + '\''
+                + ")";
+
+        assertThatThrownBy(() -> sqlService.execute(query))
+                .isInstanceOf(HazelcastSqlException.class)
+                .hasMessageContaining("Mapping of internal IMaps is not allowed");
     }
 
 }

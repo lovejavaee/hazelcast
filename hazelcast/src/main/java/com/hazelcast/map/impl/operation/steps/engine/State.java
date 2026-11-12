@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,12 +19,14 @@ package com.hazelcast.map.impl.operation.steps.engine;
 import com.hazelcast.cluster.Address;
 import com.hazelcast.core.EntryEventType;
 import com.hazelcast.internal.serialization.Data;
+import com.hazelcast.internal.util.BiTuple;
 import com.hazelcast.internal.util.Clock;
 import com.hazelcast.map.EntryProcessor;
 import com.hazelcast.map.impl.MapEntries;
 import com.hazelcast.map.impl.operation.EntryOperator;
 import com.hazelcast.map.impl.operation.MapOperation;
 import com.hazelcast.map.impl.record.Record;
+import com.hazelcast.map.impl.recordstore.DefaultRecordStore;
 import com.hazelcast.map.impl.recordstore.RecordStore;
 import com.hazelcast.map.impl.recordstore.StaticParams;
 import com.hazelcast.query.Predicate;
@@ -33,14 +35,15 @@ import com.hazelcast.spi.merge.SplitBrainMergePolicy;
 import com.hazelcast.spi.merge.SplitBrainMergeTypes;
 import com.hazelcast.wan.impl.CallerProvenance;
 
-import java.util.ArrayList;
+import javax.annotation.Nullable;
+import java.util.BitSet;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 import static com.hazelcast.map.impl.record.Record.UNSET;
 
@@ -51,8 +54,8 @@ import static com.hazelcast.map.impl.record.Record.UNSET;
 @SuppressWarnings("checkstyle:methodcount")
 public class State {
 
-    private final RecordStore recordStore;
-    private final MapOperation operation;
+    private volatile RecordStore recordStore;
+    private volatile MapOperation operation;
 
     // fields coming from operation
     private int partitionId = UNSET;
@@ -77,14 +80,15 @@ public class State {
     private volatile boolean triggerMapLoader;
     private volatile boolean shouldLoad;
     private volatile boolean changeExpiryOnUpdate = true;
-    private volatile boolean entryProcessorOffload;
+    private volatile boolean entryProcessorOffloadable;
     private volatile Object oldValue;
+    private volatile BiTuple<Object, Long> loadedOldValueWithTtl;
     private volatile Object newValue;
     private volatile Object result;
     private volatile Collection<Data> keysToLoad = Collections.emptyList();
-    private volatile Map loadedKeyValuePairs = Collections.emptyMap();
+    private volatile List loadedKeyAndOldValueWithTtlPairs = Collections.emptyList();
     private volatile Collection<Data> keys;
-    private volatile ArrayList<Record> records;
+    private volatile List<Record> records;
     private volatile EntryProcessor entryProcessor;
     private volatile EntryOperator operator;
     private volatile List<State> toStore;
@@ -100,15 +104,17 @@ public class State {
     private volatile Queue<InternalIndex> notMarkedIndexes;
     private volatile Set keysFromIndex;
     private volatile Throwable throwable;
+    private volatile Consumer backupOpAfterRun;
+    private volatile int sizeBefore;
+    private volatile int sizeAfter;
+    private volatile BitSet nonWanReplicatedIndexes;
 
     public State(RecordStore recordStore, MapOperation operation) {
-        this.recordStore = recordStore;
-        this.operation = operation;
+        init(recordStore, operation);
     }
 
     public State(State state) {
-        this.recordStore = state.getRecordStore();
-        this.operation = state.getOperation();
+        init(state.getRecordStore(), state.getOperation());
 
         setTtl(state.getTtl())
                 .setMaxIdle(state.getMaxIdle())
@@ -124,6 +130,11 @@ public class State {
                 .setPartitionId(state.getPartitionId());
     }
 
+    public void init(RecordStore recordStore, MapOperation operation) {
+        this.recordStore = recordStore;
+        this.operation = operation;
+    }
+
     public RecordStore getRecordStore() {
         return recordStore;
     }
@@ -132,9 +143,8 @@ public class State {
         return operation;
     }
 
-    public State setVersion(long version) {
-        this.version = version;
-        return this;
+    public int getPartitionId() {
+        return partitionId;
     }
 
     public State setPartitionId(int partitionId) {
@@ -142,73 +152,8 @@ public class State {
         return this;
     }
 
-    public State setKey(Data key) {
-        this.key = key;
-        return this;
-    }
-
-    public State setNewValue(Object newValue) {
-        this.newValue = newValue;
-        return this;
-    }
-
-    public State setOldValue(Object oldValue) {
-        this.oldValue = oldValue;
-        return this;
-    }
-
-    public State setRecordExistsInMemory(boolean recordExistsInMemory) {
-        this.recordExistsInMemory = recordExistsInMemory;
-        return this;
-    }
-
-    public State setExpect(Object expect) {
-        this.expect = expect;
-        return this;
-    }
-
-    public State setTxnId(UUID uuid) {
-        this.txnId = uuid;
-        return this;
-    }
-
-    public State setTtl(long ttl) {
-        this.ttl = ttl;
-        return this;
-    }
-
-    public State setMaxIdle(long maxIdle) {
-        this.maxIdle = maxIdle;
-        return this;
-    }
-
-    public State setStaticPutParams(StaticParams staticStaticParams) {
-        this.staticParams = staticStaticParams;
-        return this;
-    }
-
-    public State setCallerAddress(Address callerAddress) {
-        this.callerAddress = callerAddress;
-        return this;
-    }
-
-    public State setCallerProvenance(CallerProvenance callerProvenance) {
-        this.callerProvenance = callerProvenance;
-        return this;
-    }
-
-    public State setEntryProcessor(EntryProcessor entryProcessor) {
-        this.entryProcessor = entryProcessor;
-        return this;
-    }
-
-    public boolean isEntryProcessorOffload() {
-        return entryProcessorOffload;
-    }
-
-    public State setEntryProcessorOffload(boolean entryProcessorOffload) {
-        this.entryProcessorOffload = entryProcessorOffload;
-        return this;
+    public long getThreadId() {
+        return threadId;
     }
 
     public State setThreadId(long threadId) {
@@ -216,36 +161,31 @@ public class State {
         return this;
     }
 
-    public long getThreadId() {
-        return threadId;
-    }
-
-    public EntryProcessor getEntryProcessor() {
-        return entryProcessor;
-    }
-
-    public boolean isRecordExistsInMemory() {
-        return recordExistsInMemory;
-    }
-
-    public Object getOldValue() {
-        return oldValue;
-    }
-
-    public Object getNewValue() {
-        return newValue;
-    }
-
     public long getTtl() {
         return ttl;
+    }
+
+    public State setTtl(long ttl) {
+        this.ttl = ttl;
+        return this;
     }
 
     public long getMaxIdle() {
         return maxIdle;
     }
 
+    public State setMaxIdle(long maxIdle) {
+        this.maxIdle = maxIdle;
+        return this;
+    }
+
     public long getVersion() {
         return version;
+    }
+
+    public State setVersion(long version) {
+        this.version = version;
+        return this;
     }
 
     public long getNow() {
@@ -261,20 +201,45 @@ public class State {
         return key;
     }
 
+    public State setKey(Data key) {
+        this.key = key;
+        return this;
+    }
+
     public Address getCallerAddress() {
         return callerAddress;
+    }
+
+    public State setCallerAddress(Address callerAddress) {
+        this.callerAddress = callerAddress;
+        return this;
     }
 
     public Object getExpect() {
         return expect;
     }
 
+    public State setExpect(Object expect) {
+        this.expect = expect;
+        return this;
+    }
+
     public StaticParams getStaticParams() {
         return staticParams;
     }
 
+    public State setStaticPutParams(StaticParams staticStaticParams) {
+        this.staticParams = staticStaticParams;
+        return this;
+    }
+
     public UUID getTxnId() {
         return txnId;
+    }
+
+    public State setTxnId(UUID uuid) {
+        this.txnId = uuid;
+        return this;
     }
 
     public UUID getOwnerUuid() {
@@ -286,193 +251,13 @@ public class State {
         return this;
     }
 
-    public int getPartitionId() {
-        return partitionId;
-    }
-
     public CallerProvenance getCallerProvenance() {
         return callerProvenance;
     }
 
-    public boolean isStopExecution() {
-        return stopExecution;
-    }
-
-    public void setStopExecution(boolean stopExecution) {
-        this.stopExecution = stopExecution;
-    }
-
-    public void setResult(Object result) {
-        this.result = result;
-    }
-
-    public Object getResult() {
-        return result;
-    }
-
-    public void setRecord(Record record) {
-        this.record = record;
-    }
-
-    public Record getRecord() {
-        return record;
-    }
-
-    public State setKeys(Collection<Data> keys) {
-        this.keys = keys;
+    public State setCallerProvenance(CallerProvenance callerProvenance) {
+        this.callerProvenance = callerProvenance;
         return this;
-    }
-
-    public Collection<Data> getKeys() {
-        return keys;
-    }
-
-    public void setRecords(ArrayList<Record> records) {
-        this.records = records;
-    }
-
-    public Collection<Data> getKeysToLoad() {
-        return keysToLoad;
-    }
-
-    public State setKeysToLoad(Collection<Data> keysToLoad) {
-        this.keysToLoad = keysToLoad;
-        return this;
-    }
-
-    public State setLoadedKeyValuePairs(Map loadedKeyValuePairs) {
-        this.loadedKeyValuePairs = loadedKeyValuePairs;
-        return this;
-    }
-
-    public Map getLoadedKeyValuePairs() {
-        return loadedKeyValuePairs;
-    }
-
-    public ArrayList<Record> getRecords() {
-        return records;
-    }
-
-    public State setEntryOperator(EntryOperator operator) {
-        this.operator = operator;
-        return this;
-    }
-
-    public EntryOperator getOperator() {
-        return operator;
-    }
-
-    public void setToStore(List<State> toStore) {
-        this.toStore = toStore;
-    }
-
-    public void setToRemove(List<State> toRemove) {
-        this.toRemove = toRemove;
-    }
-
-    public List<State> getToStore() {
-        return toStore;
-    }
-
-    public List<State> getToRemove() {
-        return toRemove;
-    }
-
-    public Predicate getPredicate() {
-        return predicate;
-    }
-
-    public State setPredicate(Predicate predicate) {
-        this.predicate = predicate;
-        return this;
-    }
-
-    public State setMergingEntries(List<SplitBrainMergeTypes.MapMergeTypes<Object, Object>> mergingEntries) {
-        this.mergingEntries = mergingEntries;
-        return this;
-    }
-
-    public List<SplitBrainMergeTypes.MapMergeTypes<Object, Object>> getMergingEntries() {
-        return mergingEntries;
-    }
-
-    public State setMergePolicy(SplitBrainMergePolicy<Object,
-            SplitBrainMergeTypes.MapMergeTypes<Object, Object>, Object> mergePolicy) {
-        this.mergePolicy = mergePolicy;
-        return this;
-    }
-
-    public SplitBrainMergePolicy<Object,
-            SplitBrainMergeTypes.MapMergeTypes<Object, Object>, Object> getMergePolicy() {
-        return mergePolicy;
-    }
-
-    public State setDisableWanReplicationEvent(boolean disableWanReplicationEvent) {
-        this.disableWanReplicationEvent = disableWanReplicationEvent;
-        return this;
-    }
-
-    public boolean isDisableWanReplicationEvent() {
-        return disableWanReplicationEvent;
-    }
-
-    public State setMapEntries(MapEntries mapEntries) {
-        this.mapEntries = mapEntries;
-        return this;
-    }
-
-    public MapEntries getMapEntries() {
-        return mapEntries;
-    }
-
-    public EntryEventType getEntryEventType() {
-        return this.entryEventType;
-    }
-
-    public void setEntryEventType(EntryEventType entryEventType) {
-        this.entryEventType = entryEventType;
-    }
-
-    public void setNotMarkedIndexes(Queue<InternalIndex> notMarkedIndexes) {
-        this.notMarkedIndexes = notMarkedIndexes;
-    }
-
-    public Queue<InternalIndex> getNotMarkedIndexes() {
-        return notMarkedIndexes;
-    }
-
-    public void setKeysFromIndex(Set keysFromIndex) {
-        this.keysFromIndex = keysFromIndex;
-    }
-
-    public Set getKeysFromIndex() {
-        return keysFromIndex;
-    }
-
-    public void setThrowable(Throwable throwable) {
-        this.throwable = throwable;
-    }
-
-    public Throwable getThrowable() {
-        return throwable;
-    }
-
-    public State setTriggerMapLoader(boolean triggerMapLoader) {
-        this.triggerMapLoader = triggerMapLoader;
-        return this;
-    }
-
-    public boolean isTriggerMapLoader() {
-        return triggerMapLoader;
-    }
-
-    public State setShouldLoad(boolean shouldLoad) {
-        this.shouldLoad = shouldLoad;
-        return this;
-    }
-
-    public boolean isShouldLoad() {
-        return shouldLoad;
     }
 
     public boolean isBlockReads() {
@@ -484,12 +269,52 @@ public class State {
         return this;
     }
 
-    public void setBackupPairs(List backupPairs) {
-        this.backupPairs = backupPairs;
+    public boolean isStopExecution() {
+        return stopExecution;
     }
 
-    public List getBackupPairs() {
-        return backupPairs;
+    public void setStopExecution(boolean stopExecution) {
+        this.stopExecution = stopExecution;
+    }
+
+    public boolean isRecordExistsInMemory() {
+        return recordExistsInMemory;
+    }
+
+    public State setRecordExistsInMemory(boolean recordExistsInMemory) {
+        this.recordExistsInMemory = recordExistsInMemory;
+        return this;
+    }
+
+    public boolean isDisableWanReplicationEvent() {
+        return disableWanReplicationEvent;
+    }
+
+    public State setDisableWanReplicationEvent(boolean disableWanReplicationEvent) {
+        this.disableWanReplicationEvent = disableWanReplicationEvent;
+        return this;
+    }
+
+    public boolean isTriggerMapLoader() {
+        return triggerMapLoader;
+    }
+
+    public State setTriggerMapLoader(boolean triggerMapLoader) {
+        this.triggerMapLoader = triggerMapLoader;
+        return this;
+    }
+
+    public boolean isShouldLoad() {
+        return shouldLoad;
+    }
+
+    public State setShouldLoad(boolean shouldLoad) {
+        this.shouldLoad = shouldLoad;
+        return this;
+    }
+
+    public boolean isChangeExpiryOnUpdate() {
+        return changeExpiryOnUpdate;
     }
 
     public State setChangeExpiryOnUpdate(boolean changeExpiryOnUpdate) {
@@ -497,7 +322,239 @@ public class State {
         return this;
     }
 
-    public boolean isChangeExpiryOnUpdate() {
-        return changeExpiryOnUpdate;
+    public boolean isEntryProcessorOffloadable() {
+        return entryProcessorOffloadable;
+    }
+
+    public State setEntryProcessorOffloadable(boolean entryProcessorOffloadable) {
+        this.entryProcessorOffloadable = entryProcessorOffloadable;
+        return this;
+    }
+
+    public Object getOldValue() {
+        return oldValue;
+    }
+
+    public State setOldValue(Object oldValue) {
+        this.oldValue = ((DefaultRecordStore) recordStore)
+                .copyToHeapWhenNeeded(oldValue);
+        return this;
+    }
+
+    public BiTuple<Object, Long> getLoadedOldValueWithTtl() {
+        return loadedOldValueWithTtl;
+    }
+
+    public void setLoadedOldValueWithTtl(BiTuple<Object, Long> loadedOldValueWithTtl) {
+        this.loadedOldValueWithTtl = loadedOldValueWithTtl;
+    }
+
+    public Object getNewValue() {
+        return newValue;
+    }
+
+    public State setNewValue(Object newValue) {
+        this.newValue = newValue;
+        return this;
+    }
+
+    public Object getResult() {
+        return result;
+    }
+
+    public State setResult(Object result) {
+        this.result = result;
+        return this;
+    }
+
+    public Collection<Data> getKeysToLoad() {
+        return keysToLoad;
+    }
+
+    public State setKeysToLoad(Collection<Data> keysToLoad) {
+        this.keysToLoad = keysToLoad;
+        return this;
+    }
+
+    // list of loaded key + bituple(oldValue, ttl)
+    public List loadedKeyAndOldValueWithTtlPairs() {
+        return loadedKeyAndOldValueWithTtlPairs;
+    }
+
+    // list of key+bituple(oldValue, ttl)
+    public State setLoadedKeyAndOldValueWithTtlPairs(List loadedKeyAndOldValueWithTtlPairs) {
+        this.loadedKeyAndOldValueWithTtlPairs = loadedKeyAndOldValueWithTtlPairs;
+        return this;
+    }
+
+    public Collection<Data> getKeys() {
+        return keys;
+    }
+
+    public State setKeys(Collection<Data> keys) {
+        this.keys = keys;
+        return this;
+    }
+
+    public List<Record> getRecords() {
+        return records;
+    }
+
+    public void setRecords(List<Record> records) {
+        this.records = records;
+    }
+
+    public EntryProcessor getEntryProcessor() {
+        return entryProcessor;
+    }
+
+    public State setEntryProcessor(EntryProcessor entryProcessor) {
+        this.entryProcessor = entryProcessor;
+        return this;
+    }
+
+    public EntryOperator getOperator() {
+        return operator;
+    }
+
+    public State setEntryOperator(EntryOperator operator) {
+        this.operator = operator;
+        return this;
+    }
+
+    public List<State> getToStore() {
+        return toStore;
+    }
+
+    public void setToStore(List<State> toStore) {
+        this.toStore = toStore;
+    }
+
+    public List<State> getToRemove() {
+        return toRemove;
+    }
+
+    public void setToRemove(List<State> toRemove) {
+        this.toRemove = toRemove;
+    }
+
+    public List getBackupPairs() {
+        return backupPairs;
+    }
+
+    public void setBackupPairs(List backupPairs) {
+        this.backupPairs = backupPairs;
+    }
+
+    public Predicate getPredicate() {
+        return predicate;
+    }
+
+    public State setPredicate(Predicate predicate) {
+        this.predicate = predicate;
+        return this;
+    }
+
+    public List<SplitBrainMergeTypes.MapMergeTypes<Object, Object>> getMergingEntries() {
+        return mergingEntries;
+    }
+
+    public State setMergingEntries(List<SplitBrainMergeTypes.MapMergeTypes<Object, Object>> mergingEntries) {
+        this.mergingEntries = mergingEntries;
+        return this;
+    }
+
+    public SplitBrainMergePolicy<Object,
+            SplitBrainMergeTypes.MapMergeTypes<Object, Object>, Object> getMergePolicy() {
+        return mergePolicy;
+    }
+
+    public State setMergePolicy(SplitBrainMergePolicy<Object,
+            SplitBrainMergeTypes.MapMergeTypes<Object, Object>, Object> mergePolicy) {
+        this.mergePolicy = mergePolicy;
+        return this;
+    }
+
+    public MapEntries getMapEntries() {
+        return mapEntries;
+    }
+
+    public State setMapEntries(MapEntries mapEntries) {
+        this.mapEntries = mapEntries;
+        return this;
+    }
+
+    public EntryEventType getEntryEventType() {
+        return this.entryEventType;
+    }
+
+    public void setEntryEventType(EntryEventType entryEventType) {
+        this.entryEventType = entryEventType;
+    }
+
+    public Record getRecord() {
+        return record;
+    }
+
+    public void setRecord(Record record) {
+        this.record = record;
+    }
+
+    public Queue<InternalIndex> getNotMarkedIndexes() {
+        return notMarkedIndexes;
+    }
+
+    public void setNotMarkedIndexes(Queue<InternalIndex> notMarkedIndexes) {
+        this.notMarkedIndexes = notMarkedIndexes;
+    }
+
+    public Set getKeysFromIndex() {
+        return keysFromIndex;
+    }
+
+    public void setKeysFromIndex(Set keysFromIndex) {
+        this.keysFromIndex = keysFromIndex;
+    }
+
+    public Throwable getThrowable() {
+        return throwable;
+    }
+
+    public void setThrowable(Throwable throwable) {
+        this.throwable = throwable;
+    }
+
+    @Nullable
+    public Consumer getBackupOpAfterRun() {
+        return backupOpAfterRun;
+    }
+
+    public State setBackupOpAfterRun(Consumer backupOpAfterRun) {
+        this.backupOpAfterRun = backupOpAfterRun;
+        return this;
+    }
+
+    public int getSizeBefore() {
+        return sizeBefore;
+    }
+
+    public void setSizeBefore(int sizeBefore) {
+        this.sizeBefore = sizeBefore;
+    }
+
+    public int getSizeAfter() {
+        return sizeAfter;
+    }
+
+    public void setSizeAfter(int sizeAfter) {
+        this.sizeAfter = sizeAfter;
+    }
+
+    public BitSet getNonWanReplicatedIndexes() {
+        return nonWanReplicatedIndexes;
+    }
+
+    public void setNonWanReplicatedIndexes(BitSet nonWanReplicationIndexes) {
+        this.nonWanReplicatedIndexes = nonWanReplicationIndexes;
     }
 }

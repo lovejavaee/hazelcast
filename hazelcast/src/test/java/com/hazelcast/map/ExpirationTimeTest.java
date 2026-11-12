@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,11 +47,10 @@ import static java.util.Arrays.asList;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.SECONDS;
-import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-import static org.junit.Assume.assumeThat;
+import static org.assertj.core.api.Assumptions.assumeThat;
 
 @RunWith(HazelcastParametrizedRunner.class)
 @Parameterized.UseParametersRunnerFactory(HazelcastParallelParametersRunnerFactory.class)
@@ -118,7 +117,7 @@ public class ExpirationTimeTest extends HazelcastTestSupport {
 
     @Test
     public void last_update_time_as_version_when_both_ttl_and_max_idle_defined() {
-        assumeThat(perEntryStatsEnabled, is(false));
+        assumeThat(perEntryStatsEnabled).isFalse();
 
         final long ttlSeconds = 12;
         final long maxIdleSeconds = 10;
@@ -205,7 +204,7 @@ public class ExpirationTimeTest extends HazelcastTestSupport {
 
     @Test
     public void testExpirationTime_withTTL() {
-        assumeThat(perEntryStatsEnabled, is(true));
+        assumeThat(perEntryStatsEnabled).isTrue();
 
         IMap<Integer, Integer> map = createMap();
 
@@ -235,7 +234,7 @@ public class ExpirationTimeTest extends HazelcastTestSupport {
             map.put(i, i, 112, SECONDS, 223, SECONDS);
         }
 
-        Map<Integer, EntryView> entryViewsBefore = new HashMap<>();
+        Map<Integer, EntryView<Integer, Integer>> entryViewsBefore = new HashMap<>();
         for (int i = 0; i < keyCount; i++) {
             entryViewsBefore.put(i, map.getEntryView(i));
         }
@@ -243,7 +242,7 @@ public class ExpirationTimeTest extends HazelcastTestSupport {
         HazelcastInstance node2 = factory.newHazelcastInstance(config);
 
         IMap<Integer, Integer> map2 = node2.getMap(mapName);
-        Map<Integer, EntryView> entryViewsAfter = new HashMap<>();
+        Map<Integer, EntryView<Integer, Integer>> entryViewsAfter = new HashMap<>();
         for (int i = 0; i < keyCount; i++) {
             entryViewsAfter.put(i, map2.getEntryView(i));
         }
@@ -253,7 +252,7 @@ public class ExpirationTimeTest extends HazelcastTestSupport {
 
     @Test
     public void testExpirationTime_withTTL_withShorterMaxIdle() {
-        assumeThat(perEntryStatsEnabled, is(true));
+        assumeThat(perEntryStatsEnabled).isTrue();
 
         IMap<Integer, Integer> map = createMap();
 
@@ -268,7 +267,7 @@ public class ExpirationTimeTest extends HazelcastTestSupport {
 
     @Test
     public void testExpirationTime_withShorterTTL_andMaxIdle() {
-        assumeThat(perEntryStatsEnabled, is(true));
+        assumeThat(perEntryStatsEnabled).isTrue();
 
         IMap<Integer, Integer> map = createMap();
 
@@ -337,7 +336,7 @@ public class ExpirationTimeTest extends HazelcastTestSupport {
 
     @Test
     public void testExpirationTime_withTTL_afterMultipleUpdates() {
-        assumeThat(perEntryStatsEnabled, is(true));
+        assumeThat(perEntryStatsEnabled).isTrue();
 
         IMap<Integer, Integer> map = createMap();
 
@@ -564,7 +563,7 @@ public class ExpirationTimeTest extends HazelcastTestSupport {
         mapConfig.setMaxIdleSeconds(20);
         mapConfig.setInMemoryFormat(inMemoryFormat());
 
-        IMap map = createHazelcastInstance(config).getMap(mapName);
+        IMap<Integer, Integer> map = createHazelcastInstance(config).getMap(mapName);
         map.put(1, 1);
 
         long lastAccessTimeBefore = map.getEntryView(1).getLastAccessTime();

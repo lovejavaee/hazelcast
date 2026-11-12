@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.query.impl;
 
 import com.hazelcast.internal.serialization.BinaryInterface;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.DataSerializable;
@@ -46,10 +47,10 @@ public class PredicateBuilderImpl
     private String attribute;
 
     @Override
-    public Predicate accept(Visitor visitor, Indexes indexes) {
+    public Predicate accept(Visitor visitor, IndexRegistry indexes) {
         Predicate predicate = lsPredicates.get(0);
-        if (predicate instanceof VisitablePredicate) {
-            Predicate newPredicate = ((VisitablePredicate) predicate).accept(visitor, indexes);
+        if (predicate instanceof VisitablePredicate visitablePredicate) {
+            Predicate newPredicate = visitablePredicate.accept(visitor, indexes);
             if (newPredicate != predicate) {
                 PredicateBuilderImpl newPredicateBuilder = new PredicateBuilderImpl();
                 newPredicateBuilder.attribute = attribute;
@@ -111,8 +112,8 @@ public class PredicateBuilderImpl
     @Override
     public Set<QueryableEntry> filter(QueryContext queryContext) {
         Predicate p = lsPredicates.get(0);
-        if (p instanceof IndexAwarePredicate) {
-            return ((IndexAwarePredicate) p).filter(queryContext);
+        if (p instanceof IndexAwarePredicate predicate) {
+            return predicate.filter(queryContext);
         }
         return null;
     }
@@ -120,8 +121,8 @@ public class PredicateBuilderImpl
     @Override
     public boolean isIndexed(QueryContext queryContext) {
         Predicate p = lsPredicates.get(0);
-        if (p instanceof IndexAwarePredicate) {
-            return ((IndexAwarePredicate) p).isIndexed(queryContext);
+        if (p instanceof IndexAwarePredicate predicate) {
+            return predicate.isIndexed(queryContext);
         }
         return false;
     }
@@ -129,25 +130,18 @@ public class PredicateBuilderImpl
     @Override
     public void writeData(ObjectDataOutput out) throws IOException {
         out.writeString(attribute);
-        out.writeInt(lsPredicates.size());
-        for (Predicate predicate : lsPredicates) {
-            out.writeObject(predicate);
-        }
+        SerializationUtil.writeList(lsPredicates, out);
     }
 
     @Override
     public void readData(ObjectDataInput in) throws IOException {
         attribute = in.readString();
-        int size = in.readInt();
-        lsPredicates = new ArrayList<>(size);
-        for (int i = 0; i < size; i++) {
-            addPredicate(in.readObject());
-        }
+        lsPredicates = SerializationUtil.readList(in);
     }
 
     @Override
     public String toString() {
-        return "PredicateBuilder{\n" + (lsPredicates.size() == 0 ? "" : lsPredicates.get(0)) + "\n}";
+        return "PredicateBuilder{\n" + (lsPredicates.isEmpty() ? "" : lsPredicates.get(0)) + "\n}";
     }
 
     @Override

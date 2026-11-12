@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.hazelcast.client.cp.internal.datastructures.proxy;
 import com.hazelcast.client.cp.internal.datastructures.atomiclong.AtomicLongProxy;
 import com.hazelcast.client.cp.internal.datastructures.atomicref.AtomicRefProxy;
 import com.hazelcast.client.cp.internal.datastructures.countdownlatch.CountDownLatchProxy;
+import com.hazelcast.client.cp.internal.datastructures.cpmap.CPMapProxy;
 import com.hazelcast.client.cp.internal.datastructures.lock.FencedLockProxy;
 import com.hazelcast.client.cp.internal.datastructures.semaphore.SessionAwareSemaphoreProxy;
 import com.hazelcast.client.cp.internal.datastructures.semaphore.SessionlessSemaphoreProxy;
@@ -34,11 +35,13 @@ import com.hazelcast.cp.internal.RaftGroupId;
 import com.hazelcast.cp.internal.datastructures.atomiclong.AtomicLongService;
 import com.hazelcast.cp.internal.datastructures.atomicref.AtomicRefService;
 import com.hazelcast.cp.internal.datastructures.countdownlatch.CountDownLatchService;
+import com.hazelcast.cp.internal.datastructures.cpmap.CPMapService;
 import com.hazelcast.cp.internal.datastructures.lock.LockService;
 import com.hazelcast.cp.internal.datastructures.semaphore.SemaphoreService;
 import com.hazelcast.cp.lock.FencedLock;
 
 import javax.annotation.Nonnull;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -50,10 +53,9 @@ import static com.hazelcast.cp.internal.RaftService.withoutDefaultGroupName;
  */
 public class ClientRaftProxyFactory {
 
+    protected ClientContext context;
     private final HazelcastClientInstanceImpl client;
-    private final ConcurrentMap<String, FencedLockProxy> lockProxies
-            = new ConcurrentHashMap<String, FencedLockProxy>();
-    private ClientContext context;
+    private final ConcurrentMap<String, FencedLockProxy> lockProxies = new ConcurrentHashMap<>();
 
     public ClientRaftProxyFactory(HazelcastClientInstanceImpl client) {
         this.client = client;
@@ -67,23 +69,23 @@ public class ClientRaftProxyFactory {
     <T extends DistributedObject> T createProxy(String serviceName, String proxyName) {
         proxyName = withoutDefaultGroupName(proxyName);
         String objectName = getObjectNameForProxy(proxyName);
-
-
         RaftGroupId groupId = getGroupId(proxyName, objectName);
 
-        if (serviceName.equals(AtomicLongService.SERVICE_NAME)) {
-            return (T) new AtomicLongProxy(context, groupId, proxyName, objectName);
-        } else if (serviceName.equals(AtomicRefService.SERVICE_NAME)) {
-            return (T) new AtomicRefProxy(context, groupId, proxyName, objectName);
-        } else if (serviceName.equals(CountDownLatchService.SERVICE_NAME)) {
-            return (T) new CountDownLatchProxy(context, groupId, proxyName, objectName);
-        } else if (serviceName.equals(LockService.SERVICE_NAME)) {
-            return (T) createFencedLock(groupId, proxyName, objectName);
-        } else if (serviceName.equals(SemaphoreService.SERVICE_NAME)) {
-            return (T) createSemaphore(groupId, proxyName, objectName);
-        } else {
-            throw new IllegalArgumentException();
-        }
+        return switch (serviceName) {
+            case AtomicLongService.SERVICE_NAME ->
+                    (T) new AtomicLongProxy(context, groupId, proxyName, objectName);
+            case AtomicRefService.SERVICE_NAME ->
+                    (T) new AtomicRefProxy(context, groupId, proxyName, objectName);
+            case CountDownLatchService.SERVICE_NAME ->
+                    (T) new CountDownLatchProxy(context, groupId, proxyName, objectName);
+            case LockService.SERVICE_NAME ->
+                    (T) createFencedLock(groupId, proxyName, objectName);
+            case SemaphoreService.SERVICE_NAME ->
+                    (T) createSemaphore(groupId, proxyName, objectName);
+            case CPMapService.SERVICE_NAME ->
+                    (T) new CPMapProxy<>(context, groupId, proxyName, objectName);
+            default -> throw new IllegalArgumentException();
+        };
     }
 
     private FencedLock createFencedLock(RaftGroupId groupId, String proxyName, String objectName) {
@@ -111,7 +113,7 @@ public class ClientRaftProxyFactory {
 
     private ISemaphore createSemaphore(RaftGroupId groupId, String proxyName, String objectName) {
         ClientMessage request = SemaphoreGetSemaphoreTypeCodec.encodeRequest(proxyName);
-        ClientMessage response = new ClientInvocation(client, request, objectName).invoke().join();
+        ClientMessage response = new ClientInvocation(client, request, objectName).invoke().joinInternal();
         boolean jdkCompatible = SemaphoreGetSemaphoreTypeCodec.decodeResponse(response);
 
         return jdkCompatible
@@ -119,9 +121,18 @@ public class ClientRaftProxyFactory {
                 : new SessionAwareSemaphoreProxy(context, groupId, proxyName, objectName);
     }
 
-    private RaftGroupId getGroupId(String proxyName, String objectName) {
+    protected RaftGroupId getGroupId(String proxyName, String objectName) {
         ClientMessage request = CPGroupCreateCPGroupCodec.encodeRequest(proxyName);
-        ClientMessage response = new ClientInvocation(client, request, objectName).invoke().joinInternal();
+
+        // Send request directly to METADATA leader if available
+        UUID metadataLeader = client.getCPGroupViewService().getLastKnownMetadataLeader();
+        ClientInvocation invocation;
+        if (metadataLeader != null) {
+            invocation = new ClientInvocation(client, request, objectName, metadataLeader);
+        } else {
+            invocation = new ClientInvocation(client, request, objectName);
+        }
+        ClientMessage response = invocation.invoke().joinInternal();
         return CPGroupCreateCPGroupCodec.decodeResponse(response);
     }
 

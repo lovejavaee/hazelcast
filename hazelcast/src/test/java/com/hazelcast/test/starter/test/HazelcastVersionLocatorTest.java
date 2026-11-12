@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,53 +16,57 @@
 
 package com.hazelcast.test.starter.test;
 
-import com.google.common.hash.HashCode;
-import com.google.common.hash.HashFunction;
-import com.google.common.hash.Hashing;
-import com.hazelcast.test.HazelcastParallelClassRunner;
-import com.hazelcast.test.annotation.ParallelJVMTest;
-import com.hazelcast.test.annotation.SlowTest;
-import com.hazelcast.test.starter.HazelcastVersionLocator;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.experimental.categories.Category;
-import org.junit.rules.TemporaryFolder;
-import org.junit.runner.RunWith;
-
-import java.io.File;
-import java.util.Map;
-
-import static com.google.common.io.Files.toByteArray;
 import static com.hazelcast.test.starter.HazelcastVersionLocator.Artifact.EE_JAR;
 import static com.hazelcast.test.starter.HazelcastVersionLocator.Artifact.OS_JAR;
 import static com.hazelcast.test.starter.HazelcastVersionLocator.Artifact.OS_TEST_JAR;
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
-@SuppressWarnings("UnstableApiUsage")
-@RunWith(HazelcastParallelClassRunner.class)
-@Category({SlowTest.class, ParallelJVMTest.class})
-public class HazelcastVersionLocatorTest {
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
-    @Rule
-    public TemporaryFolder folder = new TemporaryFolder();
+import com.google.common.hash.HashCode;
+import com.google.common.hash.HashFunction;
+import com.google.common.hash.Hashing;
+import com.google.common.io.Files;
+import com.hazelcast.test.annotation.NightlyTest;
+import com.hazelcast.test.starter.HazelcastVersionLocator;
+import com.hazelcast.test.starter.HazelcastVersionLocator.Artifact;
 
-    @SuppressWarnings("deprecation")
-    private final HashFunction md5Hash = Hashing.md5();
+import java.io.File;
+import java.io.IOException;
+import java.text.MessageFormat;
+import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Stream;
 
-    @Test
-    public void testDownloadVersion() throws Exception {
-        Map<HazelcastVersionLocator.Artifact, File> files = HazelcastVersionLocator.locateVersion("4.0", true);
+/**
+ * TODO This test doesn't force a re-download, so if an artifact is cached in the local repository, the download won't be
+ *      exercised. It's difficult to modify the local Maven repository as it's not encapsulated for the scope of testing
+ */
+@NightlyTest
+class HazelcastVersionLocatorTest {
+    private static HashFunction hashFunction;
 
-        assertHash(files.get(OS_JAR), "bc409b12b96ece6d05c3bd1e99b202bb", "OS");
-
-        assertHash(files.get(OS_TEST_JAR), "220509ece9fc152525c91ba7c75ce600", "OS tests");
-
-        assertHash(files.get(EE_JAR), "765816e628ca4ca57d5bd7387e761eaa", "EE");
+    @BeforeAll
+    static void setUp() {
+        hashFunction = Hashing.crc32c();
     }
 
-    private void assertHash(File file, String expectedHash, String label) throws Exception {
-        byte[] memberBytes = toByteArray(file);
-        HashCode memberHash = md5Hash.hashBytes(memberBytes);
-        assertEquals("Expected hash of Hazelcast " + label + " JAR to be " + expectedHash, expectedHash, memberHash.toString());
+    static Stream<Arguments> testDownloadVersion() {
+        return Stream.of(Arguments.of(OS_JAR, "4db18099"), Arguments.of(OS_TEST_JAR, "80f97565"),
+                Arguments.of(EE_JAR, "806220c1"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("testDownloadVersion")
+    void testDownloadVersion(Artifact artifact, String expectedHash) throws IOException {
+        Map<Artifact, File> files = HazelcastVersionLocator.locateVersion("4.0", artifact.isEnterprise());
+        final File file = files.get(artifact);
+        Objects.requireNonNull(file, MessageFormat.format("Failed to find {0} JAR in {1}", artifact, files));
+        final HashCode memberHash = Files.asByteSource(file).hash(hashFunction);
+        assertEquals(expectedHash, memberHash.toString(),
+                MessageFormat.format("Unexpected hash of Hazelcast {0} JAR", artifact));
     }
 }

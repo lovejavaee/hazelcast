@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,16 +24,15 @@ import com.hazelcast.cp.internal.raft.impl.dto.AppendRequest;
 import com.hazelcast.cp.internal.raft.impl.testing.LocalRaftGroup;
 import com.hazelcast.cp.internal.raft.impl.testing.LocalRaftGroup.LocalRaftGroupBuilder;
 import com.hazelcast.cp.internal.raft.impl.testing.NopEntry;
+import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
-import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.After;
-import org.junit.Rule;
+import org.junit.Assert;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import java.util.concurrent.Future;
@@ -47,12 +46,9 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertTrue;
 
-@RunWith(HazelcastSerialClassRunner.class)
+@RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class LeadershipTransferTest extends HazelcastTestSupport {
-
-    @Rule
-    public final ExpectedException exceptionRule = ExpectedException.none();
 
     private LocalRaftGroup group;
 
@@ -73,41 +69,38 @@ public class LeadershipTransferTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void testCannotTransferLeadershipToNull() throws Exception {
+    public void testCannotTransferLeadershipToNull() {
         group = newGroup(3);
         group.start();
         RaftNodeImpl leader = group.waitUntilLeaderElected();
 
-        InternalCompletableFuture future = leader.transferLeadership(null);
+        InternalCompletableFuture<?> future = leader.transferLeadership(null);
 
-        exceptionRule.expect(IllegalArgumentException.class);
-        future.joinInternal();
+        Assert.assertThrows(IllegalArgumentException.class, future::joinInternal);
     }
 
     @Test
-    public void testCannotTransferLeadershipToInvalidEndpoint() throws Exception {
+    public void testCannotTransferLeadershipToInvalidEndpoint() {
         group = newGroup(3);
         group.start();
         RaftNodeImpl leader = group.waitUntilLeaderElected();
 
         RaftEndpoint invalidEndpoint = newRaftMember(1000);
-        InternalCompletableFuture future = leader.transferLeadership(invalidEndpoint);
+        InternalCompletableFuture<?> future = leader.transferLeadership(invalidEndpoint);
 
-        exceptionRule.expect(IllegalArgumentException.class);
-        future.joinInternal();
+        Assert.assertThrows(IllegalArgumentException.class, future::joinInternal);
     }
 
     @Test
-    public void testFollowerCannotTransferLeadership() throws Exception {
+    public void testFollowerCannotTransferLeadership() {
         group = newGroup(3);
         group.start();
         RaftNodeImpl leader = group.waitUntilLeaderElected();
 
         RaftNodeImpl follower = group.getNodesExcept(leader.getLocalMember())[0];
-        InternalCompletableFuture f = follower.transferLeadership(leader.getLocalMember());
+        InternalCompletableFuture<?> f = follower.transferLeadership(leader.getLocalMember());
 
-        exceptionRule.expect(IllegalStateException.class);
-        f.joinInternal();
+        Assert.assertThrows(IllegalStateException.class, f::joinInternal);
     }
 
     @Test
@@ -123,10 +116,9 @@ public class LeadershipTransferTest extends HazelcastTestSupport {
         group.dropMessagesToMember(leader.getLocalMember(), followers[1].getLocalMember(), AppendRequest.class);
 
         leader.replicateMembershipChange(followers[0].getLocalMember(), MembershipChangeMode.REMOVE);
-        InternalCompletableFuture f = leader.transferLeadership(followers[0].getLocalMember());
+        InternalCompletableFuture<?> f = leader.transferLeadership(followers[0].getLocalMember());
 
-        exceptionRule.expect(IllegalStateException.class);
-        f.joinInternal();
+        Assert.assertThrows(IllegalStateException.class, f::joinInternal);
     }
 
     @Test
@@ -137,7 +129,7 @@ public class LeadershipTransferTest extends HazelcastTestSupport {
         int term1 = getTerm(leader);
 
         RaftNodeImpl follower = group.getNodesExcept(leader.getLocalMember())[0];
-        Future f = leader.transferLeadership(follower.getLocalMember());
+        Future<?> f = leader.transferLeadership(follower.getLocalMember());
 
         f.get();
 
@@ -159,7 +151,7 @@ public class LeadershipTransferTest extends HazelcastTestSupport {
         leader.replicate(new NopEntry()).get();
 
         RaftNodeImpl follower = group.getNodesExcept(leader.getLocalMember())[0];
-        Future f = leader.transferLeadership(follower.getLocalMember());
+        Future<?> f = leader.transferLeadership(follower.getLocalMember());
 
         f.get();
 
@@ -181,10 +173,9 @@ public class LeadershipTransferTest extends HazelcastTestSupport {
 
         leader.replicate(new NopEntry()).get();
 
-        InternalCompletableFuture f = leader.transferLeadership(follower.getLocalMember());
+        InternalCompletableFuture<?> f = leader.transferLeadership(follower.getLocalMember());
 
-        exceptionRule.expect(IllegalStateException.class);
-        f.joinInternal();
+        Assert.assertThrows(IllegalStateException.class, f::joinInternal);
     }
 
     @Test
@@ -198,8 +189,8 @@ public class LeadershipTransferTest extends HazelcastTestSupport {
 
         leader.replicate(new NopEntry()).get();
 
-        Future f1 = leader.transferLeadership(follower.getLocalMember());
-        Future f2 = leader.transferLeadership(follower.getLocalMember());
+        Future<?> f1 = leader.transferLeadership(follower.getLocalMember());
+        Future<?> f2 = leader.transferLeadership(follower.getLocalMember());
 
         group.allowAllMessagesToMember(leader.getLocalMember(), follower.getLocalMember());
 
@@ -221,10 +212,9 @@ public class LeadershipTransferTest extends HazelcastTestSupport {
         leader.replicate(new NopEntry()).get();
 
         leader.transferLeadership(follower1.getLocalMember());
-        InternalCompletableFuture f = leader.transferLeadership(follower2.getLocalMember());
+        InternalCompletableFuture<?> f = leader.transferLeadership(follower2.getLocalMember());
 
-        exceptionRule.expect(IllegalStateException.class);
-        f.joinInternal();
+        Assert.assertThrows(IllegalStateException.class, f::joinInternal);
     }
 
     @Test
@@ -239,10 +229,9 @@ public class LeadershipTransferTest extends HazelcastTestSupport {
         leader.replicate(new NopEntry()).get();
         leader.transferLeadership(follower.getLocalMember());
 
-        InternalCompletableFuture f = leader.replicate(new NopEntry());
+        InternalCompletableFuture<?> f = leader.replicate(new NopEntry());
 
-        exceptionRule.expect(CannotReplicateException.class);
-        f.joinInternal();
+        Assert.assertThrows(CannotReplicateException.class, f::joinInternal);
     }
 
     @Test
@@ -258,10 +247,9 @@ public class LeadershipTransferTest extends HazelcastTestSupport {
         RaftNodeImpl newLeader = group.waitUntilLeaderElected();
         assertNotSame(leader, newLeader);
 
-        InternalCompletableFuture f = leader.replicate(new NopEntry());
+        InternalCompletableFuture<?> f = leader.replicate(new NopEntry());
 
-        exceptionRule.expect(NotLeaderException.class);
-        f.joinInternal();
+        Assert.assertThrows(NotLeaderException.class, f::joinInternal);
     }
 
     @Test
@@ -277,7 +265,7 @@ public class LeadershipTransferTest extends HazelcastTestSupport {
         RaftNodeImpl newLeader = group.waitUntilLeaderElected();
         assertNotSame(leader, newLeader);
 
-        Future f = newLeader.replicate(new NopEntry());
+        Future<?> f = newLeader.replicate(new NopEntry());
         f.get();
     }
 
@@ -292,8 +280,8 @@ public class LeadershipTransferTest extends HazelcastTestSupport {
         group.dropMessagesToMember(leader.getLocalMember(), followers[0].getLocalMember(), AppendRequest.class);
         group.dropMessagesToMember(leader.getLocalMember(), followers[1].getLocalMember(), AppendRequest.class);
 
-        Future f1 = leader.replicate(new NopEntry());
-        Future f2 = leader.transferLeadership(followers[0].getLocalMember());
+        Future<?> f1 = leader.replicate(new NopEntry());
+        Future<?> f2 = leader.transferLeadership(followers[0].getLocalMember());
         group.allowAllMessagesToMember(leader.getLocalMember(), followers[0].getLocalMember());
         group.allowAllMessagesToMember(leader.getLocalMember(), followers[1].getLocalMember());
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import com.hazelcast.cp.internal.datastructures.semaphore.operation.DrainPermits
 import com.hazelcast.cp.internal.datastructures.semaphore.operation.ReleasePermitsOp;
 import com.hazelcast.cp.internal.datastructures.spi.blocking.WaitKeyContainer;
 import com.hazelcast.cp.internal.datastructures.spi.blocking.operation.ExpireWaitKeysOp;
-import com.hazelcast.cp.internal.session.AbstractProxySessionManager;
+import com.hazelcast.cp.internal.session.ProxySessionManager;
 import com.hazelcast.cp.internal.session.ProxySessionManagerService;
 import com.hazelcast.cp.internal.session.RaftSessionService;
 import com.hazelcast.cp.internal.session.SessionAwareProxy;
@@ -48,10 +48,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
-import static com.hazelcast.cp.internal.session.AbstractProxySessionManager.NO_SESSION_ID;
+import static com.hazelcast.cp.internal.session.ProxySessionManager.NO_SESSION_ID;
 import static com.hazelcast.internal.util.ThreadUtil.getThreadId;
 import static com.hazelcast.internal.util.UuidUtil.newUnsecureUUID;
-import static com.hazelcast.test.Accessors.getNodeEngineImpl;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.assertEquals;
@@ -236,7 +235,7 @@ public abstract class AbstractSemaphoreAdvancedTest extends HazelcastRaftTestSup
             }
         });
 
-        AbstractProxySessionManager sessionManager = getSessionManager();
+        ProxySessionManager sessionManager = getSessionManager();
         long sessionId = sessionManager.getSession(groupId);
 
         assertNotEquals(NO_SESSION_ID, sessionId);
@@ -401,7 +400,7 @@ public abstract class AbstractSemaphoreAdvancedTest extends HazelcastRaftTestSup
 
         RaftGroupId groupId = getGroupId();
 
-        AbstractProxySessionManager sessionManager = getSessionManager();
+        ProxySessionManager sessionManager = getSessionManager();
         long sessionId = sessionManager.getSession(groupId);
         assertNotEquals(NO_SESSION_ID, sessionId);
 
@@ -502,7 +501,7 @@ public abstract class AbstractSemaphoreAdvancedTest extends HazelcastRaftTestSup
         assertOpenEventually(acquiredLatch);
     }
 
-    private AbstractProxySessionManager getSessionManager() {
+    private ProxySessionManager getSessionManager() {
         return getNodeEngineImpl(proxyInstance).getService(ProxySessionManagerService.SERVICE_NAME);
     }
 

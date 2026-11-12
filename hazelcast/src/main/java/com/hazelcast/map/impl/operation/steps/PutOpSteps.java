@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import com.hazelcast.config.InMemoryFormat;
 import com.hazelcast.core.EntryEventType;
 import com.hazelcast.map.impl.MapContainer;
 import com.hazelcast.map.impl.MapServiceContext;
-import com.hazelcast.map.impl.mapstore.MapDataStores;
 import com.hazelcast.map.impl.operation.steps.engine.State;
 import com.hazelcast.map.impl.operation.steps.engine.Step;
 import com.hazelcast.map.impl.record.Record;
@@ -57,14 +56,11 @@ public enum PutOpSteps implements IMapOpStep {
 
         @Override
         public void runStep(State state) {
-            if (state.getRecordStore().getMapDataStore() == MapDataStores.EMPTY_MAP_DATA_STORE) {
-                return;
-            }
-
             StaticParams staticParams = state.getStaticParams();
             if (staticParams.isPutVanilla()) {
-                state.setOldValue(((DefaultRecordStore) state.getRecordStore())
-                        .loadValueOf(state.getKey()));
+                Object oldValue = ((DefaultRecordStore) state.getRecordStore())
+                        .loadValue(state.getKey(), state.getNow());
+                state.setOldValue(oldValue);
             } else if (staticParams.isPutIfAbsent() || staticParams.isPutIfExists()) {
                 GetOpSteps.LOAD.runStep(state);
             }
@@ -91,9 +87,9 @@ public enum PutOpSteps implements IMapOpStep {
             if (!staticParams.isPutVanilla()) {
                 if (staticParams.isPutIfAbsent()) {
                     Record record = recordStore.getRecord(state.getKey());
-                    if (record == null && state.getOldValue() != null) {
+                    if (record == null && state.getLoadedOldValueWithTtl() != null) {
                         record = ((DefaultRecordStore) recordStore).onLoadRecord(state.getKey(),
-                                state.getOldValue(), false, state.getCallerAddress());
+                                state.getLoadedOldValueWithTtl(), false, state.getCallerAddress(), state.getNow());
                     }
 
                     if (record != null) {
@@ -103,9 +99,9 @@ public enum PutOpSteps implements IMapOpStep {
                     }
                 } else if (staticParams.isPutIfExists()) {
                     Record record = recordStore.getRecord(state.getKey());
-                    if (record == null && state.getOldValue() != null) {
+                    if (record == null && state.getLoadedOldValueWithTtl() != null) {
                         record = ((DefaultRecordStore) recordStore).onLoadRecord(state.getKey(),
-                                state.getOldValue(), false, state.getCallerAddress());
+                                state.getLoadedOldValueWithTtl(), false, state.getCallerAddress(), state.getNow());
                     }
 
                     if (record == null) {
@@ -140,7 +136,7 @@ public enum PutOpSteps implements IMapOpStep {
         @Override
         public Step nextStep(State state) {
             if (state.isStopExecution()) {
-                return UtilSteps.SEND_RESPONSE;
+                return UtilSteps.FINAL_STEP;
             }
             return state.getStaticParams().isTransient() ? ON_STORE : STORE;
         }
@@ -177,7 +173,7 @@ public enum PutOpSteps implements IMapOpStep {
             Record record = recordStore.getRecord(state.getKey());
             if (record == null) {
                 record = recordStore.createRecord(state.getKey(), state.getNewValue(), state.getNow());
-                recordStore.putMemory(record, state.getKey(), state.getOldValue(),
+                recordStore.putMemory(record, state.getKey(), state.getOldValue(), state.getNewValue(),
                         state.getTtl(), state.getMaxIdle(), UNSET,
                         state.getNow(), EntryEventType.ADDED, state.getStaticParams().isBackup());
             } else {
@@ -201,7 +197,7 @@ public enum PutOpSteps implements IMapOpStep {
 
         @Override
         public Step nextStep(State state) {
-            return UtilSteps.SEND_RESPONSE;
+            return UtilSteps.FINAL_STEP;
         }
     };
 

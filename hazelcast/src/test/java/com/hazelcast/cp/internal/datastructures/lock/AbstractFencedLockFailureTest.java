@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import com.hazelcast.cp.internal.datastructures.lock.operation.UnlockOp;
 import com.hazelcast.cp.internal.datastructures.lock.proxy.FencedLockProxy;
 import com.hazelcast.cp.internal.datastructures.spi.blocking.WaitKeyContainer;
 import com.hazelcast.cp.internal.datastructures.spi.blocking.operation.ExpireWaitKeysOp;
-import com.hazelcast.cp.internal.session.AbstractProxySessionManager;
+import com.hazelcast.cp.internal.session.ProxySessionManager;
 import com.hazelcast.cp.internal.session.ProxySessionManagerService;
 import com.hazelcast.internal.util.BiTuple;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
@@ -45,11 +45,10 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 
 import static com.hazelcast.cp.internal.datastructures.lock.FencedLockBasicTest.assertInvalidFence;
-import static com.hazelcast.cp.internal.session.AbstractProxySessionManager.NO_SESSION_ID;
+import static com.hazelcast.cp.internal.session.ProxySessionManager.NO_SESSION_ID;
 import static com.hazelcast.cp.lock.FencedLock.INVALID_FENCE;
 import static com.hazelcast.internal.util.ThreadUtil.getThreadId;
 import static com.hazelcast.internal.util.UuidUtil.newUnsecureUUID;
-import static com.hazelcast.test.Accessors.getNodeEngineImpl;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.assertEquals;
@@ -172,7 +171,7 @@ public abstract class AbstractFencedLockFailureTest extends HazelcastRaftTestSup
         invocationManager.invoke(groupId, new TryLockOp(objectName, sessionId, getThreadId(), invUid, MINUTES.toMillis(5)));
 
         assertTrueEventually(() -> {
-            RaftService raftService = getNodeEngineImpl(primaryInstance).getService(RaftService.SERVICE_NAME);
+            RaftService raftService = getRaftService(primaryInstance);
             int partitionId = raftService.getCPGroupPartitionId(groupId);
             LockRegistry registry = service.getRegistryOrNull(groupId);
             boolean[] verified = new boolean[1];
@@ -551,7 +550,7 @@ public abstract class AbstractFencedLockFailureTest extends HazelcastRaftTestSup
                 .invoke(groupId, new TryLockOp(objectName, sessionId, getThreadId(), invUid, SECONDS.toMillis(300)));
 
         assertTrueEventually(() -> {
-            RaftService raftService = nodeEngine.getService(RaftService.SERVICE_NAME);
+            RaftService raftService = getRaftService(primaryInstance);
             int partitionId = raftService.getCPGroupPartitionId(groupId);
             LockRegistry registry = service.getRegistryOrNull(groupId);
             boolean[] verified = new boolean[1];
@@ -626,8 +625,7 @@ public abstract class AbstractFencedLockFailureTest extends HazelcastRaftTestSup
     }
 
     private RaftInvocationManager getRaftInvocationManager() {
-        RaftService service = getNodeEngineImpl(proxyInstance).getService(RaftService.SERVICE_NAME);
-        return service.getInvocationManager();
+        return getRaftInvocationManager(proxyInstance);
     }
 
     private void lockByOtherThread() {
@@ -646,7 +644,7 @@ public abstract class AbstractFencedLockFailureTest extends HazelcastRaftTestSup
         }
     }
 
-    private AbstractProxySessionManager getSessionManager() {
+    private ProxySessionManager getSessionManager() {
         return getNodeEngineImpl(proxyInstance).getService(ProxySessionManagerService.SERVICE_NAME);
     }
 }

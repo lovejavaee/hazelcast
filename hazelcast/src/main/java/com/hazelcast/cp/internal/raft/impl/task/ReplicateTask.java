@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.cp.internal.raft.impl.task;
 
 import com.hazelcast.cp.exception.CPSubsystemException;
 import com.hazelcast.cp.exception.CannotReplicateException;
+import com.hazelcast.cp.exception.CPLeaderSteppingDownException;
 import com.hazelcast.cp.exception.NotLeaderException;
 import com.hazelcast.cp.internal.raft.command.DestroyRaftGroupCmd;
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
@@ -27,6 +28,7 @@ import com.hazelcast.cp.internal.raft.impl.command.UpdateRaftGroupMembersCmd;
 import com.hazelcast.cp.internal.raft.impl.log.LogEntry;
 import com.hazelcast.cp.internal.raft.impl.log.RaftLog;
 import com.hazelcast.cp.internal.raft.impl.state.RaftState;
+import com.hazelcast.internal.util.Clock;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
 
@@ -75,13 +77,23 @@ public class ReplicateTask implements Runnable {
                 return;
             }
 
+            if (raftNode.autoStepDownWhenLeaderForGroup()) {
+                if (logger.isFineEnabled()) {
+                    logger.fine("This node is rejecting replication requests"
+                            + " given it is configured to automatically step down"
+                            + " when leader");
+                }
+                resultFuture.completeExceptionally(new CPLeaderSteppingDownException(raftNode.getLocalMember()));
+                return;
+            }
+
             if (!raftNode.canReplicateNewEntry(operation)) {
                 resultFuture.completeExceptionally(new CannotReplicateException(raftNode.getLocalMember()));
                 return;
             }
 
             if (logger.isFineEnabled()) {
-                logger.fine("Replicating: " + operation + " in term: " + state.term());
+                logger.fine("Replicating: %s in term: %s", operation, state.term());
             }
 
             RaftLog log = state.log();
@@ -89,6 +101,11 @@ public class ReplicateTask implements Runnable {
             if (!log.checkAvailableCapacity(1)) {
                 resultFuture.completeExceptionally(new IllegalStateException("Not enough capacity in RaftLog!"));
                 return;
+            }
+
+            // See the CPMap timestamp-based operation variants as an example.
+            if (operation instanceof LeaderTimestampAware) {
+                ((LeaderTimestampAware) operation).setLeaderTimestamp(Clock.currentTimeMillis());
             }
 
             long newEntryLogIndex = log.lastLogOrSnapshotIndex() + 1;
@@ -124,9 +141,8 @@ public class ReplicateTask implements Runnable {
     private void preApplyRaftGroupCmd(long logIndex, Object operation) {
         if (operation instanceof DestroyRaftGroupCmd) {
             raftNode.setStatus(RaftNodeStatus.TERMINATING);
-        } else if (operation instanceof UpdateRaftGroupMembersCmd) {
+        } else if (operation instanceof UpdateRaftGroupMembersCmd op) {
             raftNode.setStatus(UPDATING_GROUP_MEMBER_LIST);
-            UpdateRaftGroupMembersCmd op = (UpdateRaftGroupMembersCmd) operation;
             raftNode.updateGroupMembers(logIndex, op.getMembers());
             // TODO following suggestions are optimizations. No rush for impl'ing them...
             // TODO update quorum match indices...

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,7 +40,6 @@ import com.hazelcast.jet.impl.execution.init.ExecutionPlan;
 import com.hazelcast.jet.impl.execution.init.VertexDef;
 import com.hazelcast.jet.impl.metrics.RawJobMetrics;
 import com.hazelcast.jet.impl.operation.SnapshotPhase1Operation.SnapshotPhase1Result;
-import com.hazelcast.jet.impl.util.LoggingUtil;
 import com.hazelcast.jet.impl.util.Util;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.spi.impl.NodeEngineImpl;
@@ -65,10 +64,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 import static com.hazelcast.internal.util.ConcurrencyUtil.CALLER_RUNS;
+import static com.hazelcast.internal.util.ExceptionUtil.withTryCatch;
 import static com.hazelcast.jet.Util.idToString;
 import static com.hazelcast.jet.core.metrics.MetricNames.EXECUTION_COMPLETION_TIME;
 import static com.hazelcast.jet.core.metrics.MetricNames.EXECUTION_START_TIME;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.withTryCatch;
 import static com.hazelcast.jet.impl.util.Util.doWithClassLoader;
 import static com.hazelcast.spi.impl.executionservice.ExecutionService.JOB_OFFLOADABLE_EXECUTOR;
 import static java.util.Collections.emptyList;
@@ -120,10 +119,9 @@ public class ExecutionContext implements DynamicMetricsProvider {
     private final NodeEngineImpl nodeEngine;
     private final JetServiceBackend jetServiceBackend;
     private volatile SnapshotContext snapshotContext;
-    private JobConfig jobConfig;
 
     private boolean metricsEnabled;
-    private volatile RawJobMetrics jobMetrics = RawJobMetrics.empty();
+    private volatile RawJobMetrics metrics = RawJobMetrics.empty();
 
     private InternalSerializationService serializationService;
     private final AtomicBoolean executionCompleted = new AtomicBoolean();
@@ -153,18 +151,24 @@ public class ExecutionContext implements DynamicMetricsProvider {
         this.coordinator = coordinator;
         this.participants = participants;
 
-        jobConfig = plan.getJobConfig();
+        JobConfig jobConfig = plan.getJobConfig();
         jobName = jobConfig.getName() == null ? jobName : jobConfig.getName();
 
         // Must be populated early, so all processor suppliers are
         // available to be completed in the case of init failure
         vertices = plan.getVertices();
-        snapshotContext = new SnapshotContext(nodeEngine.getLogger(SnapshotContext.class), jobNameAndExecutionId(),
-                plan.lastSnapshotId(), jobConfig.getProcessingGuarantee());
+        snapshotContext = new SnapshotContext(
+            nodeEngine.getLogger(SnapshotContext.class),
+            jobNameAndExecutionId(),
+            plan.lastSnapshotId(),
+            jobConfig.getProcessingGuarantee(),
+            plan.isRequireSnapshotBeforeProcessing()
+        );
 
-        JetServiceBackend jetServiceBackend = nodeEngine.getService(JetServiceBackend.SERVICE_NAME);
-
-        serializationService = jetServiceBackend.createSerializationService(jobConfig.getSerializerConfigs());
+        serializationService = isLightJob
+                ? (InternalSerializationService) nodeEngine.getSerializationService()
+                : ((JetServiceBackend) nodeEngine.getService(JetServiceBackend.SERVICE_NAME))
+                        .createSerializationService(jobConfig.getSerializerConfigs());
 
         metricsEnabled = jobConfig.isMetricsEnabled() && nodeEngine.getConfig().getMetricsConfig().isEnabled();
         return plan.initialize(nodeEngine, jobId, executionId, snapshotContext, tempDirectories, serializationService)
@@ -221,7 +225,7 @@ public class ExecutionContext implements DynamicMetricsProvider {
         synchronized (executionLock) {
             if (executionFuture != null) {
                 // beginExecution was already called or execution was cancelled before it started.
-                LoggingUtil.logFine(logger, "%s: execution started after cancelled", jobNameAndExecutionId());
+                logger.fine("%s: execution started after cancelled", jobNameAndExecutionId());
                 return executionFuture;
             } else {
                 // begin job execution
@@ -277,7 +281,7 @@ public class ExecutionContext implements DynamicMetricsProvider {
                 try {
                     ClassLoader processorCl = isLightJob ?
                             null : jobClassloaderService.getProcessorClassLoader(jobId, vertex.name());
-                    doWithClassLoader(processorCl, () ->  processorSupplier.close(error));
+                    doWithClassLoader(processorCl, () -> processorSupplier.close(error));
                 } catch (Throwable e) {
                     logger.severe(jobNameAndExecutionId()
                             + " encountered an exception in ProcessorSupplier.close(), ignoring it", e);
@@ -297,7 +301,7 @@ public class ExecutionContext implements DynamicMetricsProvider {
                         }
                     });
 
-                    if (serializationService != null) {
+                    if (!isLightJob && serializationService != null) {
                         serializationService.dispose();
                     }
                 }));
@@ -322,7 +326,23 @@ public class ExecutionContext implements DynamicMetricsProvider {
                 executionFuture = cancellationFuture;
                 return false;
             }
-            snapshotContext.cancel();
+
+            // Very rarely it can happen that snapshotContext=null here.
+            // Basic scenario is when job initializes slowly (under load) and execution context is already created
+            // but not yet fully initialized (did not reach SnapshotContext creation in ExecutionContext.initialize()).
+            // If such job is terminated twice for any reason (eg. manual termination, cancelAllExecutions, member left etc.)
+            // and the completeExecution invocation is slow, then terminateExecution may be invoked twice from
+            // JobExecutionService.terminateExecution0.
+            // If that happens, first invocation will set `executionFuture = cancellationFuture` and the second invocation
+            // will reach here. This should not be very harmful, as completeExecution is safe to be invoked multiple times.
+            //
+            // Due to concurrent nature of initialization and cancellation it is hard to precisely know if the job
+            // was cancelled _before_ execution started or cancelled _when_ the execution was starting.
+            // However, in any case, snapshotContext=null means that the job has not yet started,
+            // so there is no cleanup to do.
+            if (snapshotContext != null) {
+                snapshotContext.cancel();
+            }
             return true;
         }
     }
@@ -331,13 +351,13 @@ public class ExecutionContext implements DynamicMetricsProvider {
      * Starts the phase 1 of a new snapshot.
      */
     public CompletableFuture<SnapshotPhase1Result> beginSnapshotPhase1(long snapshotId, String mapName, int flags) {
-        LoggingUtil.logFine(logger, "Starting snapshot %d phase 1 for %s on member", snapshotId, jobNameAndExecutionId());
+        logger.fine("Starting snapshot %d phase 1 for %s on member", snapshotId, jobNameAndExecutionId());
         synchronized (executionLock) {
             if (cancellationFuture.isDone()) {
                 throw new CancellationException();
             } else if (executionFuture != null && executionFuture.isDone()) {
                 // if execution is done, there are 0 processors to take snapshot of. Therefore we're done now.
-                LoggingUtil.logFine(logger, "Ignoring snapshot %d phase 1 for %s: execution completed",
+                logger.fine("Ignoring snapshot %d phase 1 for %s: execution completed",
                         snapshotId, jobNameAndExecutionId());
                 return completedFuture(new SnapshotPhase1Result(0, 0, 0, null));
             }
@@ -349,13 +369,13 @@ public class ExecutionContext implements DynamicMetricsProvider {
      * Starts the phase 2 of the current snapshot.
      */
     public CompletableFuture<Void> beginSnapshotPhase2(long snapshotId, boolean success) {
-        LoggingUtil.logFine(logger, "Starting snapshot %d phase 2 for %s on member", snapshotId, jobNameAndExecutionId());
+        logger.fine("Starting snapshot %d phase 2 for %s on member", snapshotId, jobNameAndExecutionId());
         synchronized (executionLock) {
             if (cancellationFuture.isDone()) {
                 throw new CancellationException();
             } else if (executionFuture != null && executionFuture.isDone()) {
                 // if execution is done, there are 0 processors to take snapshot of. Therefore we're done now.
-                LoggingUtil.logFine(logger, "Ignoring snapshot %d phase 2 for %s: execution completed",
+                logger.fine("Ignoring snapshot %d phase 2 for %s: execution completed",
                         snapshotId, jobNameAndExecutionId());
                 return completedFuture(null);
             }
@@ -401,17 +421,21 @@ public class ExecutionContext implements DynamicMetricsProvider {
         return receiverMap;
     }
 
+    public Set<Address> participants() {
+        return participants;
+    }
+
     @Nullable
     public String jobName() {
         return jobName;
     }
 
-    public RawJobMetrics getJobMetrics() {
-        return jobMetrics;
+    public RawJobMetrics getMetrics() {
+        return metrics;
     }
 
-    public void setJobMetrics(RawJobMetrics jobMetrics) {
-        this.jobMetrics = jobMetrics;
+    public void setMetrics(RawJobMetrics metrics) {
+        this.metrics = metrics;
     }
 
     @Override
@@ -419,9 +443,9 @@ public class ExecutionContext implements DynamicMetricsProvider {
         if (!metricsEnabled) {
             return;
         }
-        descriptor = descriptor.withTag(MetricTags.JOB, idToString(jobId))
-                               .withTag(MetricTags.JOB_NAME, jobName)
-                               .withTag(MetricTags.EXECUTION, idToString(executionId));
+        descriptor.withTag(MetricTags.JOB, idToString(jobId))
+                  .withTag(MetricTags.JOB_NAME, jobName)
+                  .withTag(MetricTags.EXECUTION, idToString(executionId));
 
         context.collect(descriptor, EXECUTION_START_TIME, ProbeLevel.INFO, ProbeUnit.MS, startTime.get());
         context.collect(descriptor, EXECUTION_COMPLETION_TIME, ProbeLevel.INFO, ProbeUnit.MS, completionTime.get());

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,9 +24,9 @@ import com.hazelcast.version.Version;
 /**
  * Listeners interested in acting upon cluster version update should implement this interface.
  * Services registered with the Hazelcast {@link com.hazelcast.spi.impl.servicemanager.ServiceManager} which implement this
- * interface do not have have to register themselves, as their {@link #onClusterVersionChange(Version)} method will be
+ * interface do not have to register themselves, as their {@link #onClusterVersionChange(Version)} method will be
  * invoked automatically.
- *
+ * <p>
  * Other listeners have to register themselves with {@link NodeExtension#registerListener(Object)}.
  * Upon registration, the listener's {@link #onClusterVersionChange(Version)} method will be invoked once with the current
  * value of the cluster version.

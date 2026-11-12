@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,15 +16,6 @@
 
 package com.hazelcast.collection.impl.collection;
 
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.Properties;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentMap;
-
 import com.hazelcast.cluster.impl.MemberImpl;
 import com.hazelcast.collection.ItemEvent;
 import com.hazelcast.collection.ItemListener;
@@ -34,6 +25,7 @@ import com.hazelcast.collection.impl.common.DataAwareItemEvent;
 import com.hazelcast.collection.impl.txncollection.operations.CollectionTransactionRollbackOperation;
 import com.hazelcast.core.ItemEventType;
 import com.hazelcast.internal.monitor.impl.AbstractLocalCollectionStats;
+import com.hazelcast.internal.namespace.NamespaceUtil;
 import com.hazelcast.internal.partition.IPartitionService;
 import com.hazelcast.internal.partition.MigrationAwareService;
 import com.hazelcast.internal.partition.MigrationEndpoint;
@@ -55,6 +47,15 @@ import com.hazelcast.spi.impl.operationservice.Operation;
 import com.hazelcast.spi.impl.operationservice.OperationService;
 import com.hazelcast.spi.merge.SplitBrainMergePolicy;
 import com.hazelcast.spi.merge.SplitBrainMergeTypes.CollectionMergeTypes;
+
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentMap;
 
 import static com.hazelcast.spi.impl.merge.MergingValueFactory.createMergingValue;
 
@@ -107,7 +108,7 @@ public abstract class CollectionService implements ManagedService, RemoteService
     @Override
     public void dispatchEvent(CollectionEvent event, ItemListener<Data> listener) {
         final MemberImpl member = nodeEngine.getClusterService().getMember(event.getCaller());
-        ItemEvent<Data> itemEvent = new DataAwareItemEvent<Data>(event.getName(), event.getEventType(), event.getData(),
+        ItemEvent<Data> itemEvent = new DataAwareItemEvent<>(event.getName(), event.getEventType(), event.getData(),
                 member, serializationService);
         if (member == null) {
             if (logger.isInfoEnabled()) {
@@ -115,11 +116,15 @@ public abstract class CollectionService implements ManagedService, RemoteService
             }
             return;
         }
-        if (event.getEventType().equals(ItemEventType.ADDED)) {
-            listener.itemAdded(itemEvent);
-        } else {
-            listener.itemRemoved(itemEvent);
-        }
+
+        String namespace = lookupNamespace(event.getName());
+        NamespaceUtil.runWithNamespace(nodeEngine, namespace, () -> {
+            if (event.getEventType() == ItemEventType.ADDED) {
+                listener.itemAdded(itemEvent);
+            } else {
+                listener.itemRemoved(itemEvent);
+            }
+        });
     }
 
     @Override
@@ -141,7 +146,7 @@ public abstract class CollectionService implements ManagedService, RemoteService
     }
 
     protected Map<String, CollectionContainer> getMigrationData(PartitionReplicationEvent event) {
-        Map<String, CollectionContainer> migrationData = new HashMap<String, CollectionContainer>();
+        Map<String, CollectionContainer> migrationData = new HashMap<>();
         for (Map.Entry<String, ? extends CollectionContainer> entry : getContainerMap().entrySet()) {
             String name = entry.getKey();
             int partitionId = partitionService.getPartitionId(StringPartitioningStrategy.getPartitionKey(name));
@@ -226,8 +231,9 @@ public abstract class CollectionService implements ManagedService, RemoteService
                     Collection<CollectionItem> items = container.getCollection();
 
                     String name = container.getName();
+                    var config = container.getConfig();
                     SplitBrainMergePolicy<Collection<Object>, CollectionMergeTypes<Object>, Collection<Object>> mergePolicy
-                            = getMergePolicy(container.getConfig().getMergePolicyConfig());
+                            = getMergePolicy(config.getMergePolicyConfig(), config.getUserCodeNamespace());
 
                     CollectionMergeTypes<Object> mergingValue = createMergingValue(serializationService, items);
                     sendBatch(partitionId, name, mergePolicy, mergingValue);
@@ -245,4 +251,16 @@ public abstract class CollectionService implements ManagedService, RemoteService
             invoke(getServiceName(), operation, partitionId);
         }
     }
+
+    public static String lookupNamespace(NodeEngine engine, String serviceName, String setName) {
+        if (engine.getNamespaceService().isEnabled()) {
+            CollectionService service = engine.getService(serviceName);
+            return service.lookupNamespace(setName);
+        }
+        return null;
+    }
+
+    // For faster access within the service, primary calling points are from static
+    //     methods in implementing services
+    protected abstract String lookupNamespace(String collectionName);
 }

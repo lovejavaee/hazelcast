@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,11 +29,10 @@ import org.junit.runner.RunWith;
 import static com.hazelcast.version.Version.UNKNOWN;
 import static com.hazelcast.version.Version.UNKNOWN_VERSION;
 import static com.hazelcast.version.Version.of;
-import static org.hamcrest.Matchers.greaterThan;
-import static org.hamcrest.Matchers.lessThan;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
 @RunWith(HazelcastParallelClassRunner.class)
@@ -62,7 +61,7 @@ public class VersionTest {
     }
 
     @Test
-    public void isUnknownOrGreaterThan() throws Exception {
+    public void isUnknownOrGreaterThan() {
         assertTrue(V3_0.isUnknownOrGreaterThan(of(2, 0)));
         assertFalse(V3_0.isUnknownOrGreaterThan(of(3, 0)));
         assertFalse(V3_0.isUnknownOrGreaterThan(of(4, 0)));
@@ -78,7 +77,7 @@ public class VersionTest {
     }
 
     @Test
-    public void isUnknownGreaterOrEqual() throws Exception {
+    public void isUnknownGreaterOrEqual() {
         assertTrue(V3_0.isUnknownOrGreaterOrEqual(of(2, 0)));
         assertTrue(V3_0.isUnknownOrGreaterOrEqual(of(3, 0)));
         assertTrue(V3_0.isUnknownOrGreaterOrEqual(of(3, 0)));
@@ -96,7 +95,7 @@ public class VersionTest {
     }
 
     @Test
-    public void isUnknownOrLessThan() throws Exception {
+    public void isUnknownOrLessThan() {
         assertFalse(V3_0.isUnknownOrLessThan(of(2, 0)));
         assertFalse(V3_0.isUnknownOrLessThan(of(3, 0)));
         assertTrue(V3_0.isUnknownOrLessThan(of(3, 1)));
@@ -106,14 +105,14 @@ public class VersionTest {
     }
 
     @Test
-    public void isLessOrEqual() throws Exception {
+    public void isLessOrEqual() {
         assertFalse(V3_0.isLessOrEqual(of(2, 0)));
         assertTrue(V3_0.isLessOrEqual(of(3, 0)));
         assertTrue(V3_0.isLessOrEqual(of(4, 0)));
     }
 
     @Test
-    public void isUnknownLessOrEqual() throws Exception {
+    public void isUnknownLessOrEqual() {
         assertFalse(V3_0.isUnknownOrLessOrEqual(of(2, 0)));
         assertTrue(V3_0.isUnknownOrLessOrEqual(of(3, 0)));
         assertTrue(V3_0.isUnknownOrLessOrEqual(of(4, 0)));
@@ -132,7 +131,7 @@ public class VersionTest {
     }
 
     @Test
-    public void isUnknown() throws Exception {
+    public void isUnknown() {
         assertTrue(Version.UNKNOWN.isUnknown());
         assertTrue(Version.of(UNKNOWN_VERSION, UNKNOWN_VERSION).isUnknown());
         assertTrue(Version.of(0, 0).isUnknown());
@@ -143,23 +142,23 @@ public class VersionTest {
         assertEquals(Version.UNKNOWN, Version.UNKNOWN);
         assertEquals(Version.of(3, 0), Version.of(3, 0));
 
-        assertFalse(Version.of(3, 0).equals(Version.of(4, 0)));
-        assertFalse(Version.UNKNOWN.equals(Version.of(4, 0)));
+        assertNotEquals(Version.of(3, 0), Version.of(4, 0));
+        assertNotEquals(Version.UNKNOWN, Version.of(4, 0));
 
-        assertFalse(Version.UNKNOWN.equals(new Object()));
+        assertNotEquals(Version.UNKNOWN, new Object());
     }
 
     @Test
     public void compareTo() throws Exception {
-        assertEquals(0, Version.of(3, 9).compareTo(Version.of(3, 9)));
-        assertThat(Version.of(3, 10).compareTo(Version.of(3, 9)), greaterThan(0));
-        assertThat(Version.of(4, 0).compareTo(Version.of(3, 9)), greaterThan(0));
-        assertThat(Version.of(3, 9).compareTo(Version.of(3, 10)), lessThan(0));
-        assertThat(Version.of(3, 9).compareTo(Version.of(4, 10)), lessThan(0));
+        assertEquals(0, of(3, 9).compareTo(of(3, 9)));
+        assertThat(of(3, 10).compareTo(of(3, 9))).isPositive();
+        assertThat(of(4, 0).compareTo(of(3, 9))).isPositive();
+        assertThat(of(3, 9).compareTo(of(3, 10))).isNegative();
+        assertThat(of(3, 9).compareTo(of(4, 10))).isNegative();
     }
 
     @Test
-    public void hashCodeTest() throws Exception {
+    public void hashCodeTest() {
         assertEquals(Version.UNKNOWN.hashCode(), Version.UNKNOWN.hashCode());
 
         assertTrue(Version.UNKNOWN.hashCode() != Version.of(4, 0).hashCode());
@@ -172,7 +171,7 @@ public class VersionTest {
     }
 
     @Test(expected = IllegalArgumentException.class)
-    public void ofMalformed() throws Exception {
+    public void ofMalformed() {
         Version.of("3,9");
     }
 
@@ -186,7 +185,7 @@ public class VersionTest {
     }
 
     @Test
-    public void toStringTest() throws Exception {
+    public void toStringTest() {
         assertEquals("3.8", Version.of(3, 8).toString());
     }
 

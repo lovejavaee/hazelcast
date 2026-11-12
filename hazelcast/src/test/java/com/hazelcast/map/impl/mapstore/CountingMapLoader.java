@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,11 +23,13 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 class CountingMapLoader extends SimpleMapLoader {
 
-    private AtomicInteger loadedValueCount = new AtomicInteger();
-    private AtomicInteger loadAllKeysInvocations = new AtomicInteger();
-    private AtomicBoolean loadAllKeysClosed = new AtomicBoolean();
+    private final AtomicInteger loadedValueCount = new AtomicInteger();
+    private final AtomicInteger loadAllKeysInvocations = new AtomicInteger();
+    private final AtomicBoolean loadAllKeysClosed = new AtomicBoolean();
 
     CountingMapLoader(int size) {
         super(size, false);
@@ -48,6 +50,7 @@ class CountingMapLoader extends SimpleMapLoader {
     }
 
     public void reset() {
+        loadAllKeysInvocations.set(0);
         loadedValueCount.set(0);
         loadAllKeysClosed.set(false);
     }
@@ -63,6 +66,7 @@ class CountingMapLoader extends SimpleMapLoader {
         return () -> new CloseableIterator<>(allKeys.iterator());
     }
 
+    /** How many times {@link #loadAllKeys()} is invoked */
     public int getLoadAllKeysInvocations() {
         return loadAllKeysInvocations.get();
     }
@@ -93,5 +97,17 @@ class CountingMapLoader extends SimpleMapLoader {
         public void close() {
             loadAllKeysClosed.set(true);
         }
+    }
+
+    public void assertNoFullLoadTriggered() {
+        assertThat(loadAllKeysInvocations.get())
+                .as("Expected loadAllKeys to be called 0 times, but was " + loadAllKeysInvocations.get())
+                .isEqualTo(0);
+    }
+
+    public void assertFullLoadTriggeredOnce() {
+        assertThat(loadAllKeysInvocations.get())
+                .as("Expected loadAllKeys to be called 1 times, but was " + loadAllKeysInvocations.get())
+                .isEqualTo(1);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,8 +15,6 @@
  */
 package com.hazelcast.jet.mongodb.impl;
 
-import com.hazelcast.function.BiFunctionEx;
-import com.hazelcast.function.FunctionEx;
 import com.mongodb.MongoClientSettings;
 import com.mongodb.client.model.changestream.ChangeStreamDocument;
 import org.bson.BsonDocument;
@@ -32,6 +30,8 @@ import org.bson.codecs.pojo.PojoCodecProvider;
 import org.bson.conversions.Bson;
 
 import javax.annotation.Nonnull;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 
 import static com.mongodb.MongoClientSettings.getDefaultCodecRegistry;
 import static org.bson.codecs.configuration.CodecRegistries.fromProviders;
@@ -72,12 +72,12 @@ public final class Mappers {
     }
 
     @Nonnull
-    public static <T> FunctionEx<Document, T> toClass(Class<T> type) {
+    public static <T> Function<Document, T> toClass(Class<T> type) {
         return doc -> map(doc, type);
     }
 
     @Nonnull
-    public static <T> BiFunctionEx<ChangeStreamDocument<Document>, Long, T> streamToClass(Class<T> type) {
+    public static <T> BiFunction<ChangeStreamDocument<Document>, Long, T> streamToClass(Class<T> type) {
         return (doc, ts) -> {
             assert doc.getFullDocument() != null;
             return map(doc.getFullDocument(), type);
@@ -108,8 +108,8 @@ public final class Mappers {
      */
     @Nonnull
     public static Document bsonToDocument(@Nonnull Bson bson) {
-        if (bson instanceof Document) {
-            return (Document) bson;
+        if (bson instanceof Document document) {
+            return document;
         }
         BsonDocument document = bson.toBsonDocument(BsonDocument.class, INSTANCE.pojoCodecRegistry);
         return bsonDocumentToDocument(document);

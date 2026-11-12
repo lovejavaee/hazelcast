@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ package com.hazelcast.sql.impl;
 
 import com.hazelcast.cluster.Member;
 import com.hazelcast.jet.RestartableException;
-import com.hazelcast.jet.impl.util.ExceptionUtil;
+import com.hazelcast.jet.impl.util.JetExceptionUtil;
 import com.hazelcast.sql.HazelcastSqlException;
 import com.hazelcast.version.Version;
 
@@ -34,12 +34,11 @@ public final class CoreQueryUtils {
     }
 
     public static HazelcastSqlException toPublicException(@Nonnull Throwable e, @Nonnull UUID localMemberId) {
-        if (e instanceof HazelcastSqlException) {
-            return (HazelcastSqlException) e;
+        if (e instanceof HazelcastSqlException exception) {
+            return exception;
         }
 
-        if (e instanceof QueryException) {
-            QueryException e0 = (QueryException) e;
+        if (e instanceof QueryException e0) {
 
             UUID originatingMemberId = e0.getOriginatingMemberId();
 
@@ -51,7 +50,7 @@ public final class CoreQueryUtils {
         } else {
             Throwable copy = e;
             while (copy != null) {
-                if (ExceptionUtil.isTopologyException(copy)) {
+                if (JetExceptionUtil.isTopologyException(copy)) {
                     return new HazelcastSqlException(localMemberId, SqlErrorCode.TOPOLOGY_CHANGE, e.getMessage(), e, null);
                 } else if (copy instanceof RestartableException) {
                     return new HazelcastSqlException(localMemberId, SqlErrorCode.RESTARTABLE_ERROR, e.getMessage(), e, null);
@@ -66,7 +65,7 @@ public final class CoreQueryUtils {
     /**
      * Finds a larger same-version group of data members from a collection of
      * members and, if {@code localMember} is from that group, return that.
-     * Otherwise return a random member from the group. If the same-version
+     * Otherwise, return a random member from the group. If the same-version
      * groups have the same size, return a member from the newer group
      * (preferably the local one).
      * <p>

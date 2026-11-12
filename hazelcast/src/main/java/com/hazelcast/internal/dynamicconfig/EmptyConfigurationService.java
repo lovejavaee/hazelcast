@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package com.hazelcast.internal.dynamicconfig;
 import com.hazelcast.config.CacheSimpleConfig;
 import com.hazelcast.config.CardinalityEstimatorConfig;
 import com.hazelcast.config.Config;
+import com.hazelcast.internal.diagnostics.DiagnosticsConfig;
 import com.hazelcast.config.DurableExecutorConfig;
 import com.hazelcast.config.ExecutorConfig;
 import com.hazelcast.config.DataConnectionConfig;
@@ -26,6 +27,7 @@ import com.hazelcast.config.FlakeIdGeneratorConfig;
 import com.hazelcast.config.ListConfig;
 import com.hazelcast.config.MapConfig;
 import com.hazelcast.config.MultiMapConfig;
+import com.hazelcast.config.UserCodeNamespaceConfig;
 import com.hazelcast.config.PNCounterConfig;
 import com.hazelcast.config.QueueConfig;
 import com.hazelcast.config.ReliableTopicConfig;
@@ -34,11 +36,14 @@ import com.hazelcast.config.RingbufferConfig;
 import com.hazelcast.config.ScheduledExecutorConfig;
 import com.hazelcast.config.SetConfig;
 import com.hazelcast.config.TopicConfig;
+import com.hazelcast.config.WanReplicationConfig;
+import com.hazelcast.config.vector.VectorCollectionConfig;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 import static java.util.Collections.emptyMap;
 
@@ -219,8 +224,38 @@ class EmptyConfigurationService implements ConfigurationService {
     }
 
     @Override
+    public WanReplicationConfig findWanReplicationConfig(String name) {
+        return null;
+    }
+
+    @Override
+    public Map<String, WanReplicationConfig> getWanReplicationConfigs() {
+        return emptyMap();
+    }
+
+    @Override
+    public Map<String, UserCodeNamespaceConfig> getNamespaceConfigs() {
+        return emptyMap();
+    }
+
+    @Override
+    public VectorCollectionConfig findVectorCollectionConfig(String name) {
+        return null;
+    }
+
+    @Override
+    public Map<String, VectorCollectionConfig> getVectorCollectionConfigs() {
+        return emptyMap();
+    }
+
+    @Override
+    public DiagnosticsConfig getDiagnosticsConfig() {
+        return null;
+    }
+
+    @Override
     public void broadcastConfig(IdentifiedDataSerializable config) {
-        throw new IllegalStateException("Cannot add a new config while Hazelcast is starting.");
+        throw new IllegalStateException("Cannot modify configuration while Hazelcast is starting.");
     }
 
     @Override
@@ -246,7 +281,17 @@ class EmptyConfigurationService implements ConfigurationService {
     }
 
     @Override
+    public CompletableFuture<Void> updateLicenseAsync(String licenseKey) {
+        throw new IllegalStateException("Cannot update license while Hazelcast is starting.");
+    }
+
+    @Override
     public void updateTcpIpConfigMemberList(List<String> memberList) {
+        throw new IllegalStateException("Cannot update the member list of TCP-IP join config while Hazelcast is starting.");
+    }
+
+    @Override
+    public CompletableFuture<Void> updateTcpIpConfigMemberListAsync(List<String> memberList) {
         throw new IllegalStateException("Cannot update the member list of TCP-IP join config while Hazelcast is starting.");
     }
 }

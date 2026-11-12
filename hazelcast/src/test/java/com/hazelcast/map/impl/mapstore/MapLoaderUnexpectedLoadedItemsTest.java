@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,9 +34,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static com.hazelcast.config.MapStoreConfig.InitialLoadMode.LAZY;
-import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.lessThan;
-import static org.junit.Assert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
@@ -58,7 +56,7 @@ public class MapLoaderUnexpectedLoadedItemsTest extends HazelcastTestSupport {
 
         map.loadAll(true);
 
-        assertThat(map.size(), lessThan(KEYS_TO_LOAD.length));
+        assertThat(map.size()).isLessThan(KEYS_TO_LOAD.length);
 
         instance.shutdown();
     }
@@ -75,7 +73,7 @@ public class MapLoaderUnexpectedLoadedItemsTest extends HazelcastTestSupport {
 
         map.loadAll(true);
 
-        assertThat(map.size(), equalTo(KEYS_TO_LOAD.length));
+        assertThat(map.size()).isEqualTo(KEYS_TO_LOAD.length);
 
         instance.shutdown();
     }
@@ -97,12 +95,13 @@ public class MapLoaderUnexpectedLoadedItemsTest extends HazelcastTestSupport {
             this.useProvidedKeys = useProvidedKeys;
         }
 
+        @Override
         public String load(Integer key) {
             return key.toString();
         }
 
         public Map<Integer, String> loadAll(Collection<Integer> keys) {
-            Map<Integer, String> map = new HashMap<Integer, String>();
+            Map<Integer, String> map = new HashMap<>();
 
             for (Integer key : getKeysToLoad(keys)) {
                 map.put(key, load(key));
@@ -118,6 +117,7 @@ public class MapLoaderUnexpectedLoadedItemsTest extends HazelcastTestSupport {
             return loadAllKeys();
         }
 
+        @Override
         public Iterable<Integer> loadAllKeys() {
             return Lists.newArrayList(KEYS_TO_LOAD);
         }

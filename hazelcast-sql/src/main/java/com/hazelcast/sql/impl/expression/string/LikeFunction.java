@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,10 +27,10 @@ import com.hazelcast.sql.impl.expression.ExpressionEvalContext;
 import com.hazelcast.sql.impl.expression.TriExpression;
 import com.hazelcast.sql.impl.row.Row;
 import com.hazelcast.sql.impl.type.QueryDataType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
+import java.io.Serial;
 import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -43,6 +43,7 @@ import static com.hazelcast.sql.impl.expression.string.StringFunctionUtils.asVar
 public class LikeFunction extends TriExpression<Boolean> {
     private static final int PATTERN_CACHE_SIZE = 100;
 
+    @Serial
     private static final long serialVersionUID = 2L;
 
     /** Single-symbol wildcard in SQL. */
@@ -84,7 +85,7 @@ public class LikeFunction extends TriExpression<Boolean> {
         return new LikeFunction(source, pattern, escape, negated);
     }
 
-    @SuppressFBWarnings(value = "NP_BOOLEAN_RETURN_NULL", justification = "SQL has three-valued boolean logic")
+    //@SuppressFBWarnings(value = "NP_BOOLEAN_RETURN_NULL", justification = "SQL has three-valued boolean logic")
     @Override
     public Boolean eval(Row row, ExpressionEvalContext context) {
         String source = asVarchar(operand1, row, context);
@@ -145,6 +146,7 @@ public class LikeFunction extends TriExpression<Boolean> {
         patternCache = new ConcurrentInitialSetCache<>(PATTERN_CACHE_SIZE);
     }
 
+    @Serial
     private void readObject(ObjectInputStream stream) throws ClassNotFoundException, IOException {
         stream.defaultReadObject();
         // The transient fields are not initialized during Java deserialization, so we need to do it manually.

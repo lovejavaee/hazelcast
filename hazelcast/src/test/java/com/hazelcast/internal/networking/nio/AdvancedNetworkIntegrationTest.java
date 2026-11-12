@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,8 @@
 package com.hazelcast.internal.networking.nio;
 
 import com.hazelcast.cluster.Member;
-import com.hazelcast.config.AdvancedNetworkConfig;
 import com.hazelcast.config.Config;
-import com.hazelcast.config.InvalidConfigurationException;
 import com.hazelcast.config.JoinConfig;
-import com.hazelcast.config.ServerSocketEndpointConfig;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.instance.EndpointQualifier;
 import com.hazelcast.internal.nio.IOUtil;
@@ -37,10 +34,8 @@ import com.hazelcast.test.HazelcastSerialClassRunner;
 import com.hazelcast.test.annotation.QuickTest;
 import com.hazelcast.test.annotation.SlowTest;
 import org.junit.Assume;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import java.io.IOException;
@@ -51,21 +46,16 @@ import java.nio.channels.ServerSocketChannel;
 import java.util.Objects;
 import java.util.Set;
 
-import static com.hazelcast.config.tpc.TpcConfigAccessors.getClientPorts;
-import static com.hazelcast.config.tpc.TpcConfigAccessors.getClientSocketConfig;
 import static com.hazelcast.internal.util.ExceptionUtil.rethrow;
 import static com.hazelcast.test.HazelcastTestSupport.assertClusterSizeEventually;
-import static com.hazelcast.test.HazelcastTestSupport.assertThrows;
 import static com.hazelcast.test.HazelcastTestSupport.smallInstanceConfig;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
 @RunWith(HazelcastSerialClassRunner.class)
 public class AdvancedNetworkIntegrationTest extends AbstractAdvancedNetworkIntegrationTest {
-
-    @Rule
-    public ExpectedException expect = ExpectedException.none();
 
     int firstMemberPort = 6000;
     int firstClientPort = 7000;
@@ -88,51 +78,6 @@ public class AdvancedNetworkIntegrationTest extends AbstractAdvancedNetworkInteg
         assertWrongProtocolAlert(REST_PORT, Protocols.CLUSTER, "AAA");
         assertWrongProtocolAlert(MEMCACHE_PORT, Protocols.CLIENT_BINARY, "AAA");
         assertWrongProtocolAlert(MEMCACHE_PORT, Protocols.CLUSTER, "AAA");
-    }
-
-    @Test
-    @Category(QuickTest.class)
-    public void testTPCPortsWithAdvancedNetwork() {
-        Config config = smallInstanceConfig();
-        config.getTpcConfig().setEnabled(true).setEventloopCount(4);
-        ServerSocketEndpointConfig clientSSConfig = new ServerSocketEndpointConfig();
-        clientSSConfig.getTpcSocketConfig()
-                .setReceiveBufferSizeKB(1024)
-                .setSendBufferSizeKB(512)
-                .setPortRange("15000-16000");
-        config.getAdvancedNetworkConfig().setEnabled(true).setClientEndpointConfig(clientSSConfig);
-
-        HazelcastInstance[] hz = new HazelcastInstance[3];
-        for (int i = 0; i < 3; i++) {
-            hz[i] = newHazelcastInstance(config);
-        }
-
-        for (int i = 0; i < 3; i++) {
-            assertEquals(1024, getClientSocketConfig(hz[i]).getReceiveBufferSizeKB());
-            assertEquals(512, getClientSocketConfig(hz[i]).getSendBufferSizeKB());
-            assertEquals(4, getClientPorts(hz[i]).size());
-        }
-    }
-
-    @Test
-    @Category(QuickTest.class)
-    public void testTpcWithAdvancedNetworkAndWithoutClientSocketConfigThrows() {
-        Config config = smallInstanceConfig();
-        config.getTpcConfig().setEnabled(true);
-        config.getAdvancedNetworkConfig().setEnabled(true);
-        assertThrows(InvalidConfigurationException.class, () -> newHazelcastInstance(config));
-    }
-
-    @Test
-    @Category(QuickTest.class)
-    public void testTpcWithAdvancedNetworkAndWithNonClientTpcSocketConfigurationThrows() {
-        Config config = smallInstanceConfig();
-        config.getTpcConfig().setEnabled(true);
-        AdvancedNetworkConfig advancedNetworkConfig = config.getAdvancedNetworkConfig();
-        advancedNetworkConfig.setEnabled(true);
-        advancedNetworkConfig.setClientEndpointConfig(new ServerSocketEndpointConfig());
-        advancedNetworkConfig.getEndpointConfigs().get(EndpointQualifier.MEMBER).getTpcSocketConfig().setPortRange("12000-16000");
-        assertThrows(InvalidConfigurationException.class, () -> newHazelcastInstance(config));
     }
 
     @Test
@@ -217,7 +162,8 @@ public class AdvancedNetworkIntegrationTest extends AbstractAdvancedNetworkInteg
         Tuple2<Config, Config> cfgTuple = prepareConfigs();
 
         // Mis-configured to point to Client port of 1st member
-        Objects.requireNonNull(cfgTuple.f1())
+        Config config = cfgTuple.f1();
+        Objects.requireNonNull(config)
                 .getAdvancedNetworkConfig()
                 .getJoin()
                 .getTcpIpConfig()
@@ -226,10 +172,9 @@ public class AdvancedNetworkIntegrationTest extends AbstractAdvancedNetworkInteg
 
         newHazelcastInstance(cfgTuple.f0());
 
-        expect.expect(IllegalStateException.class);
-        expect.expectMessage("Node failed to start!");
-
-        newHazelcastInstance(cfgTuple.f1());
+        assertThatThrownBy(() -> newHazelcastInstance(config))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Node failed to start!");
     }
 
     @Test
@@ -238,7 +183,8 @@ public class AdvancedNetworkIntegrationTest extends AbstractAdvancedNetworkInteg
         Tuple2<Config, Config> cfgTuple = prepareConfigs();
 
         // Mis-configured to point to Client port of 1st member
-        Objects.requireNonNull(cfgTuple.f1())
+        Config config = cfgTuple.f1();
+        Objects.requireNonNull(config)
                 .getAdvancedNetworkConfig()
                 .getJoin()
                 .getTcpIpConfig()
@@ -247,10 +193,9 @@ public class AdvancedNetworkIntegrationTest extends AbstractAdvancedNetworkInteg
 
         newHazelcastInstance(cfgTuple.f0());
 
-        expect.expect(IllegalStateException.class);
-        expect.expectMessage("Node failed to start!");
-
-        newHazelcastInstance(cfgTuple.f1());
+        assertThatThrownBy(() -> newHazelcastInstance(config))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Node failed to start!");
     }
 
     @Test
@@ -279,7 +224,8 @@ public class AdvancedNetworkIntegrationTest extends AbstractAdvancedNetworkInteg
 
         // Mis-configured to point to Client port of 1st member
         // However member port also added to the config
-        Objects.requireNonNull(cfgTuple.f1())
+        Config config = cfgTuple.f1();
+        Objects.requireNonNull(config)
                 .getAdvancedNetworkConfig()
                 .getJoin()
                 .getTcpIpConfig()
@@ -289,18 +235,15 @@ public class AdvancedNetworkIntegrationTest extends AbstractAdvancedNetworkInteg
 
         newHazelcastInstance(cfgTuple.f0());
 
-        expect.expect(IllegalStateException.class);
-        expect.expectMessage("Node failed to start!");
-
-        newHazelcastInstance(cfgTuple.f1());
+        assertThatThrownBy(() -> newHazelcastInstance(config))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Node failed to start!");
     }
 
     private void assertLocalPortsOpen(int... ports) {
         for (int port : ports) {
-            Socket socket = new Socket();
-            try {
+            try (Socket socket = new Socket()) {
                 socket.connect(new InetSocketAddress("127.0.0.1", port));
-                socket.close();
             } catch (IOException e) {
                 fail("Failed to connect to port " + port + ": " + e.getMessage());
             }

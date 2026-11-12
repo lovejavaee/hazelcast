@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,8 +34,8 @@ import java.util.Iterator;
 import java.util.Set;
 
 import static com.hazelcast.config.IndexType.SORTED;
-import static junit.framework.TestCase.assertEquals;
-import static junit.framework.TestCase.assertTrue;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 @SuppressWarnings({"rawtypes", "unchecked"})
 public abstract class IndexFilterIteratorTestSupport extends IndexFilterTestSupport {
@@ -55,7 +55,7 @@ public abstract class IndexFilterIteratorTestSupport extends IndexFilterTestSupp
 
         MapContainer mapContainer = mapService.getMapServiceContext().getMapContainer(MAP_NAME);
 
-        return mapContainer.getIndexes().getIndex(INDEX_NAME);
+        return mapContainer.getGlobalIndexRegistry().getIndex(INDEX_NAME);
     }
 
     protected static <T> void checkIterator(IndexType indexType, boolean expectedDescending, Iterator<QueryableEntry> iterator, T... expectedKeys) {

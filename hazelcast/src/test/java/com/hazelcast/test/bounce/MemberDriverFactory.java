@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,6 +39,7 @@ public class MemberDriverFactory implements DriverFactory {
                 Arrays.fill(drivers, rule.getSteadyMember());
                 return drivers;
             case MEMBER:
+            case LITE_MEMBER:
                 for (int i = 0; i < drivers.length; i++) {
                     Config driverConfig = getDriverConfig(testConfiguration);
                     drivers[i] = rule.getFactory().newHazelcastInstance(driverConfig);
@@ -52,9 +53,10 @@ public class MemberDriverFactory implements DriverFactory {
     }
 
     private Config getDriverConfig(BounceTestConfiguration testConfiguration) {
-        Config driverConfig = getConfig();
-        if (driverConfig == null) {
-            driverConfig = testConfiguration.getMemberConfig();
+        Config config = getConfig();
+        Config driverConfig = config != null ? config : testConfiguration.getMemberConfigSupplier().get();
+        if (testConfiguration.getDriverType() == BounceTestConfiguration.DriverType.LITE_MEMBER) {
+            driverConfig.setLiteMember(true);
         }
         return driverConfig;
     }
@@ -64,8 +66,6 @@ public class MemberDriverFactory implements DriverFactory {
      * <p>
      * When you return <code>null</code> then drivers will use the same
      * configuration as other (non-driver) members.
-     *
-     * @return
      */
     protected Config getConfig() {
         return null;

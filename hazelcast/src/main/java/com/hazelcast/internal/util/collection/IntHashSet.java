@@ -1,6 +1,6 @@
 /*
  * Original work Copyright 2015 Real Logic Ltd.
- * Modified work Copyright (c) 2015-2023, Hazelcast, Inc. All Rights Reserved.
+ * Modified work Copyright (c) 2015-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,9 +18,9 @@
 package com.hazelcast.internal.util.collection;
 
 import java.lang.reflect.Array;
+import java.util.AbstractSet;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Set;
 import java.util.function.Predicate;
 
 import static com.hazelcast.internal.util.Preconditions.checkNotNull;
@@ -32,7 +32,7 @@ import static com.hazelcast.internal.util.collection.Hashing.intHash;
  * Simple fixed-size int hashset.
  */
 @SuppressWarnings("checkstyle:methodcount")
-public final class IntHashSet implements Set<Integer> {
+public final class IntHashSet extends AbstractSet<Integer> {
     /** Maximum supported capacity */
     @SuppressWarnings("checkstyle:magicnumber")
     public static final int MAX_CAPACITY = 1 << 29;
@@ -91,7 +91,7 @@ public final class IntHashSet implements Set<Integer> {
 
     @Override
     public boolean remove(final Object value) {
-        return value instanceof Integer && remove(((Integer) value).intValue());
+        return value instanceof Integer i && remove(i.intValue());
     }
 
     /**
@@ -142,7 +142,7 @@ public final class IntHashSet implements Set<Integer> {
 
     @Override
     public boolean contains(final Object value) {
-        return value instanceof Integer && contains(((Integer) value).intValue());
+        return value instanceof Integer i && contains(i.intValue());
     }
 
     public boolean contains(final int value) {
@@ -165,11 +165,6 @@ public final class IntHashSet implements Set<Integer> {
     }
 
     @Override
-    public boolean isEmpty() {
-        return size() == 0;
-    }
-
-    @Override
     public void clear() {
         final int[] values = this.values;
         final int length = values.length;
@@ -185,12 +180,7 @@ public final class IntHashSet implements Set<Integer> {
     }
 
     private <E extends Integer> boolean addAllCapture(final Collection<E> coll) {
-        final Predicate<E> p = new Predicate<E>() {
-            @Override
-            public boolean test(E x) {
-                return add(x);
-            }
-        };
+        final Predicate<E> p = this::add;
         return conjunction(coll, p);
     }
 
@@ -200,11 +190,7 @@ public final class IntHashSet implements Set<Integer> {
     }
 
     private <E> boolean containsAllCapture(Collection<E> coll) {
-        return conjunction(coll, new Predicate<E>() {
-            @Override public boolean test(E value) {
-                return contains(value);
-            }
-        });
+        return conjunction(coll, this::contains);
     }
 
     /**
@@ -258,11 +244,7 @@ public final class IntHashSet implements Set<Integer> {
     }
 
     private <E> boolean removeAllCapture(final Collection<E> coll) {
-        return conjunction(coll, new Predicate<E>() {
-            @Override public boolean test(E value) {
-                return remove(value);
-            }
-        });
+        return conjunction(coll, this::remove);
     }
 
     private static <E> boolean conjunction(final Collection<E> collection, final Predicate<E> predicate) {
@@ -344,19 +326,20 @@ public final class IntHashSet implements Set<Integer> {
         return (T[]) ret;
     }
 
+    @Override
     public boolean equals(final Object other) {
         if (other == this) {
             return true;
         }
 
-        if (other instanceof IntHashSet) {
-            final IntHashSet otherSet = (IntHashSet) other;
+        if (other instanceof IntHashSet otherSet) {
             return otherSet.missingValue == missingValue && otherSet.size() == size() && containsAll(otherSet);
         }
 
         return false;
     }
 
+    @Override
     public int hashCode() {
         final IntIterator iterator = iterator();
         int total = 0;

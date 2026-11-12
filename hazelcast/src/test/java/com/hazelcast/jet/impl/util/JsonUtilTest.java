@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,23 +27,31 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
+import javax.sql.DataSource;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.io.StringReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.logging.Logger;
 
 import static java.util.stream.Collectors.toList;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+@SuppressWarnings({"rawtypes", "unchecked"})
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class JsonUtilTest extends JetTestSupport {
@@ -57,24 +65,17 @@ public class JsonUtilTest extends JetTestSupport {
     @BeforeClass
     public static void setup() throws Exception {
         Path file = Paths.get(JsonUtilTest.class.getResource("file.json").toURI());
-        jsonString = Files.lines(file)
-                          .collect(StringBuilder::new, StringBuilder::append, StringBuilder::append)
-                          .toString();
+        jsonString = Files.readString(file);
 
         Path fileList = Paths.get(JsonUtilTest.class.getResource("file_list.json").toURI());
-        jsonStringList = Files.lines(fileList)
-                              .collect(StringBuilder::new, StringBuilder::append, StringBuilder::append)
-                              .toString();
+        jsonStringList = Files.readString(fileList);
 
         Path filePrettyPrinted = Paths.get(JsonUtilTest.class.getResource("file_pretty_printed.json").toURI());
-        jsonStringPrettyPrinted = Files.lines(filePrettyPrinted)
-                                       .collect(StringBuilder::new, StringBuilder::append, StringBuilder::append)
-                                       .toString();
+        jsonStringPrettyPrinted = Files.readString(filePrettyPrinted);
 
         Path fileListPrettyPrinted = Paths.get(JsonUtilTest.class.getResource("file_list_pretty_printed.json").toURI());
-        jsonStringListPrettyPrinted = Files.lines(fileListPrettyPrinted)
-                                           .collect(StringBuilder::new, StringBuilder::append, StringBuilder::append)
-                                           .toString();
+        jsonStringListPrettyPrinted = Files.readString(fileListPrettyPrinted);
+
         testJsonObject = TestJsonObject.withDefaults();
     }
 
@@ -101,6 +102,46 @@ public class JsonUtilTest extends JetTestSupport {
         TestJsonObjectWithAnnotations jsonObject
                 = JsonUtil.beanFrom(jsonStringPrettyPrinted, TestJsonObjectWithAnnotations.class);
         assertEquals(TestJsonObjectWithAnnotations.withDefaults(), jsonObject);
+    }
+
+    @Test
+    public void when_inputString_then_parseToRecordWithAnnotation() throws IOException {
+        TestJsonRecordWithAnnotations jsonObject = JsonUtil.beanFrom(jsonString, TestJsonRecordWithAnnotations.class);
+        assertEquals(TestJsonRecordWithAnnotations.withDefaults(), jsonObject);
+    }
+
+    @Test
+    public void when_inputStringPrettyPrint_then_parseToRecordWithAnnotation() throws IOException {
+        TestJsonRecordWithAnnotations jsonObject
+                = JsonUtil.beanFrom(jsonStringPrettyPrinted, TestJsonRecordWithAnnotations.class);
+        assertEquals(TestJsonRecordWithAnnotations.withDefaults(), jsonObject);
+    }
+    @Test
+    public void when_inputRecordWithAnnotation_then_ableToReadAgain() throws IOException {
+        String json = JsonUtil.toJson(TestJsonRecordWithAnnotations.withDefaults());
+        TestJsonRecordWithAnnotations jsonObject
+                = JsonUtil.beanFrom(json, TestJsonRecordWithAnnotations.class);
+        assertEquals(TestJsonRecordWithAnnotations.withDefaults(), jsonObject);
+    }
+
+    @Test
+    public void when_inputString_then_parseToRecord() throws IOException {
+        TestJsonRecord jsonObject = JsonUtil.beanFrom(jsonString, TestJsonRecord.class);
+        assertEquals(TestJsonRecord.withDefaults(), jsonObject);
+    }
+
+    @Test
+    public void when_inputStringPrettyPrint_then_parseToRecord() throws IOException {
+        TestJsonRecord jsonObject
+                = JsonUtil.beanFrom(jsonStringPrettyPrinted, TestJsonRecord.class);
+        assertEquals(TestJsonRecord.withDefaults(), jsonObject);
+    }
+
+    @Test
+    public void when_inputRecord_then_ableToParseAgain() throws IOException {
+        String json = JsonUtil.toJson(TestJsonRecord.withDefaults());
+        TestJsonRecord jsonObject = JsonUtil.beanFrom(json, TestJsonRecord.class);
+        assertEquals(TestJsonRecord.withDefaults(), jsonObject);
     }
 
     @Test
@@ -195,13 +236,9 @@ public class JsonUtilTest extends JetTestSupport {
 
     @Test
     public void when_inputReader_then_parseSequenceObject() throws IOException {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 20; i++) {
-            sb.append(jsonString);
-        }
-
+        String testJson = String.valueOf(jsonString).repeat(20);
         Iterator<TestJsonObject> iterator = JsonUtil.beanSequenceFrom(
-                new StringReader(sb.toString()), TestJsonObject.class);
+                new StringReader(testJson), TestJsonObject.class);
 
         assertIteratorObject(iterator, 20);
     }
@@ -216,6 +253,7 @@ public class JsonUtilTest extends JetTestSupport {
         assertNull(birthdate2.date);
     }
 
+    @SuppressWarnings("SameParameterValue")
     private void assertIteratorObject(Iterator<TestJsonObject> iterator, int expectedCount) {
         int count = 0;
         while (iterator.hasNext()) {
@@ -229,6 +267,28 @@ public class JsonUtilTest extends JetTestSupport {
     @Test
     public void testConvertToJsonString() throws IOException {
         assertEquals(jsonString, JsonUtil.toJson(testJsonObject));
+    }
+
+    @Test
+    public void testRejectToJsonString() {
+        assertThatThrownBy(() -> JsonUtil.toJson(new DummyDataSource()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("cannot be serialized using JSON");
+
+        assertThatThrownBy(() -> JsonUtil.toJson(List.of("aa", new DummyDataSource())))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("cannot be serialized using JSON");
+
+        assertThatThrownBy(() -> JsonUtil.toJson(new Object[]{"aa", null, new DummyDataSource()}))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("cannot be serialized using JSON");
+    }
+
+    @Test
+    public void testRejectParseToObject() {
+        assertThatThrownBy(() -> JsonUtil.beanFrom("{}", DummyDataSource.class))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("cannot be deserialized using JSON");
     }
 
     private void assertListOfObjects(List<TestJsonObject> list) {
@@ -295,10 +355,9 @@ public class JsonUtilTest extends JetTestSupport {
             if (this == o) {
                 return true;
             }
-            if (!(o instanceof TestJsonObject)) {
+            if (!(o instanceof TestJsonObject that)) {
                 return false;
             }
-            TestJsonObject that = (TestJsonObject) o;
             return age == that.age &&
                     status == that.status &&
                     Objects.equals(name, that.name) &&
@@ -331,10 +390,9 @@ public class JsonUtilTest extends JetTestSupport {
             if (this == o) {
                 return true;
             }
-            if (!(o instanceof InnerTestJsonObject)) {
+            if (!(o instanceof InnerTestJsonObject that)) {
                 return false;
             }
-            InnerTestJsonObject that = (InnerTestJsonObject) o;
             return Objects.equals(val, that.val);
         }
 
@@ -366,10 +424,9 @@ public class JsonUtilTest extends JetTestSupport {
             if (this == o) {
                 return true;
             }
-            if (!(o instanceof TestJsonObjectWithAnnotations)) {
+            if (!(o instanceof TestJsonObjectWithAnnotations that)) {
                 return false;
             }
-            TestJsonObjectWithAnnotations that = (TestJsonObjectWithAnnotations) o;
             return userage == that.userage && Objects.equals(username, that.username);
         }
 
@@ -380,8 +437,75 @@ public class JsonUtilTest extends JetTestSupport {
 
     }
 
+    public record TestJsonRecordWithAnnotations (@JsonProperty(value = "name") String username,
+                                                 @JsonProperty(value = "age") int userage,
+                                                 @JsonProperty(value = "objects") List<InnerTestJsonObject> objects,
+                                                 @JsonProperty(value = "innerObject") InnerTestJsonObject innerObject) {
+
+        public static TestJsonRecordWithAnnotations withDefaults() {
+            return new TestJsonRecordWithAnnotations("foo", 1,
+                                                     Arrays.asList(new InnerTestJsonObject("x"), new InnerTestJsonObject("y")),
+                                                                   new InnerTestJsonObject("z"));
+        }
+    }
+
+    public record TestJsonRecord(String name, int age, List<InnerTestJsonObject> objects, InnerTestJsonObject innerObject) {
+
+        public static TestJsonRecord withDefaults() {
+            return new TestJsonRecord("foo", 1,
+                                      Arrays.asList(new InnerTestJsonObject("x"), new InnerTestJsonObject("y")),
+                                      new InnerTestJsonObject("z"));
+        }
+    }
+
     public static class Birthdate {
         public Date date;
     }
 
+    public static class DummyDataSource implements DataSource {
+        @Override
+        public Connection getConnection() throws SQLException {
+            return null;
+        }
+
+        @Override
+        public Connection getConnection(String username, String password) throws SQLException {
+            return null;
+        }
+
+        @Override
+        public PrintWriter getLogWriter() throws SQLException {
+            return null;
+        }
+
+        @Override
+        public void setLogWriter(PrintWriter out) throws SQLException {
+
+        }
+
+        @Override
+        public void setLoginTimeout(int seconds) throws SQLException {
+
+        }
+
+        @Override
+        public int getLoginTimeout() throws SQLException {
+            return 0;
+        }
+
+        @Override
+        public <T> T unwrap(Class<T> iface) throws SQLException {
+            return null;
+        }
+
+        @Override
+        public boolean isWrapperFor(Class<?> iface) throws SQLException {
+            return false;
+        }
+
+        @Override
+        public Logger getParentLogger() throws SQLFeatureNotSupportedException {
+            return null;
+        }
+    }
 }

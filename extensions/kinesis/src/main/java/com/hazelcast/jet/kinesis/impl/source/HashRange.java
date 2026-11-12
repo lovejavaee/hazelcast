@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,10 @@
 
 package com.hazelcast.jet.kinesis.impl.source;
 
-import com.amazonaws.services.kinesis.model.HashKeyRange;
+import software.amazon.awssdk.services.kinesis.model.HashKeyRange;
 
 import javax.annotation.Nonnull;
+import java.io.Serial;
 import java.io.Serializable;
 import java.math.BigInteger;
 import java.util.Objects;
@@ -31,6 +32,7 @@ public class HashRange implements Serializable {
     public static final BigInteger MAX_VALUE = valueOf(2).pow(128);
     public static final HashRange DOMAIN = new HashRange(MIN_VALUE, MAX_VALUE);
 
+    @Serial
     private static final long serialVersionUID = 1L;
 
     private final BigInteger minInclusive;
@@ -55,8 +57,8 @@ public class HashRange implements Serializable {
     }
 
     public static HashRange range(@Nonnull HashKeyRange hashKeyRange) {
-        BigInteger startInclusive = new BigInteger(hashKeyRange.getStartingHashKey());
-        BigInteger endExclusive = new BigInteger(hashKeyRange.getEndingHashKey()).add(BigInteger.ONE);
+        BigInteger startInclusive = new BigInteger(hashKeyRange.startingHashKey());
+        BigInteger endExclusive = new BigInteger(hashKeyRange.endingHashKey()).add(BigInteger.ONE);
         return new HashRange(startInclusive, endExclusive);
     }
 

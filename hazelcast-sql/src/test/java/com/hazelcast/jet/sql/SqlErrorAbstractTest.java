@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package com.hazelcast.jet.sql;
 
-import com.hazelcast.client.config.ClientConfig;
 import com.hazelcast.client.test.TestHazelcastFactory;
 import com.hazelcast.cluster.Member;
 import com.hazelcast.config.Config;
@@ -29,7 +28,9 @@ import com.hazelcast.sql.SqlResult;
 import com.hazelcast.sql.SqlRow;
 import com.hazelcast.sql.SqlStatement;
 import com.hazelcast.sql.impl.SqlErrorCode;
+import com.hazelcast.test.HazelcastSerialClassRunner;
 import org.junit.After;
+import org.junit.runner.RunWith;
 
 import javax.annotation.Nonnull;
 import java.util.HashMap;
@@ -37,13 +38,16 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 
-import static junit.framework.TestCase.assertEquals;
-import static junit.framework.TestCase.assertNotNull;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+@RunWith(HazelcastSerialClassRunner.class)
 public abstract class SqlErrorAbstractTest extends SqlTestSupport {
+
     protected static final String MAP_NAME = "map";
     private static final int DATA_SET_SIZE = 100;
 
@@ -51,13 +55,11 @@ public abstract class SqlErrorAbstractTest extends SqlTestSupport {
 
     protected HazelcastInstance instance1;
     protected HazelcastInstance instance2;
-    protected HazelcastInstance client;
 
     @After
     public void after() {
         instance1 = null;
         instance2 = null;
-        client = null;
 
         factory.shutdownAll();
     }
@@ -67,24 +69,23 @@ public abstract class SqlErrorAbstractTest extends SqlTestSupport {
         return smallInstanceConfig();
     }
 
-    protected void checkTimeout(boolean useClient) {
+    protected void checkTimeout(Supplier<HazelcastInstance> clientSupplier) {
         // Start two instances and fill them with data
         instance1 = newHazelcastInstance(false);
         instance2 = newHazelcastInstance(true);
-        client = newClient();
 
         // Execute query on the instance1.
         SqlStatement query = new SqlStatement("select v from table(generate_stream(1))")
                 .setTimeoutMillis(1L);
-        HazelcastSqlException error = assertSqlException(useClient ? client : instance1, query);
+        HazelcastSqlException error = assertSqlException(clientSupplier != null
+                ? clientSupplier.get() : instance1, query);
         assertTrue(error.getMessage().contains("CANCEL_FORCEFUL"));
     }
 
-    protected void checkDataTypeMismatch(boolean useClient) {
+    protected void checkDataTypeMismatch(Supplier<HazelcastInstance> clientSupplier) {
         // Start two instances and fill them with data
         instance1 = newHazelcastInstance(false);
         instance2 = newHazelcastInstance(true);
-        client = newClient();
 
         IMap<Long, Object> map = instance1.getMap(MAP_NAME);
 
@@ -96,33 +97,32 @@ public abstract class SqlErrorAbstractTest extends SqlTestSupport {
         }
 
         // Execute query.
-        HazelcastSqlException error = assertSqlException(useClient ? client : instance1, query());
+        HazelcastSqlException error = assertSqlException(clientSupplier != null
+                ? clientSupplier.get() : instance1, query());
 
         assertErrorCode(SqlErrorCode.DATA_EXCEPTION, error);
         assertTrue(error.getMessage().contains("Failed to extract map entry value because of type mismatch "
                 + "[expectedClass=java.lang.Long, actualClass=java.lang.String]"));
     }
 
-    protected void checkParsingError(boolean useClient) {
+    protected void checkParsingError(Supplier<HazelcastInstance> clientSupplier) {
         instance1 = newHazelcastInstance(true);
-        client = newClient();
 
         createMapping(instance1, MAP_NAME, long.class, long.class);
         IMap<Long, Long> map = instance1.getMap(MAP_NAME);
         map.put(1L, 1L);
 
-        HazelcastInstance target = useClient ? client : instance1;
+        HazelcastInstance target = clientSupplier != null ? clientSupplier.get() : instance1;
 
         HazelcastSqlException error = assertSqlException(target, new SqlStatement("SELECT bad_field FROM " + MAP_NAME));
         assertErrorCode(SqlErrorCode.PARSING, error);
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
-    protected void checkUserCancel(boolean useClient) {
+    protected void checkUserCancel(Supplier<HazelcastInstance> clientSupplier) {
         instance1 = newHazelcastInstance(true);
-        client = newClient();
 
-        HazelcastInstance target = useClient ? client : instance1;
+        HazelcastInstance target = clientSupplier != null ? clientSupplier.get() : instance1;
 
         try (SqlResult res = target.getSql().execute("select * from table(generate_stream(1))")) {
             sleepSeconds(1);
@@ -204,13 +204,7 @@ public abstract class SqlErrorAbstractTest extends SqlTestSupport {
         instance.getMap(MAP_NAME).putAll(map);
     }
 
-    protected HazelcastInstance newClient() {
-        return factory.newHazelcastClient(clientConfig());
-    }
 
-    protected ClientConfig clientConfig() {
-        return new ClientConfig();
-    }
 
     protected static void assertErrorCode(int expected, HazelcastSqlException error) {
         assertEquals(error.getCode() + ": " + error.getMessage(), expected, error.getCode());

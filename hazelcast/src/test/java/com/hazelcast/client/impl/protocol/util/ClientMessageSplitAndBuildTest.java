@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,9 +42,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static com.hazelcast.client.impl.protocol.util.ClientMessageSplitter.getFragments;
 import static com.hazelcast.internal.networking.HandlerStatus.CLEAN;
-import static com.hazelcast.internal.util.JVMUtil.upcast;
 import static com.hazelcast.test.HazelcastTestSupport.generateRandomString;
-import static groovy.util.GroovyTestCase.assertEquals;
+import static org.junit.Assert.assertEquals;
 
 @RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
@@ -67,7 +66,7 @@ public class ClientMessageSplitAndBuildTest {
         }
 
         return ClientAuthenticationCodec.encodeRequest(clusterName, username, password, uuid, clientType,
-                (byte) 1, clientSerializationVersion, clientName, labels);
+                (byte) 1, clientSerializationVersion, clientName, labels, (byte) 1, false);
     }
 
     @Before
@@ -88,18 +87,18 @@ public class ClientMessageSplitAndBuildTest {
         encoder.src(outputQueue::poll);
 
         ByteBuffer buffer = ByteBuffer.allocate(100000);
-        upcast(buffer).flip();
+        buffer.flip();
         encoder.dst(buffer);
 
         HandlerStatus result = encoder.onWrite();
 
-        Assert.assertEquals(CLEAN, result);
+        assertEquals(CLEAN, result);
 
         AtomicReference<ClientMessage> resultingMessage = new AtomicReference<>();
         ClientMessageDecoder decoder = new ClientMessageDecoder(null, resultingMessage::set, null);
         decoder.setNormalPacketsRead(SwCounter.newSwCounter());
 
-        upcast(buffer).position(buffer.limit());
+        buffer.position(buffer.limit());
 
         decoder.src(buffer);
         decoder.onRead();
@@ -137,18 +136,18 @@ public class ClientMessageSplitAndBuildTest {
         encoder.src(outputQueue::poll);
 
         ByteBuffer buffer = ByteBuffer.allocate(100000);
-        upcast(buffer).flip();
+        buffer.flip();
         encoder.dst(buffer);
 
         HandlerStatus result = encoder.onWrite();
 
-        Assert.assertEquals(CLEAN, result);
+        assertEquals(CLEAN, result);
 
         Queue<ClientMessage> inputQueue = new ConcurrentLinkedQueue<>();
         ClientMessageDecoder decoder = new ClientMessageDecoder(null, inputQueue::offer, null);
         decoder.setNormalPacketsRead(SwCounter.newSwCounter());
 
-        upcast(buffer).position(buffer.limit());
+        buffer.position(buffer.limit());
 
         decoder.src(buffer);
         decoder.onRead();
@@ -173,18 +172,18 @@ public class ClientMessageSplitAndBuildTest {
         encoder.src(outputQueue::poll);
 
         ByteBuffer buffer = ByteBuffer.allocate(100000);
-        upcast(buffer).flip();
+        buffer.flip();
         encoder.dst(buffer);
 
         HandlerStatus result = encoder.onWrite();
 
-        Assert.assertEquals(CLEAN, result);
+        assertEquals(CLEAN, result);
 
         AtomicReference<ClientMessage> resultingMessage = new AtomicReference<>();
         ClientMessageDecoder decoder = new ClientMessageDecoder(null, resultingMessage::set, null);
         decoder.setNormalPacketsRead(SwCounter.newSwCounter());
 
-        upcast(buffer).position(buffer.limit());
+        buffer.position(buffer.limit());
 
         decoder.src(buffer);
         decoder.onRead();

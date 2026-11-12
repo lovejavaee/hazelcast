@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,13 +20,11 @@ import com.hazelcast.config.Config;
 import com.hazelcast.config.JoinConfig;
 import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
-import com.hazelcast.map.IMap;
 import com.hazelcast.internal.ascii.memcache.MemcacheCommandProcessor;
 import com.hazelcast.internal.ascii.memcache.MemcacheEntry;
-import com.hazelcast.test.AssertTask;
+import com.hazelcast.map.IMap;
 import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.HazelcastTestSupport;
-import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import net.spy.memcached.ConnectionFactory;
 import net.spy.memcached.ConnectionFactoryBuilder;
@@ -43,10 +41,10 @@ import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.ConcurrentModificationException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.ConcurrentModificationException;
 
 import static com.hazelcast.instance.EndpointQualifier.MEMCACHE;
 import static com.hazelcast.test.MemcacheTestUtil.shutdownQuietly;
@@ -55,7 +53,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 @RunWith(HazelcastParallelClassRunner.class)
-@Category({QuickTest.class, ParallelJVMTest.class})
+@Category({QuickTest.class})
 public class MemcachedTest extends HazelcastTestSupport {
 
     protected HazelcastInstance instance;
@@ -165,7 +163,7 @@ public class MemcachedTest extends HazelcastTestSupport {
 
     @Test
     public void testBulkGet() throws Exception {
-        List<String> keys = new ArrayList<String>();
+        List<String> keys = new ArrayList<>();
         for (int i = 0; i < 10; i++) {
             keys.add("key" + i);
         }
@@ -234,7 +232,7 @@ public class MemcachedTest extends HazelcastTestSupport {
         future.get();
 
         for (int i = 0; i < 100; i++) {
-            assertNull(client.get(prefix + String.valueOf(i)));
+            assertNull(client.get(prefix + i));
         }
         assertTrue(map.isEmpty());
     }
@@ -313,12 +311,7 @@ public class MemcachedTest extends HazelcastTestSupport {
     public void testExpiration() throws Exception {
         final String key = "key";
         client.set(key, 3, "value").get();
-        assertTrueEventually(new AssertTask() {
-            @Override
-            public void run() throws Exception {
-                assertNull(client.get(key));
-            }
-        });
+        assertTrueEventually(() -> assertNull(client.get(key)));
     }
 
     @Test
@@ -340,7 +333,7 @@ public class MemcachedTest extends HazelcastTestSupport {
     @Test
     public void testBulkSetGet_withManyKeys() throws Exception {
         int numberOfKeys = 1000;
-        Collection<String> keys = new HashSet<String>(numberOfKeys);
+        Collection<String> keys = new HashSet<>(numberOfKeys);
 
         for (int i = 0; i < numberOfKeys; i++) {
             String key = "key" + i;

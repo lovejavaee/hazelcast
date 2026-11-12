@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,24 +25,24 @@ import java.util.List;
  * This list keeps the items as long as its size is less than maximum
  * capacity. Once the list size reaches {@code maxSize}, the half of
  * the entries with less weight are evicted.
- *
+ * <p>
  * When a specified number of votes are cast the list is re-organized
  * to bring the items with the most votes in front. Also, every time
  * {@code maxSize} is reached, the list is reorganized.
- *
+ * <p>
  * The list is not thread-safe.
  *
  * @param <T>
  */
 public class WeightedEvictableList<T> {
 
-    private List<WeightedItem<T>> list = new ArrayList<WeightedItem<T>>();
+    private List<WeightedItem<T>> list = new ArrayList<>();
 
     private final int maxSize;
     private final int maxVotesBeforeReorganization;
     private int reorganizationCounter;
 
-    private final Comparator<WeightedItem<T>> itemComparator = new Comparator<WeightedItem<T>>() {
+    private final Comparator<WeightedItem<T>> itemComparator = new Comparator<>() {
         @Override
         public int compare(WeightedItem<T> o1, WeightedItem<T> o2) {
             return o2.weight - o1.weight;
@@ -55,7 +55,7 @@ public class WeightedEvictableList<T> {
      *                                      can keep.
      * @param maxVotesBeforeReorganization  How many {@link #voteFor(WeightedItem)}
      *                                      operations are allowed, before items
-     *                                      are re-ordered based on on their
+     *                                      are re-ordered based on their
      *                                      weights.
      */
     public WeightedEvictableList(int maxSize, int maxVotesBeforeReorganization) {
@@ -70,7 +70,6 @@ public class WeightedEvictableList<T> {
     /**
      * Casts a vote for given list node. This vote is added to the item's
      * weight.
-     * @param weightedItem
      */
     public void voteFor(WeightedItem<T> weightedItem) {
         reorganizationCounter++;
@@ -85,11 +84,10 @@ public class WeightedEvictableList<T> {
      * Adds a new item to the list or votes for the given item if it
      * already exists. If the {@link #maxSize} is reached, half of the
      * list is removed.
-     *
+     * <p>
      * When half of the list is removed, the weights of all the items
      * are reset. The newly added item gets a vote if applicable.
      *
-     * @param item
      * @return The node that can be used to vote for
      */
     public WeightedItem<T> addOrVote(T item) {
@@ -125,7 +123,7 @@ public class WeightedEvictableList<T> {
         }
         WeightedItem<T> returnValue = null;
         if (item != null) {
-            returnValue = new WeightedItem<T>(item);
+            returnValue = new WeightedItem<>(item);
             returnValue.weight = 1;
             list.add(returnValue);
         }

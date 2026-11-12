@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,10 +22,11 @@ import com.hazelcast.config.IndexConfig;
 import com.hazelcast.config.IndexType;
 import com.hazelcast.config.MapConfig;
 import com.hazelcast.core.HazelcastInstance;
-import com.hazelcast.map.IMap;
 import com.hazelcast.internal.serialization.impl.portable.PortableTest.ChildPortableObject;
 import com.hazelcast.internal.serialization.impl.portable.PortableTest.GrandParentPortableObject;
 import com.hazelcast.internal.serialization.impl.portable.PortableTest.ParentPortableObject;
+import com.hazelcast.internal.util.UuidUtil;
+import com.hazelcast.map.IMap;
 import com.hazelcast.query.Predicate;
 import com.hazelcast.query.PredicateBuilder.EntryObject;
 import com.hazelcast.query.Predicates;
@@ -43,7 +44,6 @@ import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.TestHazelcastInstanceFactory;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
-import com.hazelcast.internal.util.UuidUtil;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
@@ -53,7 +53,6 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collection;
 import java.util.Date;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
@@ -71,6 +70,14 @@ import static org.junit.Assert.fail;
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class QueryBasicTest extends HazelcastTestSupport {
 
+    protected Config getSmallConfig() {
+        return shrinkInstanceConfig(getConfig());
+    }
+
+    protected void configureMap(String name, Config config) {
+        // do nothing
+    }
+
     @Test
     public void testPredicatedEvaluatedSingleThreadedByDefault() {
         Config config = getConfig();
@@ -84,6 +91,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
         TestHazelcastInstanceFactory nodeFactory = createHazelcastInstanceFactory(2);
         Config cfg = getConfig();
         cfg.setProperty(QueryEngineImpl.DISABLE_MIGRATION_FALLBACK.getName(), "true");
+        configureMap("default", cfg);
         HazelcastInstance instance = nodeFactory.newHazelcastInstance(cfg);
         final IMap<String, Value> map = instance.getMap("default");
         for (int i = 0; i < 10; i++) {
@@ -98,7 +106,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test
     public void testQueryIndexNullValues() {
-        final HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("default", config);
+        final HazelcastInstance instance = createHazelcastInstance(config);
         final IMap<String, Value> map = instance.getMap("default");
         map.addIndex(IndexType.SORTED, "name");
         map.put("first", new Value("first", 1));
@@ -121,7 +131,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test
     public void testLesserEqual() {
-        final HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("default", config);
+        final HazelcastInstance instance = createHazelcastInstance(config);
         final IMap<String, Value> map = instance.getMap("default");
         map.addIndex(IndexType.SORTED, "index");
         for (int i = 0; i < 10; i++) {
@@ -148,7 +160,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test
     public void testNotEqual() {
-        final HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("default", config);
+        final HazelcastInstance instance = createHazelcastInstance(config);
         final IMap<String, Value> map = instance.getMap("default");
         map.addIndex(IndexType.SORTED, "name");
         map.put("first", new Value("first", 1));
@@ -172,7 +186,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void issue393SqlIn() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("default", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<String, Value> map = instance.getMap("default");
         map.addIndex(IndexType.SORTED, "name");
         for (int i = 0; i < 4; i++) {
@@ -194,7 +210,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void issue393SqlInInteger() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("default", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<String, Value> map = instance.getMap("default");
         map.addIndex(IndexType.HASH, "index");
         for (int i = 0; i < 4; i++) {
@@ -216,7 +234,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void testInPredicate() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("testIteratorContract", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<String, SampleTestObjects.ValueType> map = instance.getMap("testIteratorContract");
         map.put("1", new ValueType("one"));
         map.put("2", new ValueType("two"));
@@ -234,7 +254,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void testInstanceOfPredicate() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("testInstanceOfPredicate", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<String, Object> map = instance.getMap("testInstanceOfPredicate");
 
         LinkedList linkedList = new LinkedList();
@@ -251,7 +273,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void testIteratorContract() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("testIteratorContract", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<String, SampleTestObjects.ValueType> map = instance.getMap("testIteratorContract");
         map.put("1", new ValueType("one"));
         map.put("2", new ValueType("two"));
@@ -283,7 +307,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void issue393Fail() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("default", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<String, Value> map = instance.getMap("default");
         map.addIndex(IndexType.SORTED, "qwe");
         Value v = new Value("name");
@@ -297,7 +323,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void negativeDouble() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("default", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<String, Employee> map = instance.getMap("default");
         map.addIndex(IndexType.HASH, "salary");
         map.put("" + 4, new Employee(1, "default", 1, true, -70D));
@@ -314,7 +342,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void issue393SqlEq() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("default", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<String, Value> map = instance.getMap("default");
         map.addIndex(IndexType.SORTED, "name");
         for (int i = 0; i < 4; i++) {
@@ -336,7 +366,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void issue393() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("default", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<String, Value> map = instance.getMap("default");
         map.addIndex(IndexType.SORTED, "name");
         for (int i = 0; i < 4; i++) {
@@ -358,7 +390,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void testWithDashInTheNameAndSqlPredicate() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("employee", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<String, Employee> map = instance.getMap("employee");
         Employee toto = new Employee("toto", 23, true, 165765.0);
         map.put("1", toto);
@@ -366,7 +400,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
         map.put("2", toto2);
         // works well
         Set<Map.Entry<String, Employee>> entries = map.entrySet(Predicates.sql("name='toto-super+hero'"));
-        assertTrue(entries.size() > 0);
+        assertFalse(entries.isEmpty());
         for (Map.Entry<String, Employee> entry : entries) {
             Employee e = entry.getValue();
             assertEquals(e, toto2);
@@ -375,11 +409,13 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void queryWithThis() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("queryWithThis", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<String, String> map = instance.getMap("queryWithThis");
         map.addIndex(IndexType.HASH, "this");
         for (int i = 0; i < 1000; i++) {
-            map.put("" + i, "" + i);
+            map.put("" + i, String.valueOf(i));
         }
         Predicate predicate = Predicates.newPredicateBuilder().getEntryObject().get("this").equal("10");
         Collection<String> set = map.values(predicate);
@@ -392,7 +428,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
      */
     @Test(timeout = 1000 * 90)
     public void testPredicateWithEntryKeyObject() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("testPredicateWithEntryKeyObject", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<String, Integer> map = instance.getMap("testPredicateWithEntryKeyObject");
         map.put("1", 11);
         map.put("2", 22);
@@ -413,7 +451,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
      */
     @Test(timeout = 1000 * 90)
     public void testPredicateStringAttribute() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("testPredicateStringWithString", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<Integer, Value> map = instance.getMap("testPredicateStringWithString");
         testPredicateStringAttribute(map);
     }
@@ -423,7 +463,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
      */
     @Test(timeout = 1000 * 90)
     public void testPredicateStringAttributesWithIndex() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("testPredicateStringWithStringIndex", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<Integer, Value> map = instance.getMap("testPredicateStringWithStringIndex");
         map.addIndex(IndexType.HASH, "name");
         testPredicateStringAttribute(map);
@@ -451,14 +493,18 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void testPredicateDateAttribute() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("testPredicateDateAttribute", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<Integer, Date> map = instance.getMap("testPredicateDateAttribute");
         testPredicateDateAttribute(map);
     }
 
     @Test(timeout = 1000 * 90)
     public void testPredicateDateAttributeWithIndex() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("testPredicateDateAttribute", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<Integer, Date> map = instance.getMap("testPredicateDateAttribute");
         map.addIndex(IndexType.SORTED, "this");
         testPredicateDateAttribute(map);
@@ -492,14 +538,18 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void testPredicateEnumAttribute() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("testPredicateEnumAttribute", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<Integer, NodeType> map = instance.getMap("testPredicateEnumAttribute");
         testPredicateEnumAttribute(map);
     }
 
     @Test(timeout = 1000 * 90)
     public void testPredicateEnumAttributeWithIndex() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("testPredicateEnumAttribute", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<Integer, NodeType> map = instance.getMap("testPredicateEnumAttribute");
         map.addIndex(IndexType.SORTED, "this");
         testPredicateEnumAttribute(map);
@@ -529,7 +579,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void testPredicateCustomAttribute() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("testPredicateCustomAttribute", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<Integer, CustomObject> map = instance.getMap("testPredicateCustomAttribute");
 
         CustomAttribute attribute = new CustomAttribute(78, 145);
@@ -637,6 +689,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
     @Test(timeout = 1000 * 90)
     public void testInvalidSqlPredicate() {
         Config cfg = getConfig();
+        configureMap("employee", cfg);
         TestHazelcastInstanceFactory nodeFactory = createHazelcastInstanceFactory(1);
         HazelcastInstance instance = nodeFactory.newHazelcastInstance(cfg);
 
@@ -678,7 +731,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void testIndexingEnumAttributeIssue597() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("default", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<Integer, Value> map = instance.getMap("default");
         map.addIndex(IndexType.SORTED, "state");
         for (int i = 0; i < 4; i++) {
@@ -703,7 +758,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
      */
     @Test(timeout = 1000 * 90)
     public void testIndexingEnumAttributeWithSqlIssue597() {
-        HazelcastInstance instance = createHazelcastInstance(getConfig());
+        Config config = getConfig();
+        configureMap("default", config);
+        HazelcastInstance instance = createHazelcastInstance(config);
         IMap<Integer, Value> map = instance.getMap("default");
         map.addIndex(IndexType.SORTED, "state");
         for (int i = 0; i < 4; i++) {
@@ -725,18 +782,22 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void testMultipleOrPredicatesIssue885WithoutIndex() {
+        Config config = getConfig();
+        configureMap("default", config);
         TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(2);
-        HazelcastInstance instance = factory.newHazelcastInstance(getConfig());
-        factory.newHazelcastInstance(getConfig());
+        HazelcastInstance instance = factory.newHazelcastInstance(config);
+        factory.newHazelcastInstance(config);
         IMap<Integer, Employee> map = instance.getMap("default");
         testMultipleOrPredicates(map);
     }
 
     @Test(timeout = 1000 * 90)
     public void testMultipleOrPredicatesIssue885WithIndex() {
+        Config config = getConfig();
+        configureMap("default", config);
         TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(2);
-        HazelcastInstance instance = factory.newHazelcastInstance(getConfig());
-        factory.newHazelcastInstance(getConfig());
+        HazelcastInstance instance = factory.newHazelcastInstance(config);
+        factory.newHazelcastInstance(config);
         IMap<Integer, Employee> map = instance.getMap("default");
         map.addIndex(IndexType.SORTED, "name");
         testMultipleOrPredicates(map);
@@ -744,9 +805,11 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test(timeout = 1000 * 90)
     public void testMultipleOrPredicatesIssue885WithDoubleIndex() {
+        Config config = getConfig();
+        configureMap("default", config);
         TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(2);
-        HazelcastInstance instance = factory.newHazelcastInstance(getConfig());
-        factory.newHazelcastInstance(getConfig());
+        HazelcastInstance instance = factory.newHazelcastInstance(config);
+        factory.newHazelcastInstance(config);
         IMap<Integer, Employee> map = instance.getMap("default");
         map.addIndex(IndexType.SORTED, "name");
         map.addIndex(IndexType.SORTED, "city");
@@ -793,9 +856,12 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @Test
     public void testLikePredicate_withAndWithoutIndexOnMap() {
+        Config config = getConfig();
+        configureMap("withIndex", config);
+        configureMap("withoutIndex", config);
         TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(2);
-        HazelcastInstance instance = factory.newHazelcastInstance(getConfig());
-        factory.newHazelcastInstance(getConfig());
+        HazelcastInstance instance = factory.newHazelcastInstance(config);
+        factory.newHazelcastInstance(config);
         IMap<Integer, Employee> withIndex = instance.getMap("withIndex");
         withIndex.addIndex(IndexType.SORTED, "name");
         IMap<Integer, Employee> withoutIndex = instance.getMap("withoutIndex");
@@ -825,11 +891,13 @@ public class QueryBasicTest extends HazelcastTestSupport {
     @Test
     public void testSqlQueryUsing__KeyField() {
         Config config = getConfig();
+        String mapName = randomMapName();
+        configureMap(mapName, config);
         TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(2);
         HazelcastInstance instance1 = factory.newHazelcastInstance(config);
         HazelcastInstance instance2 = factory.newHazelcastInstance(config);
 
-        IMap<Object, Object> map = instance2.getMap(randomMapName());
+        IMap<Object, Object> map = instance2.getMap(mapName);
 
         Object key = generateKeyOwnedBy(instance1);
         Object value = "value";
@@ -843,11 +911,13 @@ public class QueryBasicTest extends HazelcastTestSupport {
     @Test
     public void testSqlQueryUsingNested__KeyField() {
         Config config = getConfig();
+        String mapName = randomMapName();
+        configureMap(mapName, config);
         TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(2);
         factory.newHazelcastInstance(config);
         HazelcastInstance instance = factory.newHazelcastInstance(config);
 
-        IMap<Object, Object> map = instance.getMap(randomMapName());
+        IMap<Object, Object> map = instance.getMap(mapName);
 
         Object key = new CustomAttribute(12, 123L);
         Object value = "value";
@@ -861,11 +931,13 @@ public class QueryBasicTest extends HazelcastTestSupport {
     @Test
     public void testSqlQueryUsingPortable__KeyField() {
         Config config = getConfig();
+        String mapName = randomMapName();
+        configureMap(mapName, config);
         TestHazelcastInstanceFactory factory = createHazelcastInstanceFactory(2);
         factory.newHazelcastInstance(config);
         HazelcastInstance instance = factory.newHazelcastInstance(config);
 
-        IMap<Object, Object> map = instance.getMap(randomMapName());
+        IMap<Object, Object> map = instance.getMap(mapName);
 
         Object key = new ChildPortableObject(123L);
         Object value = "value";
@@ -879,20 +951,25 @@ public class QueryBasicTest extends HazelcastTestSupport {
     @Test
     public void testQueryPortableObject_serial() {
         Config config = getConfig();
-        testQueryUsingPortableObject(config, randomMapName());
+        String mapName = randomMapName();
+        configureMap(mapName, config);
+        testQueryUsingPortableObject(config, mapName);
     }
 
     @Test
     public void testQueryPortableObject_parallel() {
         Config config = getConfig();
+        String mapName = randomMapName();
+        configureMap(mapName, config);
         config.setProperty(ClusterProperty.QUERY_PREDICATE_PARALLEL_EVALUATION.getName(), "true");
-        testQueryUsingPortableObject(config, randomMapName());
+        testQueryUsingPortableObject(config, mapName);
     }
 
     @Test
     public void testQueryPortableObjectAndAlwaysCacheValues() {
         String name = randomMapName();
         Config config = getConfig();
+        configureMap(name, config);
         config.addMapConfig(new MapConfig(name).setCacheDeserializedValues(CacheDeserializedValues.ALWAYS));
 
         testQueryUsingPortableObject(config, name);
@@ -925,8 +1002,10 @@ public class QueryBasicTest extends HazelcastTestSupport {
     @Test(expected = QueryException.class)
     public void testQueryPortableField() {
         Config config = getConfig();
+        String mapName = randomMapName();
+        configureMap(mapName, config);
         HazelcastInstance instance = createHazelcastInstance(config);
-        IMap<Object, Object> map = instance.getMap(randomMapName());
+        IMap<Object, Object> map = instance.getMap(mapName);
 
         map.put(1, new GrandParentPortableObject(1, new ParentPortableObject(1L, new ChildPortableObject(1L))));
         Collection<Object> values = map.values(Predicates.sql("child > 0"));
@@ -936,7 +1015,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
     @Test
     public void testQueryUsingNestedPortableObject() {
         Config config = getConfig();
-        testQueryUsingNestedPortableObject(config, randomMapName());
+        String mapName = randomMapName();
+        configureMap(mapName, config);
+        testQueryUsingNestedPortableObject(config, mapName);
     }
 
     @Test
@@ -946,6 +1027,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
         config.addMapConfig(new MapConfig(name)
                 .addIndexConfig(new IndexConfig(IndexType.HASH, "child.timestamp"))
                 .addIndexConfig(new IndexConfig(IndexType.SORTED, "child.child.timestamp")));
+        configureMap(name, config);
 
         testQueryUsingNestedPortableObject(config, name);
     }
@@ -956,6 +1038,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
         Config config = getConfig();
         config.addMapConfig(new MapConfig(name)
                 .addIndexConfig(new IndexConfig(IndexType.SORTED, "timestamp")));
+        configureMap(name, config);
 
         testQueryUsingPortableObject(config, name);
     }
@@ -967,6 +1050,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
         config.addMapConfig(new MapConfig(name)
                 .setCacheDeserializedValues(CacheDeserializedValues.ALWAYS)
                 .addIndexConfig(new IndexConfig(IndexType.SORTED, "timestamp")));
+        configureMap(name, config);
 
         testQueryUsingPortableObject(config, name);
     }
@@ -994,7 +1078,8 @@ public class QueryBasicTest extends HazelcastTestSupport {
     @Test
     public void testOptionalFullScanQuerying() {
         String name = randomMapName();
-        Config config = smallInstanceConfig();
+        Config config = getSmallConfig();
+        configureMap(name, config);
         HazelcastInstance instance = createHazelcastInstance(config);
         IMap<Integer, ObjectWithOptional<Integer>> map = instance.getMap(name);
 
@@ -1015,8 +1100,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
     @Test
     public void testOptionalUnorderedIndexQuerying() {
         String name = randomMapName();
-        Config config = smallInstanceConfig();
+        Config config = getSmallConfig();
         config.getMapConfig(name).addIndexConfig(new IndexConfig(IndexType.HASH, "attribute"));
+        configureMap(name, config);
         HazelcastInstance instance = createHazelcastInstance(config);
         IMap<Integer, ObjectWithOptional<Integer>> map = instance.getMap(name);
 
@@ -1040,8 +1126,9 @@ public class QueryBasicTest extends HazelcastTestSupport {
     @Test
     public void testOptionalOrderedIndexQuerying() {
         String name = randomMapName();
-        Config config = smallInstanceConfig();
+        Config config = getSmallConfig();
         config.getMapConfig(name).addIndexConfig(new IndexConfig(IndexType.SORTED, "attribute"));
+        configureMap(name, config);
         HazelcastInstance instance = createHazelcastInstance(config);
         IMap<Integer, ObjectWithOptional<Integer>> map = instance.getMap(name);
 
@@ -1065,7 +1152,7 @@ public class QueryBasicTest extends HazelcastTestSupport {
 
     @SafeVarargs
     private static <E> void assertEqualSets(Set<E> actual, E... expected) {
-        assertEquals(new HashSet<>(Arrays.asList(expected)), actual);
+        assertEquals(Set.of(expected), actual);
     }
 
 }

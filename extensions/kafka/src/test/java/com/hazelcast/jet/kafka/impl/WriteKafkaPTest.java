@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package com.hazelcast.jet.kafka.impl;
 
+import com.hazelcast.config.Config;
 import com.hazelcast.config.DataConnectionConfig;
 import com.hazelcast.jet.Job;
 import com.hazelcast.jet.SimpleTestInClusterSupport;
@@ -24,6 +25,7 @@ import com.hazelcast.jet.Traversers;
 import com.hazelcast.jet.config.JobConfig;
 import com.hazelcast.jet.config.ProcessingGuarantee;
 import com.hazelcast.jet.core.AbstractProcessor;
+import com.hazelcast.jet.core.JobStatus;
 import com.hazelcast.jet.core.Processor;
 import com.hazelcast.jet.core.ProcessorMetaSupplier;
 import com.hazelcast.jet.core.test.TestInbox;
@@ -32,40 +34,55 @@ import com.hazelcast.jet.core.test.TestProcessorContext;
 import com.hazelcast.jet.impl.connector.SinkStressTestUtil;
 import com.hazelcast.jet.kafka.KafkaSinks;
 import com.hazelcast.jet.pipeline.DataConnectionRef;
+import com.hazelcast.jet.pipeline.JournalInitialPosition;
 import com.hazelcast.jet.pipeline.Pipeline;
 import com.hazelcast.jet.pipeline.Sink;
 import com.hazelcast.jet.pipeline.Sources;
 import com.hazelcast.map.IMap;
+import com.hazelcast.test.SerialTest;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.InvalidProducerEpochException;
+import org.apache.kafka.common.errors.InvalidTxnStateException;
+import org.apache.kafka.common.errors.ProducerFencedException;
+import org.apache.kafka.common.serialization.IntegerDeserializer;
 import org.apache.kafka.common.serialization.IntegerSerializer;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
-import org.junit.experimental.categories.Category;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Properties;
 
 import static com.hazelcast.jet.Util.entry;
+import static com.hazelcast.jet.core.JobAssertions.assertThat;
+import static com.hazelcast.jet.core.JobStatus.RUNNING;
 import static com.hazelcast.jet.kafka.impl.KafkaTestSupport.KAFKA_MAX_BLOCK_MS;
 import static java.util.Collections.singletonMap;
 import static java.util.concurrent.TimeUnit.HOURS;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-@Category({QuickTest.class, ParallelJVMTest.class})
+@SerialTest
+@QuickTest
+@ParallelJVMTest
 public class WriteKafkaPTest extends SimpleTestInClusterSupport {
 
     private static final int PARTITION_COUNT = 20;
@@ -73,18 +90,30 @@ public class WriteKafkaPTest extends SimpleTestInClusterSupport {
     private static KafkaTestSupport kafkaTestSupport;
 
     private final String sourceIMapName = randomMapName();
+    private static final String sourceIMapNameWithMapJournalPrefix = "mapWithMapJournal_";
     private Properties properties;
     private String topic;
     private IMap<Integer, String> sourceIMap;
 
-    @BeforeClass
+    @BeforeAll
     public static void beforeClass() throws IOException {
         kafkaTestSupport = KafkaTestSupport.create();
-        kafkaTestSupport.createKafkaCluster();
-        initialize(2, null);
+        kafkaTestSupport.createKafkaCluster(kafkaProperties());
+        initialize(2, createConfig());
     }
 
-    @Before
+    private static Map<String, String> kafkaProperties() {
+        return Map.of(
+                "transaction.abort.timed.out.transaction.cleanup.interval.ms", "1000"
+        );
+    }
+    private static Config createConfig() {
+        Config config = smallInstanceConfig();
+        config.getMapConfig(sourceIMapNameWithMapJournalPrefix + "*").getEventJournalConfig().setEnabled(true);
+        return config;
+    }
+
+    @BeforeEach
     public void before() {
         properties = new Properties();
         properties.setProperty("bootstrap.servers", kafkaTestSupport.getBrokerConnectionString());
@@ -101,12 +130,108 @@ public class WriteKafkaPTest extends SimpleTestInClusterSupport {
         }
     }
 
-    @AfterClass
+    @AfterAll
     public static void afterClass() {
         if (kafkaTestSupport != null) {
             kafkaTestSupport.shutdownKafkaCluster();
             kafkaTestSupport = null;
         }
+    }
+
+    @Test
+    public void kafka_transaction_timeout_during_send_record() {
+        var kafkaTransactionTimeoutMs = 1000;
+        var sourceIMapName = sourceIMapNameWithMapJournalPrefix + randomName();
+        var map = instance().getMap(sourceIMapName);
+
+        Pipeline p = Pipeline.create();
+        properties.setProperty(ProducerConfig.TRANSACTION_TIMEOUT_CONFIG, String.valueOf(kafkaTransactionTimeoutMs));
+        properties.setProperty(ProducerConfig.LINGER_MS_CONFIG, "0");
+        p.readFrom(Sources.mapJournal(map, JournalInitialPosition.START_FROM_OLDEST))
+            .withoutTimestamps()
+            .writeTo(KafkaSinks.kafka(properties, topic))
+            .setLocalParallelism(1);
+
+        JobConfig config = new JobConfig();
+        config.setProcessingGuarantee(ProcessingGuarantee.EXACTLY_ONCE);
+        config.setSnapshotIntervalMillis(Long.MAX_VALUE);
+        var job = instance().getJet().newJob(p, config);
+        assertThat(job).eventuallyHasStatus(RUNNING);
+
+        map.put(1, "value0");
+        assertTransactionAbortedEventually();
+        assertEquals(RUNNING, job.getStatus());
+        map.put(1, "value1");
+
+        validateJobFailureReason(job);
+    }
+
+    @Test
+    public void kafka_transaction_timeout_during_snapshot() {
+        var kafkaTransactionTimeoutMs = 1000;
+        var sourceIMapName = sourceIMapNameWithMapJournalPrefix + randomName();
+        var map = instance().getMap(sourceIMapName);
+
+        Pipeline p = Pipeline.create();
+        properties.setProperty(ProducerConfig.TRANSACTION_TIMEOUT_CONFIG, String.valueOf(kafkaTransactionTimeoutMs));
+        properties.setProperty(ProducerConfig.LINGER_MS_CONFIG, "0");
+        p.readFrom(Sources.mapJournal(map, JournalInitialPosition.START_FROM_OLDEST))
+            .withoutTimestamps()
+            .writeTo(KafkaSinks.kafka(properties, topic))
+            .setLocalParallelism(1);
+
+        JobConfig config = new JobConfig();
+        config.setProcessingGuarantee(ProcessingGuarantee.EXACTLY_ONCE);
+        // we will trigger snapshot via suspend() call
+        config.setSnapshotIntervalMillis(Long.MAX_VALUE);
+        var job = instance().getJet().newJob(p, config);
+        assertThat(job).eventuallyHasStatus(RUNNING);
+
+        map.put(1, "value0");
+        assertTransactionAbortedEventually();
+        assertEquals(RUNNING, job.getStatus());
+
+        // Suspending triggers a terminal snapshot. Start it only after Kafka has aborted
+        // the transaction, so the job fails while trying to commit it instead of suspending.
+        job.suspend();
+        validateJobFailureReason(job);
+    }
+
+    private void assertTransactionAbortedEventually() {
+        try (KafkaConsumer<Integer, String> uncommittedConsumer = kafkaTestSupport.createConsumer(
+                IntegerDeserializer.class, StringDeserializer.class,
+                Map.of(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_uncommitted"), topic);
+             KafkaConsumer<Integer, String> committedConsumer = kafkaTestSupport.createConsumer(topic)) {
+            List<ConsumerRecord<Integer, String>> records = new ArrayList<>();
+            assertTrueEventually(() -> {
+                uncommittedConsumer.poll(Duration.ofMillis(100)).forEach(records::add);
+                assertEquals(1, records.size(), "The first record hasn't reached Kafka yet");
+            });
+
+            ConsumerRecord<Integer, String> record = records.get(0);
+            TopicPartition partition = new TopicPartition(record.topic(), record.partition());
+            committedConsumer.unsubscribe();
+            committedConsumer.assign(List.of(partition));
+            // A read_committed consumer's end offset is the last stable offset, which cannot
+            // advance past this record while its transaction is open. Automatic snapshots
+            // are disabled, so only the broker's timeout can close the transaction here.
+            assertTrueEventually(() -> assertTrue(
+                    committedConsumer.endOffsets(List.of(partition)).get(partition) > record.offset(),
+                    "Kafka hasn't aborted the transaction yet"));
+        }
+    }
+
+    private void validateJobFailureReason(Job job) {
+        assertThat(job).eventuallyHasStatus(JobStatus.FAILED);
+        String msg =
+            "Kafka transactional producer became invalid (fenced, epoch or txn state mismatch). " +
+                "This most likely occurred because the transaction exceeded Kafka's transaction timeout " +
+                "(transaction.timeout.ms) on the broker side. " +
+                "Consider increasing transaction.timeout.ms configuration";
+        assertThatCode(job::join)
+            .hasMessageContaining(msg)
+            .rootCause()
+            .isInstanceOfAny(InvalidProducerEpochException.class, ProducerFencedException.class, InvalidTxnStateException.class);
     }
 
     @Test
@@ -185,7 +310,7 @@ public class WriteKafkaPTest extends SimpleTestInClusterSupport {
 
     private void when_processingGuaranteeOn_then_lingeringRecordsSentOnSnapshot(boolean exactlyOnce) {
         // When
-        properties.setProperty("linger.ms", "" + HOURS.toMillis(1));
+        properties.setProperty("linger.ms", String.valueOf(HOURS.toMillis(1)));
 
         // Given
         Pipeline p = Pipeline.create();
@@ -259,7 +384,7 @@ public class WriteKafkaPTest extends SimpleTestInClusterSupport {
 
     @Test
     public void test_resumeTransaction() throws Exception {
-        properties.put("transactional.id", "txn.resumeTransactionTest");
+        properties.setProperty("transactional.id", "txn.resumeTransactionTest");
 
         // produce items
         KafkaProducer<String, String> producer = new KafkaProducer<>(properties);
@@ -318,20 +443,22 @@ public class WriteKafkaPTest extends SimpleTestInClusterSupport {
         TestInbox inbox = new TestInbox();
         inbox.add("foo");
         processor.process(0, inbox);
-        assertEquals("inbox size", 0, inbox.size());
+        assertEquals(0, inbox.size(), "inbox size");
         assertTrue(processor.saveToSnapshot());
+        assertTrue(processor.snapshotCommitPrepare());
         processor.close();
 
         inbox.addAll(outbox.snapshotQueue());
 
-        // transaction.abort.timed.out.transaction.cleanup.interval.ms is set to 200, allow it to kick in
-        sleepMillis(txnTimeout + 1000);
+        // transaction.abort.timed.out.transaction.cleanup.interval.ms is set to 1000, allow it to kick in
+        sleepMillis(txnTimeout + 3000);
 
         // create the 2nd processor
         processor = WriteKafkaP.supplier(properties, o -> new ProducerRecord<>(topic, o), true).get();
         processor.init(outbox, procContext);
-        processor.restoreFromSnapshot(inbox);
-        processor.finishSnapshotRestore();
+        Processor finalProcessor = processor;
+        assertThatCode(() -> finalProcessor.restoreFromSnapshot(inbox)).doesNotThrowAnyException();
+        assertThatCode(finalProcessor::finishSnapshotRestore).doesNotThrowAnyException();
     }
 
     private static final class ProcessorWithEntryAndLatch extends AbstractProcessor {

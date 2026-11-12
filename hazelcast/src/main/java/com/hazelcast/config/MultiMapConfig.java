@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,20 @@
 package com.hazelcast.config;
 
 import com.hazelcast.internal.config.ConfigDataSerializerHook;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.internal.util.StringUtil;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
+import com.hazelcast.nio.serialization.impl.Versioned;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
+import static com.hazelcast.internal.cluster.Versions.V5_4;
 import static com.hazelcast.internal.util.Preconditions.checkAsyncBackupCount;
 import static com.hazelcast.internal.util.Preconditions.checkBackupCount;
 import static com.hazelcast.internal.util.Preconditions.checkNotNull;
@@ -34,7 +39,8 @@ import static com.hazelcast.internal.util.Preconditions.checkNotNull;
  * Configuration for MultiMap.
  */
 @SuppressWarnings("checkstyle:methodcount")
-public class MultiMapConfig implements IdentifiedDataSerializable, NamedConfig {
+public class MultiMapConfig implements IdentifiedDataSerializable, NamedConfig, Versioned,
+                                       UserCodeNamespaceAwareConfig<MultiMapConfig> {
 
     /**
      * The default number of synchronous backups for this MultiMap.
@@ -60,6 +66,7 @@ public class MultiMapConfig implements IdentifiedDataSerializable, NamedConfig {
     private boolean statisticsEnabled = true;
     private String splitBrainProtectionName;
     private MergePolicyConfig mergePolicyConfig = new MergePolicyConfig();
+    private @Nullable String userCodeNamespace = DEFAULT_NAMESPACE;
 
     public MultiMapConfig() {
     }
@@ -78,6 +85,7 @@ public class MultiMapConfig implements IdentifiedDataSerializable, NamedConfig {
         this.statisticsEnabled = config.statisticsEnabled;
         this.splitBrainProtectionName = config.splitBrainProtectionName;
         this.mergePolicyConfig = new MergePolicyConfig(config.mergePolicyConfig);
+        this.userCodeNamespace = config.userCodeNamespace;
     }
 
     /**
@@ -99,6 +107,7 @@ public class MultiMapConfig implements IdentifiedDataSerializable, NamedConfig {
      *
      * @return the name of this MultiMap
      */
+    @Override
     public String getName() {
         return name;
     }
@@ -109,6 +118,7 @@ public class MultiMapConfig implements IdentifiedDataSerializable, NamedConfig {
      * @param name the name to set for this MultiMap
      * @return this updated MultiMap configuration
      */
+    @Override
     public MultiMapConfig setName(String name) {
         this.name = name;
         return this;
@@ -313,6 +323,32 @@ public class MultiMapConfig implements IdentifiedDataSerializable, NamedConfig {
         return this;
     }
 
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    @Nullable
+    public String getUserCodeNamespace() {
+        return userCodeNamespace;
+    }
+
+    /**
+     * Associates the provided Namespace Name with this structure for {@link ClassLoader} awareness.
+     * <p>
+     * The behaviour of setting this to {@code null} is outlined in the documentation for
+     * {@link UserCodeNamespaceAwareConfig#DEFAULT_NAMESPACE}.
+     *
+     * @param userCodeNamespace The ID of the Namespace to associate with this structure.
+     * @return the updated {@link MultiMapConfig} instance
+     * @since 5.4
+     */
+    @Override
+    public MultiMapConfig setUserCodeNamespace(@Nullable String userCodeNamespace) {
+        this.userCodeNamespace = userCodeNamespace;
+        return this;
+    }
+
+    @Override
     public String toString() {
         return "MultiMapConfig{"
                 + "name='" + name + '\''
@@ -323,6 +359,7 @@ public class MultiMapConfig implements IdentifiedDataSerializable, NamedConfig {
                 + ", asyncBackupCount=" + asyncBackupCount
                 + ", splitBrainProtectionName=" + splitBrainProtectionName
                 + ", mergePolicyConfig=" + mergePolicyConfig
+                + ", userCodeNamespace=" + userCodeNamespace
                 + '}';
     }
 
@@ -344,10 +381,7 @@ public class MultiMapConfig implements IdentifiedDataSerializable, NamedConfig {
             out.writeBoolean(false);
         } else {
             out.writeBoolean(true);
-            out.writeInt(listenerConfigs.size());
-            for (ListenerConfig listenerConfig : listenerConfigs) {
-                out.writeObject(listenerConfig);
-            }
+            SerializationUtil.writeList(listenerConfigs, out);
         }
         out.writeBoolean(binary);
         out.writeInt(backupCount);
@@ -355,6 +389,11 @@ public class MultiMapConfig implements IdentifiedDataSerializable, NamedConfig {
         out.writeBoolean(statisticsEnabled);
         out.writeString(splitBrainProtectionName);
         out.writeObject(mergePolicyConfig);
+
+        // RU_COMPAT_5_3
+        if (out.getVersion().isGreaterOrEqual(V5_4)) {
+            out.writeString(userCodeNamespace);
+        }
     }
 
     @Override
@@ -363,12 +402,7 @@ public class MultiMapConfig implements IdentifiedDataSerializable, NamedConfig {
         valueCollectionType = in.readString();
         boolean hasListenerConfig = in.readBoolean();
         if (hasListenerConfig) {
-            int configSize = in.readInt();
-            listenerConfigs = new ArrayList<>(configSize);
-            for (int i = 0; i < configSize; i++) {
-                EntryListenerConfig listenerConfig = in.readObject();
-                listenerConfigs.add(listenerConfig);
-            }
+            listenerConfigs = SerializationUtil.readList(in);
         }
         binary = in.readBoolean();
         backupCount = in.readInt();
@@ -376,6 +410,11 @@ public class MultiMapConfig implements IdentifiedDataSerializable, NamedConfig {
         statisticsEnabled = in.readBoolean();
         splitBrainProtectionName = in.readString();
         mergePolicyConfig = in.readObject();
+
+        // RU_COMPAT_5_3
+        if (in.getVersion().isGreaterOrEqual(V5_4)) {
+            userCodeNamespace = in.readString();
+        }
     }
 
     @Override
@@ -384,11 +423,10 @@ public class MultiMapConfig implements IdentifiedDataSerializable, NamedConfig {
         if (this == o) {
             return true;
         }
-        if (!(o instanceof MultiMapConfig)) {
+        if (!(o instanceof MultiMapConfig that)) {
             return false;
         }
 
-        MultiMapConfig that = (MultiMapConfig) o;
         if (binary != that.binary) {
             return false;
         }
@@ -401,22 +439,22 @@ public class MultiMapConfig implements IdentifiedDataSerializable, NamedConfig {
         if (statisticsEnabled != that.statisticsEnabled) {
             return false;
         }
-        if (name != null ? !name.equals(that.name) : that.name != null) {
+        if (!Objects.equals(name, that.name)) {
             return false;
         }
-        if (valueCollectionType != null
-                ? !valueCollectionType.equals(that.valueCollectionType)
-                : that.valueCollectionType != null) {
+        if (!Objects.equals(valueCollectionType, that.valueCollectionType)) {
             return false;
         }
-        if (listenerConfigs != null ? !listenerConfigs.equals(that.listenerConfigs) : that.listenerConfigs != null) {
+        if (!Objects.equals(listenerConfigs, that.listenerConfigs)) {
             return false;
         }
-        if (splitBrainProtectionName != null ? !splitBrainProtectionName.equals(that.splitBrainProtectionName)
-                : that.splitBrainProtectionName != null) {
+        if (!Objects.equals(splitBrainProtectionName, that.splitBrainProtectionName)) {
             return false;
         }
-        return mergePolicyConfig != null ? mergePolicyConfig.equals(that.mergePolicyConfig) : that.mergePolicyConfig == null;
+        if (!Objects.equals(userCodeNamespace, that.userCodeNamespace)) {
+            return false;
+        }
+        return Objects.equals(mergePolicyConfig, that.mergePolicyConfig);
     }
 
     @Override
@@ -431,6 +469,7 @@ public class MultiMapConfig implements IdentifiedDataSerializable, NamedConfig {
         result = 31 * result + (statisticsEnabled ? 1 : 0);
         result = 31 * result + (splitBrainProtectionName != null ? splitBrainProtectionName.hashCode() : 0);
         result = 31 * result + (mergePolicyConfig != null ? mergePolicyConfig.hashCode() : 0);
+        result = 31 * result + (userCodeNamespace != null ? userCodeNamespace.hashCode() : 0);
         return result;
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,12 +32,12 @@ public final class InstantiationUtils {
     /**
      * Create a new instance of a given class. It will search for a constructor matching passed parameters.
      * If a matching constructor is not found then it returns null.
-     *
+     * <p>
      * Constructor is matching when it can be invoked with given parameters. The order of parameters is significant.
-     *
+     * <p>
      * When a class constructor contains a primitive argument then it's matching if and only if
      * a parameter at the same position is not null.
-     *
+     * <p>
      * It throws {@link AmbiguousInstantiationException} when multiple matching constructors are found.
      *
      * @param clazz class to be instantiated
@@ -46,18 +46,14 @@ public final class InstantiationUtils {
      * @return a new instance of a given class
      * @throws AmbiguousInstantiationException when multiple constructors matching the parameters
      */
-    public static <T> T newInstanceOrNull(Class<? extends T> clazz, Object...params)  {
+    public static <T> T newInstanceOrNull(Class<? extends T> clazz, Object... params)  {
         Constructor<T> constructor = selectMatchingConstructor(clazz, params);
         if (constructor == null) {
             return null;
         }
         try {
             return constructor.newInstance(params);
-        } catch (IllegalAccessException e) {
-            return null;
-        } catch (InstantiationException e) {
-            return null;
-        } catch (InvocationTargetException e) {
+        } catch (IllegalAccessException | InstantiationException | InvocationTargetException e) {
             return null;
         }
     }
@@ -79,10 +75,10 @@ public final class InstantiationUtils {
     }
 
     private static boolean isParamsMatching(Constructor<?> constructor, Object[] params) {
-        Class<?>[] constructorParamTypes = constructor.getParameterTypes();
-        if (constructorParamTypes.length != params.length) {
+        if (constructor.getParameterCount() != params.length) {
             return false;
         }
+        Class<?>[] constructorParamTypes = constructor.getParameterTypes();
         for (int i = 0; i < constructorParamTypes.length; i++) {
             Class<?> constructorParamType = constructorParamTypes[i];
             Object param = params[i];

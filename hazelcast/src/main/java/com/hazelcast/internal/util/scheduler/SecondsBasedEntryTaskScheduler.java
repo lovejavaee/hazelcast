@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Schedule execution of an entry for seconds later.
  * This is similar to a scheduled executor service, but instead of scheduling
- * a execution for a specific millisecond, this service will
+ * an execution for a specific millisecond, this service will
  * schedule it with second proximity. For example, if delayMillis is 600 ms,
  * then the entry will be scheduled to execute in 1 second. If delayMillis is 2400,
  * then the entry will be scheduled to execute in 3 seconds. Therefore, delayMillis is
@@ -56,7 +56,7 @@ public final class SecondsBasedEntryTaskScheduler<K, V> implements EntryTaskSche
 
     private static final long INITIAL_TIME_MILLIS = Clock.currentTimeMillis();
 
-    private static final Comparator<ScheduledEntry> SCHEDULED_ENTRIES_COMPARATOR = new Comparator<ScheduledEntry>() {
+    private static final Comparator<ScheduledEntry> SCHEDULED_ENTRIES_COMPARATOR = new Comparator<>() {
         @Override
         public int compare(ScheduledEntry o1, ScheduledEntry o2) {
             if (o1.getScheduleId() > o2.getScheduleId()) {
@@ -103,13 +103,11 @@ public final class SecondsBasedEntryTaskScheduler<K, V> implements EntryTaskSche
                 }
                 keys.put(key, keyScheduler);
             }
-            ScheduledGroup group = groups.get(second);
-            if (group == null) {
+            ScheduledGroup group = groups.computeIfAbsent(second, x -> {
                 Runnable groupExecutor = () -> executeGroup(second);
-                ScheduledFuture executorFuture = taskScheduler.schedule(groupExecutor, delaySeconds, TimeUnit.SECONDS);
-                group = new ScheduledGroup(second, executorFuture);
-                groups.put(second, group);
-            }
+                ScheduledFuture<?> executorFuture = taskScheduler.schedule(groupExecutor, delaySeconds, TimeUnit.SECONDS);
+                return new ScheduledGroup(second, executorFuture);
+            });
             return keyScheduler.schedule(entry, group);
         }
     }
@@ -180,6 +178,7 @@ public final class SecondsBasedEntryTaskScheduler<K, V> implements EntryTaskSche
             this.key = key;
         }
 
+        @Override
         boolean schedule(ScheduledEntry<K, V> newEntry, ScheduledGroup newGroup) {
             if (newGroup == group) {
                 // no reschedule if in the same second
@@ -195,16 +194,19 @@ public final class SecondsBasedEntryTaskScheduler<K, V> implements EntryTaskSche
             return true;
         }
 
+        @Override
         ScheduledEntry<K, V> get() {
             return group.getEntry(id);
         }
 
+        @Override
         ScheduledEntry<K, V> cancel() {
             ScheduledEntry<K, V> entry = group.removeEntry(id);
             keys.remove(key);
             return entry;
         }
 
+        @Override
         int cancelIfExists(V value) {
             ScheduledEntry<K, V> entry = group.getEntry(id);
             if (Objects.equals(entry.getValue(), value)) {
@@ -215,6 +217,7 @@ public final class SecondsBasedEntryTaskScheduler<K, V> implements EntryTaskSche
             return 0;
         }
 
+        @Override
         void executed(ScheduledEntry<K, V> entry) {
             assert entry.getScheduleId() == id;
             // no need to remove entry from group, whole group is being executed and will be removed
@@ -234,6 +237,7 @@ public final class SecondsBasedEntryTaskScheduler<K, V> implements EntryTaskSche
             this.key = key;
         }
 
+        @Override
         boolean schedule(ScheduledEntry<K, V> entry, ScheduledGroup group) {
             Long id = entry.getScheduleId();
             idToGroupMap.put(id, group);
@@ -241,6 +245,7 @@ public final class SecondsBasedEntryTaskScheduler<K, V> implements EntryTaskSche
             return true;
         }
 
+        @Override
         ScheduledEntry<K, V> get() {
             ScheduledEntry<K, V> entry = null;
             for (Map.Entry<Long, ScheduledGroup> idToGroup : idToGroupMap.entrySet()) {
@@ -252,6 +257,7 @@ public final class SecondsBasedEntryTaskScheduler<K, V> implements EntryTaskSche
             return entry;
         }
 
+        @Override
         ScheduledEntry<K, V> cancel() {
             ScheduledEntry<K, V> entry = null;
             for (Map.Entry<Long, ScheduledGroup> idToGroup : idToGroupMap.entrySet()) {
@@ -264,6 +270,7 @@ public final class SecondsBasedEntryTaskScheduler<K, V> implements EntryTaskSche
             return entry;
         }
 
+        @Override
         int cancelIfExists(V value) {
             int cancelled = 0;
             Iterator<Map.Entry<Long, ScheduledGroup>> iterator = idToGroupMap.entrySet().iterator();
@@ -284,6 +291,7 @@ public final class SecondsBasedEntryTaskScheduler<K, V> implements EntryTaskSche
             return cancelled;
         }
 
+        @Override
         void executed(ScheduledEntry<K, V> entry) {
             idToGroupMap.remove(entry.getScheduleId());
             // no need to remove entry from group, whole group is being executed and will be removed

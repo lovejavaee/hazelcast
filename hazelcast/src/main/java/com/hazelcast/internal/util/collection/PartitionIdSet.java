@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,7 +55,8 @@ public class PartitionIdSet extends AbstractSet<Integer> implements IdentifiedDa
     private int size = SIZE_UNKNOWN;
 
     // for deserialization
-    PartitionIdSet() { }
+    PartitionIdSet() {
+    }
 
     public PartitionIdSet(int partitionCount) {
         this(partitionCount, new BitSet(partitionCount));
@@ -228,7 +229,7 @@ public class PartitionIdSet extends AbstractSet<Integer> implements IdentifiedDa
     }
 
     /**
-     * Mutates this set so it contains its complement with respect to the universe of all partition IDs.
+     * Mutates this set, so it contains its complement with respect to the universe of all partition IDs.
      */
     public void complement() {
         bitSet.flip(0, partitionCount);
@@ -253,11 +254,9 @@ public class PartitionIdSet extends AbstractSet<Integer> implements IdentifiedDa
             return true;
         }
 
-        if (o == null || getClass() != o.getClass()) {
+        if (!(o instanceof PartitionIdSet other)) {
             return false;
         }
-
-        PartitionIdSet other = (PartitionIdSet) o;
 
         return partitionCount == other.partitionCount && bitSet.equals(other.bitSet);
     }
@@ -271,7 +270,7 @@ public class PartitionIdSet extends AbstractSet<Integer> implements IdentifiedDa
     }
 
     /**
-     * Returns the sole partition ID, if this set has a size of 1. Otherwise returns -1.
+     * @returns the sole partition ID, if this set has a size of 1. Otherwise, returns -1.
      */
     public int solePartition() {
         int candidateResult = bitSet.nextSetBit(0);
@@ -280,6 +279,13 @@ public class PartitionIdSet extends AbstractSet<Integer> implements IdentifiedDa
         } else {
             return -1;
         }
+    }
+
+    /**
+     * @eturns the first partition ID, if this set is not empty. Otherwise, returns -1.
+     */
+    public int firstPartition() {
+        return bitSet.nextSetBit(0);
     }
 
     public BitSet bitSetCopy() {

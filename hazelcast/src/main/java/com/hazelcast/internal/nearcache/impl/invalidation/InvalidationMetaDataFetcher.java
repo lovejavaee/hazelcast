@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package com.hazelcast.internal.nearcache.impl.invalidation;
 
-import com.hazelcast.cluster.Address;
 import com.hazelcast.cluster.Member;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
@@ -36,7 +35,7 @@ import static java.lang.String.format;
 /**
  * Runs on Near Cache side, an instance of this task is responsible for fetching of all Near Caches' remote metadata like last
  * sequence numbers and partition UUIDs. To see usage of this metadata visit: {@link MetaDataGenerator}.
- *
+ * <p>
  * This class is abstract to provide different implementations on client and member sides.
  */
 public abstract class InvalidationMetaDataFetcher {
@@ -45,7 +44,7 @@ public abstract class InvalidationMetaDataFetcher {
 
     protected final ILogger logger;
 
-    public InvalidationMetaDataFetcher(ILogger logger) {
+    protected InvalidationMetaDataFetcher(ILogger logger) {
         this.logger = logger;
     }
 
@@ -101,7 +100,6 @@ public abstract class InvalidationMetaDataFetcher {
 
         Map<Member, InternalCompletableFuture> futureByMember = createHashMap(members.size());
         for (Member member : members) {
-            Address address = member.getAddress();
             try {
                 futureByMember.put(member, fetchMetadataOf(member, names));
             } catch (Exception e) {
@@ -139,7 +137,7 @@ public abstract class InvalidationMetaDataFetcher {
     }
 
     private List<String> getDataStructureNames(ConcurrentMap<String, RepairingHandler> handlers) {
-        List<String> names = new ArrayList<String>(handlers.size());
+        List<String> names = new ArrayList<>(handlers.size());
         for (RepairingHandler handler : handlers.values()) {
             names.add(handler.getName());
         }

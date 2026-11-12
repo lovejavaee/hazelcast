@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.cp.internal;
 
 import com.hazelcast.cp.internal.MetadataRaftGroupManager.MetadataRaftGroupInitStatus;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
@@ -115,28 +116,16 @@ public final class MetadataRaftGroupSnapshot implements IdentifiedDataSerializab
 
     @Override
     public void writeData(ObjectDataOutput out) throws IOException {
-        out.writeInt(members.size());
-        for (CPMemberInfo member : members) {
-            out.writeObject(member);
-        }
+        SerializationUtil.writeCollection(members, out);
         out.writeLong(membersCommitIndex);
-        out.writeInt(groups.size());
-        for (CPGroupInfo group : groups) {
-            out.writeObject(group);
-        }
+        SerializationUtil.writeCollection(groups, out);
         out.writeObject(membershipChangeSchedule);
         boolean discoveredInitialCPMembers = initialCPMembers != null;
         out.writeBoolean(discoveredInitialCPMembers);
         if (discoveredInitialCPMembers) {
-            out.writeInt(initialCPMembers.size());
-            for (CPMemberInfo member : initialCPMembers) {
-                out.writeObject(member);
-            }
+            SerializationUtil.writeList(initialCPMembers, out);
         }
-        out.writeInt(initializedCPMembers.size());
-        for (CPMemberInfo member : initializedCPMembers) {
-            out.writeObject(member);
-        }
+        SerializationUtil.writeCollection(initializedCPMembers, out);
         out.writeString(initializationStatus.name());
         out.writeInt(initializationCommitIndices.size());
         for (long commitIndex : initializationCommitIndices) {
@@ -161,12 +150,7 @@ public final class MetadataRaftGroupSnapshot implements IdentifiedDataSerializab
         membershipChangeSchedule = in.readObject();
         boolean discoveredInitialCPMembers = in.readBoolean();
         if (discoveredInitialCPMembers) {
-            len = in.readInt();
-            initialCPMembers = new ArrayList<>(len);
-            for (int i = 0; i < len; i++) {
-                CPMemberInfo member = in.readObject();
-                initialCPMembers.add(member);
-            }
+            initialCPMembers = SerializationUtil.readList(in);
         }
 
         len = in.readInt();

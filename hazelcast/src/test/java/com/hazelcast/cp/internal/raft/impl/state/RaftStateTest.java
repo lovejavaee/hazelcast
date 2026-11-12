@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ import com.hazelcast.cp.internal.raft.impl.log.LogEntry;
 import com.hazelcast.cp.internal.raft.impl.log.RaftLog;
 import com.hazelcast.cp.internal.raft.impl.testing.TestRaftEndpoint;
 import com.hazelcast.cp.internal.raft.impl.testing.TestRaftGroupId;
-import com.hazelcast.test.HazelcastSerialClassRunner;
+import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.Before;
@@ -33,23 +33,24 @@ import org.junit.runner.RunWith;
 
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 import static com.hazelcast.cp.internal.raft.impl.RaftUtil.majority;
 import static com.hazelcast.cp.internal.raft.impl.RaftUtil.newRaftMember;
 import static com.hazelcast.cp.internal.raft.impl.state.RaftState.newRaftState;
 import static com.hazelcast.test.HazelcastTestSupport.randomName;
-import static java.util.Arrays.asList;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
-@RunWith(HazelcastSerialClassRunner.class)
+@RunWith(HazelcastParallelClassRunner.class)
 @Category({QuickTest.class, ParallelJVMTest.class})
 public class RaftStateTest {
 
+    private static final long NO_BACKOFF = 0;
     private RaftState state;
     private String name = randomName();
     private CPGroupId groupId;
@@ -60,11 +61,11 @@ public class RaftStateTest {
     public void setup() {
         groupId = new TestRaftGroupId(name);
         localMember = newRaftMember(5000);
-        members = new HashSet<RaftEndpoint>(asList(localMember,
+        members = Set.of(localMember,
                 newRaftMember(5001),
                 newRaftMember(5002),
                 newRaftMember(5003),
-                newRaftMember(5004)));
+                newRaftMember(5004));
 
         state = newRaftState(groupId, localMember, members, 100);
     }
@@ -77,7 +78,7 @@ public class RaftStateTest {
 
         assertEquals(members, state.members());
 
-        Collection<RaftEndpoint> remoteMembers = new HashSet<RaftEndpoint>(members);
+        Collection<RaftEndpoint> remoteMembers = new HashSet<>(members);
         remoteMembers.remove(localMember);
         assertEquals(remoteMembers, state.remoteMembers());
 
@@ -119,7 +120,7 @@ public class RaftStateTest {
     @Test
     public void persistVote() {
         int term = 13;
-        state.toFollower(term);
+        state.toFollower(term, NO_BACKOFF);
         state.persistVote(term, localMember);
 
         assertEquals(term, state.term());
@@ -131,7 +132,7 @@ public class RaftStateTest {
         state.toCandidate(false);
 
         int term = 23;
-        state.toFollower(term);
+        state.toFollower(term, NO_BACKOFF);
 
         assertEquals(term, state.term());
         assertEquals(RaftRole.FOLLOWER, state.role());
@@ -145,7 +146,7 @@ public class RaftStateTest {
         state.toLeader();
 
         int term = 23;
-        state.toFollower(term);
+        state.toFollower(term, NO_BACKOFF);
 
         assertEquals(term, state.term());
         assertEquals(RaftRole.FOLLOWER, state.role());
@@ -157,7 +158,7 @@ public class RaftStateTest {
     @Test
     public void toCandidate_fromFollower() {
         int term = 23;
-        state.toFollower(term);
+        state.toFollower(term, NO_BACKOFF);
 
         state.toCandidate(false);
         assertEquals(RaftRole.CANDIDATE, state.role());
@@ -225,7 +226,7 @@ public class RaftStateTest {
     }
 
     private void test_majority(int count) {
-        members = new HashSet<RaftEndpoint>();
+        members = new HashSet<>();
         members.add(localMember);
 
         for (int i = 1; i < count; i++) {

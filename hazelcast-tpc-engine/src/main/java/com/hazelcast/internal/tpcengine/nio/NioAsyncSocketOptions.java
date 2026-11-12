@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,35 +17,30 @@
 package com.hazelcast.internal.tpcengine.nio;
 
 
-import com.hazelcast.internal.tpcengine.net.AsyncSocketOptions;
 import com.hazelcast.internal.tpcengine.Option;
+import com.hazelcast.internal.tpcengine.net.AsyncSocketOptions;
+import jdk.net.ExtendedSocketOptions;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.SocketOption;
 import java.net.StandardSocketOptions;
 import java.nio.channels.SocketChannel;
+import java.util.HashMap;
+import java.util.Map;
 
 import static com.hazelcast.internal.tpcengine.util.Preconditions.checkNotNull;
-import static com.hazelcast.internal.tpcengine.util.ReflectionUtil.findStaticFieldValue;
 
 @SuppressWarnings({"checkstyle:cyclomaticcomplexity", "checkstyle:returncount", "java:S3776"})
 public class NioAsyncSocketOptions implements AsyncSocketOptions {
 
-    private static final java.net.SocketOption<Integer> EXT_SOCK_OPTS_TCP_KEEPCOUNT
-            = findStaticFieldValue("jdk.net.ExtendedSocketOptions", "TCP_KEEPCOUNT");
-    private static final java.net.SocketOption<Integer> EXT_SOCK_OPTS_TCP_KEEPIDLE
-            = findStaticFieldValue("jdk.net.ExtendedSocketOptions", "TCP_KEEPIDLE");
-    private static final java.net.SocketOption<Integer> EXT_SO_OPTS_TCP_KEEPINTERVAL
-            = findStaticFieldValue("jdk.net.ExtendedSocketOptions", "TCP_KEEPINTERVAL");
-
     private final SocketChannel socketChannel;
+    private final Map<Option, Object> extraOptions = new HashMap<>();
 
     NioAsyncSocketOptions(SocketChannel socketChannel) {
         this.socketChannel = socketChannel;
     }
 
-    // SO_TIMEOUT unfortunately doesn't have a SocketOption version.
     private static SocketOption toSocketOption(Option option) {
         if (TCP_NODELAY.equals(option)) {
             return StandardSocketOptions.TCP_NODELAY;
@@ -58,11 +53,11 @@ public class NioAsyncSocketOptions implements AsyncSocketOptions {
         } else if (SO_REUSEADDR.equals(option)) {
             return StandardSocketOptions.SO_REUSEADDR;
         } else if (TCP_KEEPCOUNT.equals(option)) {
-            return EXT_SOCK_OPTS_TCP_KEEPCOUNT;
+            return ExtendedSocketOptions.TCP_KEEPCOUNT;
         } else if (TCP_KEEPINTERVAL.equals(option)) {
-            return EXT_SO_OPTS_TCP_KEEPINTERVAL;
+            return ExtendedSocketOptions.TCP_KEEPINTERVAL;
         } else if (TCP_KEEPIDLE.equals(option)) {
-            return EXT_SOCK_OPTS_TCP_KEEPIDLE;
+            return ExtendedSocketOptions.TCP_KEEPIDLE;
         } else {
             return null;
         }
@@ -72,12 +67,7 @@ public class NioAsyncSocketOptions implements AsyncSocketOptions {
     public boolean isSupported(Option option) {
         checkNotNull(option, "option");
 
-        if (option.equals(SO_TIMEOUT)) {
-            return true;
-        } else {
-            SocketOption socketOption = toSocketOption(option);
-            return isSupported(socketOption);
-        }
+        return isSupported(toSocketOption(option)) || SSL_ENGINE_FACTORY.equals(option) || TLS_EXECUTOR.equals(option);
     }
 
     private boolean isSupported(SocketOption socketOption) {
@@ -85,43 +75,43 @@ public class NioAsyncSocketOptions implements AsyncSocketOptions {
     }
 
     @Override
-    public <T> T getIfSupported(Option<T> option) {
+    public <T> T get(Option<T> option) {
         checkNotNull(option, "option");
 
         try {
-            if (option.equals(SO_TIMEOUT)) {
-                return (T) (Integer) socketChannel.socket().getSoTimeout();
-            } else {
-                SocketOption socketOption = toSocketOption(option);
-                if (isSupported(socketOption)) {
-                    return (T) socketChannel.getOption(socketOption);
-                } else {
-                    return null;
-                }
+            if (!isSupported(option)) {
+                return null;
             }
+
+            SocketOption socketOption = toSocketOption(option);
+            if (isSupported(socketOption)) {
+                return (T) socketChannel.getOption(socketOption);
+            }
+
+            return (T) extraOptions.get(option);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
     }
 
     @Override
-    public <T> boolean setIfSupported(Option<T> option, T value) {
+    public <T> boolean set(Option<T> option, T value) {
         checkNotNull(option, "option");
         checkNotNull(value, "value");
 
         try {
-            if (option.equals(SO_TIMEOUT)) {
-                socketChannel.socket().setSoTimeout((Integer) value);
-                return true;
-            } else {
-                SocketOption socketOption = toSocketOption(option);
-                if (isSupported(socketOption)) {
-                    socketChannel.setOption(socketOption, value);
-                    return true;
-                } else {
-                    return false;
-                }
+            if (!isSupported(option)) {
+                return false;
             }
+
+            SocketOption socketOption = toSocketOption(option);
+            if (isSupported(socketOption)) {
+                socketChannel.setOption(socketOption, value);
+                return true;
+            }
+
+            extraOptions.put(option, value);
+            return true;
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

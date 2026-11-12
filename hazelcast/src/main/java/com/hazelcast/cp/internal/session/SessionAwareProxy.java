@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,9 +24,9 @@ import com.hazelcast.cp.internal.RaftGroupId;
 public abstract class SessionAwareProxy {
 
     protected final RaftGroupId groupId;
-    private final AbstractProxySessionManager sessionManager;
+    private final ProxySessionManager sessionManager;
 
-    protected SessionAwareProxy(AbstractProxySessionManager sessionManager, RaftGroupId groupId) {
+    protected SessionAwareProxy(ProxySessionManager sessionManager, RaftGroupId groupId) {
         this.sessionManager = sessionManager;
         this.groupId = groupId;
     }
@@ -81,7 +81,7 @@ public abstract class SessionAwareProxy {
 
     /**
      * Returns id of the session opened for the given Raft group.
-     * Returns {@link AbstractProxySessionManager#NO_SESSION_ID}
+     * Returns {@link ProxySessionManager#NO_SESSION_ID}
      *         if no session exists.
      */
     protected final long getSession() {

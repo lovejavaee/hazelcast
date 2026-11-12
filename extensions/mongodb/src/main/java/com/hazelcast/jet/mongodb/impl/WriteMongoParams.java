@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,7 +58,7 @@ public class WriteMongoParams<I> implements Serializable {
     @Nonnull
     WriteMode writeMode = WriteMode.REPLACE;
     FunctionEx<I, WriteModel<I>> writeModelFn;
-    boolean throwOnNonExisting = true;
+    boolean checkExistenceOnEachConnect = true;
 
     public WriteMongoParams() {
     }
@@ -245,12 +245,15 @@ public class WriteMongoParams<I> implements Serializable {
         return this;
     }
 
-    public boolean isThrowOnNonExisting() {
-        return throwOnNonExisting;
+    public boolean isCheckExistenceOnEachConnect() {
+        return checkExistenceOnEachConnect;
     }
 
-    public WriteMongoParams<I> setThrowOnNonExisting(boolean throwOnNonExisting) {
-        this.throwOnNonExisting = throwOnNonExisting;
+    /**
+     * If true, the database and collection existence checks will be performed on every reconnection.
+     */
+    public WriteMongoParams<I> setCheckExistenceOnEachConnect(boolean checkExistenceOnEachConnect) {
+        this.checkExistenceOnEachConnect = checkExistenceOnEachConnect;
         return this;
     }
 

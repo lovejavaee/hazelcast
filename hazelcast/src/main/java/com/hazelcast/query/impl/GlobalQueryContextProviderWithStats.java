@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,15 +21,11 @@ package com.hazelcast.query.impl;
  */
 public class GlobalQueryContextProviderWithStats implements QueryContextProvider {
 
-    private static final ThreadLocal<GlobalQueryContextWithStats> QUERY_CONTEXT = new ThreadLocal<GlobalQueryContextWithStats>() {
-        @Override
-        protected GlobalQueryContextWithStats initialValue() {
-            return new GlobalQueryContextWithStats();
-        }
-    };
+    private static final ThreadLocal<GlobalQueryContextWithStats> QUERY_CONTEXT = ThreadLocal.withInitial(
+            () -> new GlobalQueryContextWithStats());
 
     @Override
-    public QueryContext obtainContextFor(Indexes indexes, int ownedPartitionCount) {
+    public QueryContext obtainContextFor(IndexRegistry indexes, int ownedPartitionCount) {
         GlobalQueryContextWithStats queryContext = QUERY_CONTEXT.get();
         queryContext.attachTo(indexes, ownedPartitionCount);
         return queryContext;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,7 +37,6 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
-import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.Set;
@@ -49,12 +48,12 @@ public class TcpIpJoinTest extends AbstractJoinTest {
 
     @Before
     @After
-    public void killAllHazelcastInstances() throws IOException {
+    public void killAllHazelcastInstances() {
         HazelcastInstanceFactory.terminateAll();
     }
 
     @Test
-    public void test_whenNoExplicitPortConfigured() throws Exception {
+    public void test_whenNoExplicitPortConfigured() {
         Config config = new Config();
 
         NetworkConfig networkConfig = config.getNetworkConfig();
@@ -67,7 +66,7 @@ public class TcpIpJoinTest extends AbstractJoinTest {
     }
 
     @Test
-    public void test_whenExplicitPortConfigured() throws Exception {
+    public void test_whenExplicitPortConfigured() {
         Config config = new Config();
 
         NetworkConfig networkConfig = config.getNetworkConfig();
@@ -81,7 +80,7 @@ public class TcpIpJoinTest extends AbstractJoinTest {
     }
 
     @Test
-    public void test_whenPortAndInterfacesConfigured() throws Exception {
+    public void test_whenPortAndInterfacesConfigured() {
         Config config = new Config();
 
         NetworkConfig networkConfig = config.getNetworkConfig();
@@ -99,7 +98,7 @@ public class TcpIpJoinTest extends AbstractJoinTest {
     }
 
     @Test
-    public void test_whenHostAndInterfacesConfigured() throws Exception {
+    public void test_whenHostAndInterfacesConfigured() {
         System.clearProperty("hazelcast.local.localAddress");
 
         final Config config = new Config();

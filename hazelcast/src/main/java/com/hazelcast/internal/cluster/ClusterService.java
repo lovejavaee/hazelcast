@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,11 +16,11 @@
 
 package com.hazelcast.internal.cluster;
 
+import com.hazelcast.cluster.Address;
 import com.hazelcast.cluster.Cluster;
 import com.hazelcast.cluster.Member;
 import com.hazelcast.cluster.MemberSelector;
 import com.hazelcast.cluster.impl.MemberImpl;
-import com.hazelcast.cluster.Address;
 import com.hazelcast.internal.services.CoreService;
 
 import javax.annotation.Nonnull;
@@ -105,6 +105,15 @@ public interface ClusterService extends CoreService, Cluster {
     boolean isJoined();
 
     /**
+     * Returns whether this member joined to a cluster before. If a member
+     * joins a cluster and then split brain resets the join state, still
+     * {@code true} will be returned.
+     *
+     * @return {@code true} if this member is joined to a cluster before, {@code false} otherwise
+     */
+    boolean isJoinedBefore();
+
+    /**
      * Gets the address of this member.
      *
      * @return the address of this member (the returned value will never be {@code null})
@@ -124,13 +133,15 @@ public interface ClusterService extends CoreService, Cluster {
      * Gets the local member instance.
      * <p>
      * The returned value will never be null, but it may change when local lite member is promoted to a data member
-     * via {@link #promoteLocalLiteMember()}
+     * via {@link #promoteLocalLiteMember()} or when local data member is demoted to a lite member via
+     * {@link #demoteLocalDataMember()}
      * or when this member merges to a new cluster after split-brain detected. Returned value should not be
      * cached but instead this method should be called each time when local member is needed.
      *
      * @return the local member instance (the returned value will never be {@code null})
      */
     @Nonnull
+    @Override
     Member getLocalMember();
 
     /**
@@ -185,7 +196,7 @@ public interface ClusterService extends CoreService, Cluster {
      * can be assigned to another node in the other sub-cluster(s).
      * <p>
      * When duplicate member list join version is assigned during network split, the returned value can
-     * change to make it unique again. Therefore the caller should call this method repeatedly.
+     * change to make it unique again. Therefore, the caller should call this method repeatedly.
      *
      * @throws IllegalStateException if the local instance is not joined or the cluster just upgraded to 3.10,
      *      but local member has not yet learned its join version from the master node.
@@ -194,4 +205,15 @@ public interface ClusterService extends CoreService, Cluster {
      * @return the member list join version of the local member instance
      */
     int getMemberListJoinVersion();
+
+
+    /**
+     * Returns whether member with given identity (either {@code UUID} or {@code Address}
+     * depending on Persistence is enabled or not) is a known missing member or not.
+     *
+     * @param address Address of the missing member
+     * @param uuid    Uuid of the missing member
+     * @return true if it's a known missing member, false otherwise
+     */
+    boolean isMissingMember(Address address, UUID uuid);
 }

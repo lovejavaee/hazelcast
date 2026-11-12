@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 package com.hazelcast.internal.util.collection;
 
 import com.hazelcast.internal.util.QuickMath;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.*;
 
@@ -28,7 +27,7 @@ import java.util.*;
  * @param <K> type of keys stored in the {@link Map}
  */
 public class Object2LongHashMap<K>
-    implements Map<K, Long>
+    extends AbstractMap<K, Long>
 {
     private static final float DEFAULT_LOAD_FACTOR = 0.6F;
     private static final int MIN_CAPACITY = 8;
@@ -157,17 +156,10 @@ public class Object2LongHashMap<K>
     /**
      * {@inheritDoc}
      */
+    @Override
     public int size()
     {
         return size;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    public boolean isEmpty()
-    {
-        return 0 == size;
     }
 
     /**
@@ -177,6 +169,7 @@ public class Object2LongHashMap<K>
      * @param key for indexing the {@link Map}
      * @return true if the key is found otherwise false.
      */
+    @Override
     public boolean containsKey(final Object key)
     {
         final int mask = values.length - 1;
@@ -200,6 +193,7 @@ public class Object2LongHashMap<K>
     /**
      * {@inheritDoc}
      */
+    @Override
     public boolean containsValue(final Object value)
     {
         return containsValue(((Long)value).longValue());
@@ -228,6 +222,7 @@ public class Object2LongHashMap<K>
     /**
      * {@inheritDoc}
      */
+    @Override
     @SuppressWarnings("unchecked")
     public Long get(final Object key)
     {
@@ -263,6 +258,7 @@ public class Object2LongHashMap<K>
     /**
      * {@inheritDoc}
      */
+    @Override
     public Long put(final K key, final Long value)
     {
         return valOrNull(put(key, value.longValue()));
@@ -316,6 +312,7 @@ public class Object2LongHashMap<K>
     /**
      * {@inheritDoc}
      */
+    @Override
     @SuppressWarnings("unchecked")
     public Long remove(final Object key)
     {
@@ -356,6 +353,7 @@ public class Object2LongHashMap<K>
     /**
      * {@inheritDoc}
      */
+    @Override
     public void clear()
     {
         if (size > 0)
@@ -379,17 +377,7 @@ public class Object2LongHashMap<K>
     /**
      * {@inheritDoc}
      */
-    public void putAll(final Map<? extends K, ? extends Long> map)
-    {
-        for (final Entry<? extends K, ? extends Long> entry : map.entrySet())
-        {
-            put(entry.getKey(), entry.getValue());
-        }
-    }
-
-    /**
-     * {@inheritDoc}
-     */
+    @Override
     public KeySet keySet()
     {
         if (null == keySet)
@@ -403,6 +391,7 @@ public class Object2LongHashMap<K>
     /**
      * {@inheritDoc}
      */
+    @Override
     public ValueCollection values()
     {
         if (null == valueCollection)
@@ -416,6 +405,7 @@ public class Object2LongHashMap<K>
     /**
      * {@inheritDoc}
      */
+    @Override
     public EntrySet entrySet()
     {
         if (null == entrySet)
@@ -429,6 +419,7 @@ public class Object2LongHashMap<K>
     /**
      * {@inheritDoc}
      */
+    @Override
     public String toString()
     {
         if (isEmpty())
@@ -455,6 +446,7 @@ public class Object2LongHashMap<K>
     /**
      * {@inheritDoc}
      */
+    @Override
     public boolean equals(final Object o)
     {
         if (this == o)
@@ -462,12 +454,10 @@ public class Object2LongHashMap<K>
             return true;
         }
 
-        if (!(o instanceof Map))
+        if (!(o instanceof Map<?, ?> that))
         {
             return false;
         }
-
-        final Map<?, ?> that = (Map<?, ?>)o;
 
         if (size != that.size())
         {
@@ -499,6 +489,7 @@ public class Object2LongHashMap<K>
     /**
      * {@inheritDoc}
      */
+    @Override
     public int hashCode()
     {
         int result = 0;
@@ -642,6 +633,7 @@ public class Object2LongHashMap<K>
         /**
          * {@inheritDoc}
          */
+        @Override
         public KeyIterator iterator()
         {
             KeyIterator keyIterator = this.keyIterator;
@@ -654,22 +646,26 @@ public class Object2LongHashMap<K>
             return keyIterator;
         }
 
+        @Override
         public int size()
         {
             return Object2LongHashMap.this.size();
         }
 
+        @Override
         public boolean contains(final Object o)
         {
             return Object2LongHashMap.this.containsKey(o);
         }
 
+        @Override
         @SuppressWarnings("unchecked")
         public boolean remove(final Object o)
         {
             return missingValue != Object2LongHashMap.this.removeKey((K)o);
         }
 
+        @Override
         public void clear()
         {
             Object2LongHashMap.this.clear();
@@ -683,6 +679,7 @@ public class Object2LongHashMap<K>
         /**
          * {@inheritDoc}
          */
+        @Override
         public ValueIterator iterator()
         {
             ValueIterator valueIterator = this.valueIterator;
@@ -695,16 +692,19 @@ public class Object2LongHashMap<K>
             return valueIterator;
         }
 
+        @Override
         public int size()
         {
             return Object2LongHashMap.this.size();
         }
 
+        @Override
         public boolean contains(final Object o)
         {
             return Object2LongHashMap.this.containsValue(o);
         }
 
+        @Override
         public void clear()
         {
             Object2LongHashMap.this.clear();
@@ -718,6 +718,7 @@ public class Object2LongHashMap<K>
         /**
          * {@inheritDoc}
          */
+        @Override
         public EntryIterator iterator()
         {
             EntryIterator entryIterator = this.entryIterator;
@@ -730,11 +731,13 @@ public class Object2LongHashMap<K>
             return entryIterator;
         }
 
+        @Override
         public int size()
         {
             return Object2LongHashMap.this.size();
         }
 
+        @Override
         public void clear()
         {
             Object2LongHashMap.this.clear();
@@ -743,6 +746,7 @@ public class Object2LongHashMap<K>
         /**
          * {@inheritDoc}
          */
+        @Override
         public boolean contains(final Object o)
         {
             final Entry entry = (Entry)o;
@@ -767,6 +771,7 @@ public class Object2LongHashMap<K>
             return posCounter & (values.length - 1);
         }
 
+        @Override
         public boolean hasNext()
         {
             return remaining > 0;
@@ -799,8 +804,7 @@ public class Object2LongHashMap<K>
             throw new IllegalStateException();
         }
 
-        public abstract T next();
-
+        @Override
         public void remove()
         {
             if (isPositionValid)
@@ -846,6 +850,7 @@ public class Object2LongHashMap<K>
 
     public final class ValueIterator extends AbstractIterator<Long>
     {
+        @Override
         public Long next()
         {
             return nextLong();
@@ -861,6 +866,7 @@ public class Object2LongHashMap<K>
 
     public final class KeyIterator extends AbstractIterator<K>
     {
+        @Override
         public K next()
         {
             findNext();
@@ -869,11 +875,11 @@ public class Object2LongHashMap<K>
         }
     }
 
-    @SuppressFBWarnings(value = "PZ_DONT_REUSE_ENTRY_OBJECTS_IN_ITERATORS")
     public final class EntryIterator
         extends AbstractIterator<Entry<K, Long>>
         implements Entry<K, Long>
     {
+        @Override
         public Entry<K, Long> next()
         {
             findNext();
@@ -890,7 +896,7 @@ public class Object2LongHashMap<K>
             final K k = getKey();
             final long v = getLongValue();
 
-            return new Entry<K, Long>()
+            return new Entry<>()
             {
                 public K getKey()
                 {
@@ -932,6 +938,7 @@ public class Object2LongHashMap<K>
             };
         }
 
+        @Override
         public K getKey()
         {
             return keys[position()];
@@ -942,11 +949,13 @@ public class Object2LongHashMap<K>
             return values[position()];
         }
 
+        @Override
         public Long getValue()
         {
             return getLongValue();
         }
 
+        @Override
         public Long setValue(final Long value)
         {
             return setValue(value.longValue());

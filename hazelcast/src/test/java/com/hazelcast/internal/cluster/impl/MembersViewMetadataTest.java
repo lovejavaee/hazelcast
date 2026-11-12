@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,6 +58,29 @@ public class MembersViewMetadataTest {
         assertNotEqualAndHashCode(
                 metadata,
                 new MembersViewMetadata(new Address("localhost", 1234), memberUUID, new Address("localhost", 4321), 999));
+    }
+
+    @Test
+    public void equalsAndHashCode_withNullMasterAddress() throws Exception {
+        UUID memberUUID = new UUID(1, 1);
+
+        // masterAddress null on both members
+        MembersViewMetadata metadataWithNullMaster1
+                = new MembersViewMetadata(new Address("localhost", 1234), memberUUID, null, 0);
+        MembersViewMetadata metadataWithNullMaster2
+                = new MembersViewMetadata(new Address("localhost", 1234), memberUUID, null, 0);
+        assertEqualAndHashCode(metadataWithNullMaster1, metadataWithNullMaster2);
+
+        // masterAddress null on one, not on the other
+        MembersViewMetadata metadataWithMaster
+                = new MembersViewMetadata(new Address("localhost", 1234), memberUUID, new Address("localhost", 4321), 0);
+        assertNotEquals(metadataWithNullMaster1, metadataWithMaster);
+        assertNotEquals(metadataWithMaster, metadataWithNullMaster1);
+
+        // masterAddress null on both, but should fail for other mismatches
+        MembersViewMetadata metadataWithNullMaster3
+                = new MembersViewMetadata(new Address("localhost", 1234), memberUUID, null, 999);
+        assertNotEqualAndHashCode(metadataWithNullMaster1, metadataWithNullMaster3);
     }
 
     private static void assertEqualAndHashCode(Object o1, Object o2) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,10 +17,10 @@
 package com.hazelcast.cp.internal;
 
 import com.hazelcast.cluster.Address;
+import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.internal.serialization.impl.DefaultSerializationServiceBuilder;
-import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.Test;
@@ -48,7 +48,7 @@ public class CPMemberInfoTest {
     public void testDeserialization() throws UnknownHostException {
         InetAddress localHost = InetAddress.getLocalHost();
         Address address = new Address(localHost.getHostName(), 0);
-        CPMemberInfo cpMemberInfo = new CPMemberInfo(UUID.randomUUID(), address);
+        CPMemberInfo cpMemberInfo = new CPMemberInfo(UUID.randomUUID(), address, true);
 
         // need a list of CPMemberInfo to trigger the default java serializer
         Data data = SERIALIZATION_SERVICE.toData(Arrays.asList(cpMemberInfo));
@@ -56,14 +56,17 @@ public class CPMemberInfoTest {
         CPMemberInfo restoredCPMemberInfo = cpMemberInfoList.get(0);
         Address memberInfoAddress = restoredCPMemberInfo.getAddress();
 
-        assertEquals(cpMemberInfo, restoredCPMemberInfo);
+        assertEquals(cpMemberInfo.isAutoStepDownWhenLeader(), restoredCPMemberInfo.isAutoStepDownWhenLeader());
+        assertEquals(cpMemberInfo.getUuid(), restoredCPMemberInfo.getUuid());
+        assertEquals(cpMemberInfo.getAddress(), restoredCPMemberInfo.getAddress());
+
         assertTrue(memberInfoAddress.isIPv4() ||  memberInfoAddress.isIPv6());
     }
 
     @Test
     public void testDeserializationWithUnresolvableHost() {
         Address unresolvedAddress = Address.createUnresolvedAddress("unresolved-host", 0);
-        CPMemberInfo cpMemberInfo = new CPMemberInfo(UUID.randomUUID(), unresolvedAddress);
+        CPMemberInfo cpMemberInfo = new CPMemberInfo(UUID.randomUUID(), unresolvedAddress, true);
 
         // need a list of CPMemberInfo to trigger the default java serializer
         Data data = SERIALIZATION_SERVICE.toData(Arrays.asList(cpMemberInfo));
@@ -71,7 +74,10 @@ public class CPMemberInfoTest {
         CPMemberInfo restoredCPMemberInfo = cpMemberInfoList.get(0);
         Address memberInfoAddress = restoredCPMemberInfo.getAddress();
 
-        assertEquals(cpMemberInfo, restoredCPMemberInfo);
+        assertEquals(cpMemberInfo.isAutoStepDownWhenLeader(), restoredCPMemberInfo.isAutoStepDownWhenLeader());
+        assertEquals(cpMemberInfo.getUuid(), restoredCPMemberInfo.getUuid());
+        assertEquals(cpMemberInfo.getAddress(), restoredCPMemberInfo.getAddress());
+
         assertFalse(memberInfoAddress.isIPv4() ||  memberInfoAddress.isIPv6());
     }
 }

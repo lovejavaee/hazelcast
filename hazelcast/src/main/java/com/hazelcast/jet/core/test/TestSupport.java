@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,7 +59,7 @@ import static com.hazelcast.internal.util.Preconditions.checkNotNegative;
 import static com.hazelcast.jet.core.test.JetAssert.assertEquals;
 import static com.hazelcast.jet.core.test.JetAssert.assertFalse;
 import static com.hazelcast.jet.core.test.JetAssert.assertTrue;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.sneakyThrow;
+import static com.hazelcast.internal.util.ExceptionUtil.sneakyThrow;
 import static com.hazelcast.jet.impl.util.Util.subtractClamped;
 import static java.util.Collections.singletonList;
 import static java.util.concurrent.TimeUnit.MICROSECONDS;
@@ -201,7 +201,7 @@ public final class TestSupport {
     private static final long BLOCKING_TIME_LIMIT_MS_WARN = 10000;
 
     private static final LoggingServiceImpl LOGGING_SERVICE = new LoggingServiceImpl(
-            "test-group", null, BuildInfoProvider.getBuildInfo(), true, null);
+            "test-group", null, BuildInfoProvider.getBuildInfo(), true, false, null);
 
     static {
         try {
@@ -216,6 +216,7 @@ public final class TestSupport {
     private List<TestEventInt> testEvents = new ArrayList<>();
     private boolean assertProgress = true;
     private boolean doSnapshots = true;
+    private boolean doTransactionCommits;
     private boolean logInputOutput = true;
     private boolean callComplete = true;
     private int outputOrdinalCount;
@@ -482,6 +483,16 @@ public final class TestSupport {
     }
 
     /**
+     * Enables transaction commits after each snapshot.
+     *
+     * @return {@code this} instance for fluent API
+     */
+    public TestSupport enableTransactionCommits() {
+        this.doTransactionCommits = true;
+        return this;
+    }
+
+    /**
      * Disables logging of input and output objects. Normally they are logged
      * as they are processed to standard output.
      *
@@ -607,7 +618,7 @@ public final class TestSupport {
 
     private void run() {
         // filter null items from testEvents. They are there only to affect the number of ordinals. See class javadoc.
-        testEvents.removeIf(event -> event instanceof ItemWithOrdinal && ((ItemWithOrdinal) event).item == null);
+        testEvents.removeIf(event -> event instanceof ItemWithOrdinal iwo && iwo.item == null);
 
         boolean isAfterProcessorAssertion = false;
         for (TestEventInt e : testEvents) {
@@ -940,6 +951,10 @@ public final class TestSupport {
             outbox[0].drainQueuesAndReset(actualOutput, logInputOutput);
         } while (!done[0]);
 
+        if (doTransactionCommits) {
+            doTransactionCommits(processor[0]);
+        }
+
         if (!willRestore) {
             return;
         }
@@ -972,6 +987,20 @@ public final class TestSupport {
         } while (!done[0]);
     }
 
+    private void doTransactionCommits(Processor processor) {
+        // transaction commit phase 1
+        boolean[] done = {false};
+        do {
+            doCall("snapshotCommitPrepare", processor.isCooperative(), () -> done[0] = processor.snapshotCommitPrepare());
+        } while (!done[0]);
+
+        // transaction commit phase 2
+        done[0] = false;
+        do {
+            doCall("snapshotCommitFinish", processor.isCooperative(), () -> done[0] = processor.snapshotCommitFinish(true));
+        } while (!done[0]);
+    }
+
     private void doCall(String methodName, boolean isCooperative, Runnable r) {
         long start = System.nanoTime();
         r.run();
@@ -998,9 +1027,8 @@ public final class TestSupport {
 
     private void initProcessor(Processor processor, TestOutbox outbox) {
         SerializationService serializationService;
-        if (hazelcastInstance != null && hazelcastInstance instanceof SerializationServiceSupport) {
-            SerializationServiceSupport impl = (SerializationServiceSupport) hazelcastInstance;
-            serializationService = impl.getSerializationService();
+        if (hazelcastInstance != null && hazelcastInstance instanceof SerializationServiceSupport support) {
+            serializationService = support.getSerializationService();
         } else {
             serializationService = new DefaultSerializationServiceBuilder()
                     .setManagedContext(e -> e)
@@ -1021,8 +1049,8 @@ public final class TestSupport {
         if (jobConfig != null) {
             context.setJobConfig(jobConfig);
         }
-        if (processor instanceof SerializationServiceAware) {
-            ((SerializationServiceAware) processor).setSerializationService(serializationService);
+        if (processor instanceof SerializationServiceAware aware) {
+            aware.setSerializationService(serializationService);
         }
         try {
             processor.init(outbox, context);
@@ -1094,8 +1122,8 @@ public final class TestSupport {
     private static String listToString(List<?> list) {
         return list.stream()
                 .map(obj -> {
-                    if (obj instanceof Object[]) {
-                        return Arrays.toString((Object[]) obj);
+                    if (obj instanceof Object[] objects) {
+                        return Arrays.toString(objects);
                     }
                     return String.valueOf(obj);
                 })

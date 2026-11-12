@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,6 +48,11 @@ public class DataConnectionConfigReadOnly extends DataConnectionConfig {
 
     @Override
     public DataConnectionConfig setProperties(Properties properties) {
+        throw readOnly();
+    }
+
+    @Override
+    public DataConnectionConfig setProperty(String key, String value) {
         throw readOnly();
     }
 }

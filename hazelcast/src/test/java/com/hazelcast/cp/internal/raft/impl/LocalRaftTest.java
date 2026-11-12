@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,8 +27,8 @@ import com.hazelcast.cp.internal.raft.impl.dto.AppendRequest;
 import com.hazelcast.cp.internal.raft.impl.dto.AppendSuccessResponse;
 import com.hazelcast.cp.internal.raft.impl.dto.VoteRequest;
 import com.hazelcast.cp.internal.raft.impl.testing.LocalRaftGroup;
-import com.hazelcast.spi.impl.InternalCompletableFuture;
 import com.hazelcast.test.HazelcastParallelClassRunner;
+import com.hazelcast.spi.impl.InternalCompletableFuture;
 import com.hazelcast.test.HazelcastTestSupport;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
@@ -53,12 +53,11 @@ import static com.hazelcast.cp.internal.raft.impl.RaftUtil.getRole;
 import static com.hazelcast.cp.internal.raft.impl.RaftUtil.getTerm;
 import static com.hazelcast.cp.internal.raft.impl.RaftUtil.getVotedFor;
 import static com.hazelcast.cp.internal.raft.impl.testing.LocalRaftGroup.LocalRaftGroupBuilder.newGroup;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -94,7 +93,7 @@ public class LocalRaftTest extends HazelcastTestSupport {
         assertNotNull(leaderEndpoint);
 
         int leaderIndex = group.getLeaderIndex();
-        assertThat(leaderIndex, greaterThanOrEqualTo(0));
+        assertThat(leaderIndex).isNotNegative();
 
         RaftNodeImpl leaderNode = group.getLeaderNode();
         assertNotNull(leaderNode);
@@ -139,7 +138,7 @@ public class LocalRaftTest extends HazelcastTestSupport {
     }
 
     @Test
-    public void when_followerAttemptsToReplicate_then_itFails() throws ExecutionException, InterruptedException {
+    public void when_followerAttemptsToReplicate_then_itFails() {
         group = newGroup(3);
         group.start();
         RaftNodeImpl leader = group.waitUntilLeaderElected();
@@ -199,7 +198,7 @@ public class LocalRaftTest extends HazelcastTestSupport {
             group.dropMessagesToMember(leader.getLocalMember(), followers[i].getLocalMember(), AppendRequest.class);
         }
 
-        Future f = leader.replicate(new ApplyRaftRunnable("val"));
+        Future<?> f = leader.replicate(new ApplyRaftRunnable("val"));
 
         assertTrueEventually(() -> {
             assertEquals(1, getLastLogOrSnapshotEntry(leader).index());
@@ -271,13 +270,13 @@ public class LocalRaftTest extends HazelcastTestSupport {
         group.start();
         RaftNodeImpl leader = group.waitUntilLeaderElected();
 
-        List<Future> futures = new ArrayList<>(entryCount);
+        List<Future<?>> futures = new ArrayList<>(entryCount);
         for (int i = 0; i < entryCount; i++) {
             Object val = "val" + i;
             futures.add(leader.replicate(new ApplyRaftRunnable(val)));
         }
 
-        for (Future f : futures) {
+        for (Future<?> f : futures) {
             f.get();
         }
 
@@ -316,12 +315,12 @@ public class LocalRaftTest extends HazelcastTestSupport {
         for (int i = 0; i < threadCount; i++) {
             int start = i * opsPerThread;
             threads[i] = new Thread(() -> {
-                List<Future> futures = new ArrayList<>();
+                List<Future<?>> futures = new ArrayList<>();
                 for (int j = start; j < start + opsPerThread; j++) {
                     futures.add(leader.replicate(new ApplyRaftRunnable(j)));
                 }
 
-                for (Future f : futures) {
+                for (Future<?> f : futures) {
                     try {
                         f.get();
                     } catch (InterruptedException | ExecutionException e) {
@@ -433,7 +432,7 @@ public class LocalRaftTest extends HazelcastTestSupport {
         }
 
         String value = "value";
-        Future future = leaderNode.replicate(new ApplyRaftRunnable(value));
+        Future<?> future = leaderNode.replicate(new ApplyRaftRunnable(value));
         assertEquals(value, future.get());
     }
 
@@ -460,7 +459,7 @@ public class LocalRaftTest extends HazelcastTestSupport {
         assertTrue(getTerm(newLeader) > leaderTerm);
 
         String value = "value";
-        Future future = newLeader.replicate(new ApplyRaftRunnable(value));
+        Future<?> future = newLeader.replicate(new ApplyRaftRunnable(value));
         assertEquals(value, future.get());
     }
 
@@ -722,7 +721,7 @@ public class LocalRaftTest extends HazelcastTestSupport {
             }
         });
 
-        List<InternalCompletableFuture> isolatedFutures = new ArrayList<>();
+        List<InternalCompletableFuture<?>> isolatedFutures = new ArrayList<>();
         for (int i = 0; i < 10; i++) {
             isolatedFutures.add(leader.replicate(new ApplyRaftRunnable("isolated" + i)));
         }
@@ -743,7 +742,7 @@ public class LocalRaftTest extends HazelcastTestSupport {
         RaftNodeImpl finalLeader = group.waitUntilLeaderElected();
 
         assertNotEquals(leader.getLocalMember(), finalLeader.getLocalMember());
-        for (InternalCompletableFuture f : isolatedFutures) {
+        for (InternalCompletableFuture<?> f : isolatedFutures) {
             try {
                 f.joinInternal();
                 fail();
@@ -793,7 +792,7 @@ public class LocalRaftTest extends HazelcastTestSupport {
         RaftNodeImpl leader = group.waitUntilLeaderElected();
 
         group.split(leader.getLocalMember());
-        InternalCompletableFuture f = leader.replicate(new ApplyRaftRunnable("val"));
+        InternalCompletableFuture<?> f = leader.replicate(new ApplyRaftRunnable("val"));
 
         try {
             f.joinInternal();

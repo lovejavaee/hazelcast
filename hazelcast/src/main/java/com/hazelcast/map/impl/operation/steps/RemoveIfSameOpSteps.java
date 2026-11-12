@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,6 @@ import com.hazelcast.map.impl.MapServiceContext;
 import com.hazelcast.map.impl.mapstore.MapDataStore;
 import com.hazelcast.map.impl.operation.steps.engine.State;
 import com.hazelcast.map.impl.operation.steps.engine.Step;
-import com.hazelcast.map.impl.record.Record;
 import com.hazelcast.map.impl.recordstore.DefaultRecordStore;
 
 public enum RemoveIfSameOpSteps implements IMapOpStep {
@@ -31,7 +30,7 @@ public enum RemoveIfSameOpSteps implements IMapOpStep {
     READ() {
         @Override
         public void runStep(State state) {
-           RemoveOpSteps.READ.runStep(state);
+            RemoveOpSteps.READ.runStep(state);
         }
 
         @Override
@@ -50,7 +49,7 @@ public enum RemoveIfSameOpSteps implements IMapOpStep {
         @Override
         public void runStep(State state) {
             DefaultRecordStore recordStore = (DefaultRecordStore) state.getRecordStore();
-            Object oldValue = recordStore.loadValueOf(state.getKey());
+            Object oldValue = recordStore.loadValue(state.getKey(), state.getNow());
             if (oldValue != null) {
                 recordStore.getMapDataStore().remove(state.getKey(), state.getNow(), state.getTxnId());
                 state.setOldValue(oldValue);
@@ -62,7 +61,7 @@ public enum RemoveIfSameOpSteps implements IMapOpStep {
         @Override
         public Step nextStep(State state) {
             return state.getOldValue() == null
-                    ? UtilSteps.SEND_RESPONSE : RemoveIfSameOpSteps.ON_LOAD;
+                    ? UtilSteps.FINAL_STEP : RemoveIfSameOpSteps.ON_LOAD;
         }
     },
 
@@ -88,7 +87,7 @@ public enum RemoveIfSameOpSteps implements IMapOpStep {
         @Override
         public Step nextStep(State state) {
             return state.isStopExecution()
-                    ? UtilSteps.SEND_RESPONSE : RemoveIfSameOpSteps.DELETE;
+                    ? UtilSteps.FINAL_STEP : RemoveIfSameOpSteps.DELETE;
         }
     },
 
@@ -115,9 +114,8 @@ public enum RemoveIfSameOpSteps implements IMapOpStep {
         public void runStep(State state) {
             if (state.isRecordExistsInMemory()) {
                 DefaultRecordStore recordStore = (DefaultRecordStore) state.getRecordStore();
-                Record record = recordStore.getRecord(state.getKey());
-                recordStore.removeRecord0(state.getKey(), record, false);
-                recordStore.onStore(record);
+                recordStore.onStore(recordStore.getRecord(state.getKey()));
+                recordStore.removeByKey(state.getKey(), false);
                 recordStore.updateStatsOnRemove(state.getNow());
             }
 
@@ -126,7 +124,7 @@ public enum RemoveIfSameOpSteps implements IMapOpStep {
 
         @Override
         public Step nextStep(State state) {
-            return UtilSteps.SEND_RESPONSE;
+            return UtilSteps.FINAL_STEP;
         }
     };
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,9 +57,9 @@ public class MemberGroupFactoryTest {
         Collection<Member> members = createMembers();
         Collection<MemberGroup> memberGroups = groupFactory.createMemberGroups(members);
 
-        assertEquals("Member Groups: " + String.valueOf(memberGroups), 8, memberGroups.size());
+        assertEquals("Member Groups: " + memberGroups, 8, memberGroups.size());
         for (MemberGroup memberGroup : memberGroups) {
-            assertEquals("Member Group: " + String.valueOf(memberGroup), 2, memberGroup.size());
+            assertEquals("Member Group: " + memberGroup, 2, memberGroup.size());
         }
     }
 
@@ -71,7 +71,7 @@ public class MemberGroupFactoryTest {
     }
 
     private Collection<Member> createMembersWithNoMetadata() {
-        Collection<Member> members = new HashSet<Member>();
+        Collection<Member> members = new HashSet<>();
         members.add(new MemberImpl(new Address("192.192.0.1", fakeAddress, 5701), VERSION, false));
         members.add(new MemberImpl(new Address("192.192.0.1", fakeAddress, 5702), VERSION, false));
         members.add(new MemberImpl(new Address("192.168.3.101", fakeAddress, 5701), VERSION, false));
@@ -84,14 +84,14 @@ public class MemberGroupFactoryTest {
         Collection<Member> members = createMembersWithZoneAwareMetadata();
         Collection<MemberGroup> memberGroups = groupFactory.createMemberGroups(members);
 
-        assertEquals("Member Groups: " + String.valueOf(memberGroups), 3, memberGroups.size());
+        assertEquals("Member Groups: " + memberGroups, 3, memberGroups.size());
         for (MemberGroup memberGroup : memberGroups) {
-            assertEquals("Member Group: " + String.valueOf(memberGroup), 1, memberGroup.size());
+            assertEquals("Member Group: " + memberGroup, 1, memberGroup.size());
         }
     }
 
     private Collection<Member> createMembersWithZoneAwareMetadata() {
-        Collection<Member> members = new HashSet<Member>();
+        Collection<Member> members = new HashSet<>();
         MemberImpl member1 = new MemberImpl(new Address("192.192.0.1", fakeAddress, 5701), VERSION, true);
         member1.setAttribute(PartitionGroupMetaData.PARTITION_GROUP_ZONE, "us-east-1");
 
@@ -113,14 +113,14 @@ public class MemberGroupFactoryTest {
         Collection<Member> members = createMembersWithNodeAwareMetadata();
         Collection<MemberGroup> memberGroups = groupFactory.createMemberGroups(members);
 
-        assertEquals("Member Groups: " + String.valueOf(memberGroups), 3, memberGroups.size());
+        assertEquals("Member Groups: " + memberGroups, 3, memberGroups.size());
         for (MemberGroup memberGroup : memberGroups) {
-            assertEquals("Member Group: " + String.valueOf(memberGroup), 1, memberGroup.size());
+            assertEquals("Member Group: " + memberGroup, 1, memberGroup.size());
         }
     }
 
     private Collection<Member> createMembersWithNodeAwareMetadata() {
-        Collection<Member> members = new HashSet<Member>();
+        Collection<Member> members = new HashSet<>();
         MemberImpl member1 = new MemberImpl(new Address("192.192.0.1", fakeAddress, 5701), VERSION, true);
         member1.setAttribute(PartitionGroupMetaData.PARTITION_GROUP_NODE, "kubernetes-node-f0bbd602-f7cw");
 
@@ -191,9 +191,9 @@ public class MemberGroupFactoryTest {
         MemberGroupFactory groupFactory = new ConfigMemberGroupFactory(groupConfigs);
         Collection<MemberGroup> memberGroups = groupFactory.createMemberGroups(members);
 
-        assertEquals("Member Groups: " + String.valueOf(memberGroups), 4, memberGroups.size());
+        assertEquals("Member Groups: " + memberGroups, 4, memberGroups.size());
         for (MemberGroup memberGroup : memberGroups) {
-            assertEquals("Member Group: " + String.valueOf(memberGroup), 2, memberGroup.size());
+            assertEquals("Member Group: " + memberGroup, 2, memberGroup.size());
         }
     }
 
@@ -209,14 +209,14 @@ public class MemberGroupFactoryTest {
         MemberGroupFactory groupFactory = new ConfigMemberGroupFactory(groupConfigs);
         Collection<MemberGroup> memberGroups = groupFactory.createMemberGroups(members);
 
-        assertEquals("Member Groups: " + String.valueOf(memberGroups), 2, memberGroups.size());
+        assertEquals("Member Groups: " + memberGroups, 2, memberGroups.size());
         for (MemberGroup memberGroup : memberGroups) {
-            assertEquals("Member Group: " + String.valueOf(memberGroup), 2, memberGroup.size());
+            assertEquals("Member Group: " + memberGroup, 2, memberGroup.size());
         }
     }
 
     private Collection<Member> createMembers() {
-        Collection<Member> members = new HashSet<Member>();
+        Collection<Member> members = new HashSet<>();
         members.add(new MemberImpl(new Address("192.192.0.1", fakeAddress, 5701), VERSION, false));
         members.add(new MemberImpl(new Address("192.192.0.1", fakeAddress, 5702), VERSION, false));
         members.add(new MemberImpl(new Address("192.168.3.101", fakeAddress, 5701), VERSION, false));
@@ -240,7 +240,7 @@ public class MemberGroupFactoryTest {
     }
 
     private Collection<MemberGroupConfig> createMemberGroupConfigs(boolean addHostnameConfigs) {
-        Collection<MemberGroupConfig> groupConfigs = new HashSet<MemberGroupConfig>();
+        Collection<MemberGroupConfig> groupConfigs = new HashSet<>();
 
         MemberGroupConfig group1 = new MemberGroupConfig();
         group1.addInterface("192.168.*.*");

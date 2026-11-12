@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,10 +25,10 @@ import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.internal.serialization.SerializationService;
 import com.hazelcast.internal.serialization.impl.DefaultSerializationServiceBuilder;
 import com.hazelcast.internal.serialization.impl.HeapData;
+import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.spi.merge.DiscardMergePolicy;
 import com.hazelcast.spi.merge.PassThroughMergePolicy;
 import com.hazelcast.spi.merge.PutIfAbsentMergePolicy;
-import com.hazelcast.spi.merge.SplitBrainMergePolicy;
 import com.hazelcast.test.HazelcastParallelParametersRunnerFactory;
 import com.hazelcast.test.HazelcastParametrizedRunner;
 import com.hazelcast.test.SplitBrainTestSupport;
@@ -51,7 +51,9 @@ import java.util.concurrent.ConcurrentMap;
 
 import static com.hazelcast.config.InMemoryFormat.BINARY;
 import static com.hazelcast.config.InMemoryFormat.OBJECT;
+import static com.hazelcast.spi.impl.NodeEngineThreadLocalContext.declareNodeEngineReference;
 import static com.hazelcast.ringbuffer.RingbufferTestUtil.getBackupRingbuffer;
+import static com.hazelcast.test.Accessors.getNodeEngineImpl;
 import static com.hazelcast.test.Accessors.getSerializationService;
 import static java.util.Arrays.asList;
 import static org.junit.Assert.assertTrue;
@@ -75,15 +77,15 @@ public class RingbufferSplitBrainTest extends SplitBrainTestSupport {
     @Parameters(name = "format:{0}, mergePolicy:{1}")
     public static Collection<Object[]> parameters() {
         return asList(new Object[][]{
-                {BINARY, DiscardMergePolicy.class},
-                {BINARY, PassThroughMergePolicy.class},
-                {BINARY, PutIfAbsentMergePolicy.class},
+                {BINARY, DiscardMergePolicy.class.getName()},
+                {BINARY, PassThroughMergePolicy.class.getName()},
+                {BINARY, PutIfAbsentMergePolicy.class.getName()},
 
-                {BINARY, RingbufferMergeIntegerValuesMergePolicy.class},
-                {OBJECT, RingbufferMergeIntegerValuesMergePolicy.class},
+                {BINARY, RingbufferMergeIntegerValuesMergePolicy.class.getName()},
+                {OBJECT, RingbufferMergeIntegerValuesMergePolicy.class.getName()},
 
-                {BINARY, RingbufferRemoveValuesMergePolicy.class},
-                {OBJECT, RingbufferRemoveValuesMergePolicy.class},
+                {BINARY, RingbufferRemoveValuesMergePolicy.class.getName()},
+                {OBJECT, RingbufferRemoveValuesMergePolicy.class.getName()},
         });
     }
 
@@ -91,24 +93,25 @@ public class RingbufferSplitBrainTest extends SplitBrainTestSupport {
     public InMemoryFormat inMemoryFormat;
 
     @Parameter(value = 1)
-    public Class<? extends SplitBrainMergePolicy> mergePolicyClass;
+    public String mergePolicyClassName;
 
-    private String ringbufferNameA = randomMapName("ringbufferA-");
-    private String ringbufferNameB = randomMapName("ringbufferB-");
-    private SplitBrainRingbufferStore ringbufferStoreA = new SplitBrainRingbufferStore().setLabel("A");
-    private SplitBrainRingbufferStore ringbufferStoreB = new SplitBrainRingbufferStore().setLabel("B");
-    private Ringbuffer<Object> ringbufferA1;
-    private Ringbuffer<Object> ringbufferA2;
-    private Ringbuffer<Object> ringbufferB1;
-    private Ringbuffer<Object> ringbufferB2;
+    protected final String ringbufferNameA = randomMapName("ringbufferA-");
+    protected final String ringbufferNameB = randomMapName("ringbufferB-");
+    private final SplitBrainRingbufferStore ringbufferStoreA = new SplitBrainRingbufferStore().setLabel("A");
+    private final SplitBrainRingbufferStore ringbufferStoreB = new SplitBrainRingbufferStore().setLabel("B");
+    protected Ringbuffer<Object> ringbufferA1;
+    protected Ringbuffer<Object> ringbufferA2;
+    protected Ringbuffer<Object> ringbufferB1;
+    protected Ringbuffer<Object> ringbufferB2;
     private Collection<Object> backupRingbuffer;
     private MergeLifecycleListener mergeLifecycleListener;
     private InternalSerializationService serializationService;
+    private NodeEngineImpl nodeEngine;
 
     @Override
     protected Config config() {
         MergePolicyConfig mergePolicyConfig = new MergePolicyConfig()
-                .setPolicy(mergePolicyClass.getName())
+                .setPolicy(mergePolicyClassName)
                 .setBatchSize(10);
 
         Config config = super.config();
@@ -133,11 +136,14 @@ public class RingbufferSplitBrainTest extends SplitBrainTestSupport {
 
     @Override
     protected void onBeforeSplitBrainCreated(HazelcastInstance[] instances) {
+        nodeEngine = getNodeEngineImpl(instances[0]);
         serializationService = getSerializationService(instances[0]);
+        declareNodeEngineReference(nodeEngine);
     }
 
     @Override
     protected void onAfterSplitBrainCreated(HazelcastInstance[] firstBrain, HazelcastInstance[] secondBrain) {
+        declareNodeEngineReference(nodeEngine);
         mergeLifecycleListener = new MergeLifecycleListener(secondBrain.length);
         for (HazelcastInstance instance : secondBrain) {
             instance.getLifecycleService().addLifecycleListener(mergeLifecycleListener);
@@ -152,23 +158,28 @@ public class RingbufferSplitBrainTest extends SplitBrainTestSupport {
         ringbufferA2.size();
         ringbufferB2.size();
 
-        if (mergePolicyClass == DiscardMergePolicy.class) {
+        if (mergePolicyClassName.equals(DiscardMergePolicy.class.getName())) {
             afterSplitDiscardMergePolicy();
-        } else if (mergePolicyClass == PassThroughMergePolicy.class) {
+        } else if (mergePolicyClassName.equals(PassThroughMergePolicy.class.getName())) {
             afterSplitPassThroughMergePolicy();
-        } else if (mergePolicyClass == PutIfAbsentMergePolicy.class) {
+        } else if (mergePolicyClassName.equals(PutIfAbsentMergePolicy.class.getName())) {
             afterSplitPutIfAbsentMergePolicy();
-        } else if (mergePolicyClass == RingbufferRemoveValuesMergePolicy.class) {
+        } else if (mergePolicyClassName.equals(RingbufferRemoveValuesMergePolicy.class.getName())) {
             afterSplitRemoveValuesMergePolicy();
-        } else if (mergePolicyClass == RingbufferMergeIntegerValuesMergePolicy.class) {
+        } else if (mergePolicyClassName.equals(RingbufferMergeIntegerValuesMergePolicy.class.getName())) {
             afterSplitCustomMergePolicy();
         } else {
-            fail();
+            onAfterSplitBrainCreatedExtension();
         }
+    }
+
+    protected void onAfterSplitBrainCreatedExtension() {
+        fail("Unexpected merge policy parameter");
     }
 
     @Override
     protected void onAfterSplitBrainHealed(HazelcastInstance[] instances) {
+        declareNodeEngineReference(nodeEngine);
         // wait until merge completes
         mergeLifecycleListener.await();
 
@@ -180,19 +191,23 @@ public class RingbufferSplitBrainTest extends SplitBrainTestSupport {
 
         ringbufferB1 = instances[0].getRingbuffer(ringbufferNameB);
 
-        if (mergePolicyClass == DiscardMergePolicy.class) {
+        if (mergePolicyClassName.equals(DiscardMergePolicy.class.getName())) {
             afterMergeDiscardMergePolicy();
-        } else if (mergePolicyClass == PassThroughMergePolicy.class) {
+        } else if (mergePolicyClassName.equals(PassThroughMergePolicy.class.getName())) {
             afterMergePassThroughMergePolicy();
-        } else if (mergePolicyClass == PutIfAbsentMergePolicy.class) {
+        } else if (mergePolicyClassName.equals(PutIfAbsentMergePolicy.class.getName())) {
             afterMergePutIfAbsentMergePolicy();
-        } else if (mergePolicyClass == RingbufferRemoveValuesMergePolicy.class) {
+        } else if (mergePolicyClassName.equals(RingbufferRemoveValuesMergePolicy.class.getName())) {
             afterMergeRemoveValuesMergePolicy();
-        } else if (mergePolicyClass == RingbufferMergeIntegerValuesMergePolicy.class) {
+        } else if (mergePolicyClassName.equals(RingbufferMergeIntegerValuesMergePolicy.class.getName())) {
             afterMergeCustomMergePolicy();
         } else {
-            fail();
+            onAfterSplitBrainHealedExtension();
         }
+    }
+
+    protected void onAfterSplitBrainHealedExtension() {
+        fail("Unexpected merge policy parameter");
     }
 
     private void afterSplitDiscardMergePolicy() {
@@ -235,7 +250,7 @@ public class RingbufferSplitBrainTest extends SplitBrainTestSupport {
         assertRingbufferStoreContent(ringbufferStoreB);
     }
 
-    private void afterSplitPutIfAbsentMergePolicy() {
+    protected void afterSplitPutIfAbsentMergePolicy() {
         for (int i = 0; i < ITEM_COUNT; i++) {
             ringbufferA1.add("item" + i);
             ringbufferA2.add("lostItem" + i);
@@ -244,7 +259,7 @@ public class RingbufferSplitBrainTest extends SplitBrainTestSupport {
         }
     }
 
-    private void afterMergePutIfAbsentMergePolicy() {
+    protected void afterMergePutIfAbsentMergePolicy() {
         assertRingbufferContent(ringbufferA1);
         assertRingbufferContent(ringbufferA2);
         assertRingbufferContent(backupRingbuffer);
@@ -340,8 +355,8 @@ public class RingbufferSplitBrainTest extends SplitBrainTestSupport {
         }
     }
 
-    private static Collection<Object> getRingbufferContent(Ringbuffer<Object> ringbuffer) {
-        List<Object> list = new LinkedList<Object>();
+    protected static Collection<Object> getRingbufferContent(Ringbuffer<Object> ringbuffer) {
+        List<Object> list = new LinkedList<>();
         try {
             for (long sequence = ringbuffer.headSequence(); sequence <= ringbuffer.tailSequence(); sequence++) {
                 list.add(ringbuffer.readOne(sequence));
@@ -365,7 +380,7 @@ public class RingbufferSplitBrainTest extends SplitBrainTestSupport {
 
         private final SerializationService serializationService = new DefaultSerializationServiceBuilder().build();
 
-        private final ConcurrentMap<Long, Collection<Object>> store = new ConcurrentHashMap<Long, Collection<Object>>();
+        private final ConcurrentMap<Long, Collection<Object>> store = new ConcurrentHashMap<>();
 
         private String label;
 
@@ -413,12 +428,12 @@ public class RingbufferSplitBrainTest extends SplitBrainTestSupport {
                 Iterator<Object> collectionIterator = collection.iterator();
                 while (collectionIterator.hasNext()) {
                     Object value = collectionIterator.next();
-                    if (value instanceof byte[]) {
+                    if (value instanceof byte[] bytes) {
                         // binary in-memory format and store format
-                        value = serializationService.toObject(new HeapData((byte[]) value));
+                        value = serializationService.toObject(new HeapData(bytes));
                     }
-                    if (value instanceof String) {
-                        if (((String) value).startsWith(prefix)) {
+                    if (value instanceof String string) {
+                        if (string.startsWith(prefix)) {
                             collectionIterator.remove();
                         }
                     }
@@ -435,10 +450,10 @@ public class RingbufferSplitBrainTest extends SplitBrainTestSupport {
 
         boolean contains(Object expectedValue) {
             for (Collection<Object> collection : store.values()) {
-                if (expectedValue instanceof byte[]) {
+                if (expectedValue instanceof byte[] bytes) {
                     // binary in-memory format and store format
                     for (Object storedItem : collection) {
-                        if (Arrays.equals((byte[]) storedItem, (byte[]) expectedValue)) {
+                        if (Arrays.equals((byte[]) storedItem, bytes)) {
                             return true;
                         }
                     }
@@ -454,7 +469,7 @@ public class RingbufferSplitBrainTest extends SplitBrainTestSupport {
         private Collection<Object> getCollection(Long key) {
             Collection<Object> collection = store.get(key);
             if (collection == null) {
-                collection = new ConcurrentLinkedQueue<Object>();
+                collection = new ConcurrentLinkedQueue<>();
                 Collection<Object> candidate = store.putIfAbsent(key, collection);
                 if (candidate != null) {
                     return candidate;

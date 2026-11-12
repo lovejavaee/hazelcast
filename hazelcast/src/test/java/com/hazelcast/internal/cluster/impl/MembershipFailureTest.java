@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,10 +39,10 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameter;
+import org.junit.runners.Parameterized.Parameters;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -74,12 +74,9 @@ import static com.hazelcast.test.PacketFiltersUtil.dropOperationsBetween;
 import static com.hazelcast.test.PacketFiltersUtil.dropOperationsFrom;
 import static com.hazelcast.test.PacketFiltersUtil.rejectOperationsBetween;
 import static com.hazelcast.test.PacketFiltersUtil.resetPacketFiltersFrom;
-import static java.util.Arrays.asList;
-import static java.util.Collections.singletonList;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.runners.Parameterized.UseParametersRunnerFactory;
 
@@ -88,15 +85,15 @@ import static org.junit.runners.Parameterized.UseParametersRunnerFactory;
 @Category(SlowTest.class)
 public class MembershipFailureTest extends HazelcastTestSupport {
 
-    @Parameterized.Parameters(name = "fd:{0}")
+    @Parameters(name = "fd:{0}")
     public static Collection<ClusterFailureDetectorType> parameters() {
-        return Arrays.asList(ClusterFailureDetectorType.values());
+        return List.of(ClusterFailureDetectorType.values());
     }
 
-    @Parameterized.Parameter
+    @Parameter
     public ClusterFailureDetectorType failureDetectorType;
 
-    private TestHazelcastInstanceFactory factory;
+    protected TestHazelcastInstanceFactory factory;
 
     @Before
     public void init() {
@@ -211,7 +208,7 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         assertClusterSizeEventually(4, masterCandidate, slave1);
 
         // drop FETCH_MEMBER_LIST_STATE packets to block mastership claim process
-        dropOperationsBetween(masterCandidate, slave1, F_ID, singletonList(FETCH_MEMBER_LIST_STATE));
+        dropOperationsBetween(masterCandidate, slave1, F_ID, List.of(FETCH_MEMBER_LIST_STATE));
 
         terminateInstance(master);
 
@@ -239,7 +236,7 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         assertClusterSizeEventually(4, masterCandidate, slave1);
 
         // drop FETCH_MEMBER_LIST_STATE packets to block mastership claim process
-        dropOperationsBetween(masterCandidate, slave1, F_ID, singletonList(FETCH_MEMBER_LIST_STATE));
+        dropOperationsBetween(masterCandidate, slave1, F_ID, List.of(FETCH_MEMBER_LIST_STATE));
 
         terminateInstance(master);
 
@@ -266,7 +263,7 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         assertClusterSize(3, master, slave2);
         assertClusterSizeEventually(3, slave1);
 
-        dropOperationsFrom(slave2, F_ID, singletonList(HEARTBEAT));
+        dropOperationsFrom(slave2, F_ID, List.of(HEARTBEAT));
 
         assertClusterSizeEventually(2, master, slave1);
         assertClusterSizeEventually(1, slave2);
@@ -284,9 +281,9 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         assertClusterSize(3, master, slave2);
         assertClusterSizeEventually(3, slave1);
 
-        dropOperationsFrom(master, F_ID, singletonList(HEARTBEAT));
-        dropOperationsFrom(slave1, F_ID, singletonList(HEARTBEAT_COMPLAINT));
-        dropOperationsFrom(slave2, F_ID, singletonList(HEARTBEAT_COMPLAINT));
+        dropOperationsFrom(master, F_ID, List.of(HEARTBEAT));
+        dropOperationsFrom(slave1, F_ID, List.of(HEARTBEAT_COMPLAINT));
+        dropOperationsFrom(slave2, F_ID, List.of(HEARTBEAT_COMPLAINT));
 
         assertClusterSizeEventually(1, master);
         assertClusterSizeEventually(2, slave1, slave2);
@@ -304,7 +301,7 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         assertClusterSizeEventually(3, slave1);
 
         // prevent heartbeat from master to slave to prevent suspect to be removed
-        dropOperationsBetween(master, slave1, F_ID, singletonList(HEARTBEAT));
+        dropOperationsBetween(master, slave1, F_ID, List.of(HEARTBEAT));
         suspectMember(slave1, master);
 
         assertClusterSizeEventually(2, master, slave2);
@@ -322,7 +319,7 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         assertClusterSize(3, master, slave2);
         assertClusterSizeEventually(3, slave1);
 
-        dropOperationsBetween(slave2, slave1, F_ID, singletonList(HEARTBEAT));
+        dropOperationsBetween(slave2, slave1, F_ID, List.of(HEARTBEAT));
 
         MembershipManager membershipManager = getNode(slave1).getClusterService().getMembershipManager();
         assertTrueEventually(() -> {
@@ -336,6 +333,56 @@ public class MembershipFailureTest extends HazelcastTestSupport {
             Member localMember = slave2.getCluster().getLocalMember();
             assertFalse(membershipManager.isMemberSuspected((MemberImpl) localMember));
         });
+    }
+
+    @Test
+    public void nonMaster_heartbeats_remove_mutual_suspicion() {
+        Config config = smallInstanceConfig().setProperty(MAX_NO_HEARTBEAT_SECONDS.getName(), "15")
+                .setProperty(HEARTBEAT_INTERVAL_SECONDS.getName(), "1");
+        HazelcastInstance master = newHazelcastInstance(config);
+        HazelcastInstance nonMaster1 = newHazelcastInstance(config);
+        HazelcastInstance nonMaster2 = newHazelcastInstance(config);
+
+        assertClusterSize(3, master, nonMaster2);
+        assertClusterSizeEventually(3, nonMaster1);
+
+        dropOperationsBetween(nonMaster1, nonMaster2, F_ID, List.of(HEARTBEAT));
+        dropOperationsBetween(nonMaster2, nonMaster1, F_ID, List.of(HEARTBEAT));
+
+        MembershipManager membershipManager1 = getNode(nonMaster1).getClusterService().getMembershipManager();
+        MembershipManager membershipManager2 = getNode(nonMaster2).getClusterService().getMembershipManager();
+        MemberImpl member1 = (MemberImpl) nonMaster1.getCluster().getLocalMember();
+        MemberImpl member2 = (MemberImpl) nonMaster2.getCluster().getLocalMember();
+        assertTrueEventually(() -> {
+            assertTrue(membershipManager1.isMemberSuspected(member2));
+            assertTrue(membershipManager2.isMemberSuspected(member1));
+        });
+
+        resetPacketFiltersFrom(nonMaster1);
+        resetPacketFiltersFrom(nonMaster2);
+
+        assertTrueEventually(() -> {
+            assertFalse(membershipManager1.isMemberSuspected(member2));
+            assertFalse(membershipManager2.isMemberSuspected(member1));
+        }, 30);
+        assertClusterSize(3, master, nonMaster1, nonMaster2);
+    }
+
+    @Test
+    public void heartbeat_not_sent_to_suspected_master_by_nonMaster() {
+        Config config = smallInstanceConfig().setProperty(MAX_NO_HEARTBEAT_SECONDS.getName(), "15")
+                .setProperty(HEARTBEAT_INTERVAL_SECONDS.getName(), "1");
+        HazelcastInstance master = newHazelcastInstance(config);
+        HazelcastInstance nonMaster1 = newHazelcastInstance(config);
+        HazelcastInstance nonMaster2 = newHazelcastInstance(config);
+
+        assertClusterSize(3, master, nonMaster2);
+        assertClusterSizeEventually(3, nonMaster1);
+
+        // nonMaster2 suspects the master but does not claim mastership, since nonMaster1 is not suspected
+        dropOperationsBetween(master, nonMaster2, F_ID, List.of(HEARTBEAT));
+
+        assertClusterSizeEventually(2, master, nonMaster1);
     }
 
     @Test
@@ -354,10 +401,10 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         assertClusterSize(4, master, slave3);
         assertClusterSizeEventually(4, slave1, slave2);
 
-        dropOperationsFrom(master, F_ID, singletonList(HEARTBEAT));
-        dropOperationsFrom(slave1, F_ID, singletonList(HEARTBEAT));
-        dropOperationsFrom(slave2, F_ID, singletonList(HEARTBEAT));
-        dropOperationsFrom(slave3, F_ID, singletonList(HEARTBEAT));
+        dropOperationsFrom(master, F_ID, List.of(HEARTBEAT));
+        dropOperationsFrom(slave1, F_ID, List.of(HEARTBEAT));
+        dropOperationsFrom(slave2, F_ID, List.of(HEARTBEAT));
+        dropOperationsFrom(slave3, F_ID, List.of(HEARTBEAT));
 
         // Wait until the max possible retries of send task completes:
         // Properties of packet send task are as follows:
@@ -407,7 +454,7 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         assertClusterSizeEventually(3, slave1);
         assertClusterSize(3, slave2);
 
-        rejectOperationsBetween(master, slave1, F_ID, singletonList(MEMBER_INFO_UPDATE));
+        rejectOperationsBetween(master, slave1, F_ID, List.of(MEMBER_INFO_UPDATE));
 
         HazelcastInstance slave3 = newHazelcastInstance(config);
 
@@ -434,7 +481,7 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         assertClusterSizeEventually(3, slave1);
         // master, slave1, slave2
 
-        rejectOperationsBetween(master, slave1, F_ID, singletonList(MEMBER_INFO_UPDATE));
+        rejectOperationsBetween(master, slave1, F_ID, List.of(MEMBER_INFO_UPDATE));
 
         HazelcastInstance slave3 = newHazelcastInstance(config);
         // master, slave1, slave2, slave3
@@ -442,7 +489,7 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         assertClusterSizeEventually(4, slave3, slave2);
         assertClusterSize(3, slave1);
 
-        rejectOperationsBetween(master, asList(slave1, slave2), F_ID, singletonList(MEMBER_INFO_UPDATE));
+        rejectOperationsBetween(master, List.of(slave1, slave2), F_ID, List.of(MEMBER_INFO_UPDATE));
 
         HazelcastInstance slave4 = newHazelcastInstance(config);
         // master, slave1, slave2, slave3, slave4
@@ -451,7 +498,7 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         assertClusterSizeEventually(4, slave2);
         assertClusterSize(3, slave1);
 
-        rejectOperationsBetween(master, asList(slave1, slave2, slave3), F_ID, singletonList(MEMBER_INFO_UPDATE));
+        rejectOperationsBetween(master, List.of(slave1, slave2, slave3), F_ID, List.of(MEMBER_INFO_UPDATE));
 
         HazelcastInstance slave5 = newHazelcastInstance(config);
         // master, slave1, slave2, slave3, slave4, slave5
@@ -480,7 +527,7 @@ public class MembershipFailureTest extends HazelcastTestSupport {
 
         assertClusterSize(2, master, slave1);
 
-        rejectOperationsBetween(master, slave1, F_ID, singletonList(MEMBER_INFO_UPDATE));
+        rejectOperationsBetween(master, slave1, F_ID, List.of(MEMBER_INFO_UPDATE));
 
         HazelcastInstance slave2 = newHazelcastInstance(config);
         assertClusterSize(3, master);
@@ -516,9 +563,9 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         });
 
         // prevent heartbeats to member3 to prevent suspicion to be removed
-        dropOperationsBetween(member1, member3, F_ID, singletonList(HEARTBEAT));
-        dropOperationsBetween(member2, member3, F_ID, singletonList(HEARTBEAT));
-        dropOperationsFrom(member3, F_ID, singletonList(SPLIT_BRAIN_MERGE_VALIDATION));
+        dropOperationsBetween(member1, member3, F_ID, List.of(HEARTBEAT));
+        dropOperationsBetween(member2, member3, F_ID, List.of(HEARTBEAT));
+        dropOperationsFrom(member3, F_ID, List.of(SPLIT_BRAIN_MERGE_VALIDATION));
         suspectMember(member3, member1);
         suspectMember(member3, member2);
         assertClusterSizeEventually(1, member3);
@@ -549,13 +596,13 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         config.setProperty(ClusterProperty.PARTITION_MIGRATION_INTERVAL.getName(), "1");
         config.setProperty(ClusterProperty.PARTITION_COUNT.getName(), "12");
 
-        HazelcastInstance master = factory.newHazelcastInstance(config);
-        final HazelcastInstance masterCandidate = factory.newHazelcastInstance(config);
-        HazelcastInstance slave = factory.newHazelcastInstance(config);
+        HazelcastInstance master = newHazelcastInstance(config);
+        final HazelcastInstance masterCandidate = newHazelcastInstance(config);
+        HazelcastInstance slave = newHazelcastInstance(config);
 
         warmUpPartitions(master, masterCandidate, slave);
 
-        Future shutdownF = spawn(masterCandidate::shutdown);
+        Future<?> shutdownF = spawn(masterCandidate::shutdown);
 
         sleepSeconds(2);
         if (terminate) {
@@ -582,13 +629,13 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         assertClusterSize(4, member1, member4);
         assertClusterSizeEventually(4, member2, member3);
 
-        dropOperationsFrom(member1, F_ID, asList(MEMBER_INFO_UPDATE, HEARTBEAT));
-        dropOperationsFrom(member2, F_ID, singletonList(FETCH_MEMBER_LIST_STATE));
+        dropOperationsFrom(member1, F_ID, List.of(MEMBER_INFO_UPDATE, HEARTBEAT));
+        dropOperationsFrom(member2, F_ID, List.of(FETCH_MEMBER_LIST_STATE));
 
         // If we allow explicit suspicions from member3, when member4 sends a heartbeat to member3
         // after member3 splits from the cluster, member3 will send an explicit suspicion to member4
         // and member4 will start its own mastership claim.
-        dropOperationsFrom(member3, F_ID, asList(FETCH_MEMBER_LIST_STATE, EXPLICIT_SUSPICION));
+        dropOperationsFrom(member3, F_ID, List.of(FETCH_MEMBER_LIST_STATE, EXPLICIT_SUSPICION));
 
         suspectMember(member2, member3);
         suspectMember(member3, member2);
@@ -599,7 +646,7 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         suspectMember(member4, member2);
 
         // member2 will complete mastership claim, but member4 won't learn new member list
-        dropOperationsFrom(member2, F_ID, singletonList(MEMBER_INFO_UPDATE));
+        dropOperationsFrom(member2, F_ID, List.of(MEMBER_INFO_UPDATE));
         // member4 should accept member2 as master during mastership claim
         assertMasterAddressEventually(getAddress(member2), member4);
         resetPacketFiltersFrom(member3);
@@ -628,9 +675,9 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         assertClusterSize(4, member1, member4);
         assertClusterSizeEventually(4, member2, member3);
 
-        dropOperationsFrom(member1, F_ID, asList(MEMBER_INFO_UPDATE, HEARTBEAT));
-        dropOperationsFrom(member2, F_ID, asList(FETCH_MEMBER_LIST_STATE, HEARTBEAT));
-        dropOperationsFrom(member3, F_ID, singletonList(FETCH_MEMBER_LIST_STATE));
+        dropOperationsFrom(member1, F_ID, List.of(MEMBER_INFO_UPDATE, HEARTBEAT));
+        dropOperationsFrom(member2, F_ID, List.of(FETCH_MEMBER_LIST_STATE, HEARTBEAT));
+        dropOperationsFrom(member3, F_ID, List.of(FETCH_MEMBER_LIST_STATE));
 
         suspectMember(member2, member3);
         suspectMember(member3, member2);
@@ -641,7 +688,7 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         suspectMember(member4, member2);
 
         // member3 will complete mastership claim, but member4 won't learn new member list
-        dropOperationsFrom(member3, F_ID, singletonList(MEMBER_INFO_UPDATE));
+        dropOperationsFrom(member3, F_ID, List.of(MEMBER_INFO_UPDATE));
         // member4 should accept member3 as master during mastership claim
         assertMasterAddressEventually(getAddress(member3), member4);
         resetPacketFiltersFrom(member2);
@@ -691,9 +738,7 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         Member member2 = instance2.getCluster().getLocalMember();
         Member member3 = instance3.getCluster().getLocalMember();
 
-
-        dropOperationsBetween(instance2, instance3, F_ID, singletonList(HEARTBEAT));
-
+        dropOperationsBetween(instance2, instance3, F_ID, List.of(HEARTBEAT));
 
         assertClusterSizeEventually(2, instance1);
         Set<Member> members = instance1.getCluster().getMembers();
@@ -717,10 +762,8 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         Member member3 = instance3.getCluster().getLocalMember();
         Member member4 = instance4.getCluster().getLocalMember();
 
-
-        dropOperationsBetween(instance2, instance4, F_ID, singletonList(HEARTBEAT));
-        dropOperationsBetween(instance3, instance4, F_ID, singletonList(HEARTBEAT));
-
+        dropOperationsBetween(instance2, instance4, F_ID, List.of(HEARTBEAT));
+        dropOperationsBetween(instance3, instance4, F_ID, List.of(HEARTBEAT));
 
         assertClusterSizeEventually(3, instance1);
         Set<Member> members = instance1.getCluster().getMembers();
@@ -746,9 +789,7 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         Member member3 = instance3.getCluster().getLocalMember();
         Member member4 = instance4.getCluster().getLocalMember();
 
-
-        dropOperationsBetween(instance4, Arrays.asList(instance2, instance3), F_ID, singletonList(HEARTBEAT));
-
+        dropOperationsBetween(instance4, List.of(instance2, instance3), F_ID, List.of(HEARTBEAT));
 
         assertClusterSizeEventually(3, instance1);
         Set<Member> members = instance1.getCluster().getMembers();
@@ -776,11 +817,9 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         Member member5 = instance5.getCluster().getLocalMember();
         Member member6 = instance6.getCluster().getLocalMember();
 
-
-        dropOperationsBetween(instance2, Arrays.asList(instance5, instance6), F_ID, singletonList(HEARTBEAT));
-        dropOperationsBetween(instance3, Arrays.asList(instance5, instance6), F_ID, singletonList(HEARTBEAT));
-        dropOperationsBetween(instance4, Arrays.asList(instance5, instance6), F_ID, singletonList(HEARTBEAT));
-
+        dropOperationsBetween(instance2, List.of(instance5, instance6), F_ID, List.of(HEARTBEAT));
+        dropOperationsBetween(instance3, List.of(instance5, instance6), F_ID, List.of(HEARTBEAT));
+        dropOperationsBetween(instance4, List.of(instance5, instance6), F_ID, List.of(HEARTBEAT));
 
         assertClusterSizeEventually(5, instance1, instance2, instance3, instance4, instance7);
         Set<Member> members = instance1.getCluster().getMembers();
@@ -807,10 +846,8 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         Member member5 = instance5.getCluster().getLocalMember();
         Member member6 = instance6.getCluster().getLocalMember();
 
-
-        dropOperationsBetween(instance5, Arrays.asList(instance2, instance3, instance4), F_ID, singletonList(HEARTBEAT));
-        dropOperationsBetween(instance6, Arrays.asList(instance2, instance3, instance4), F_ID, singletonList(HEARTBEAT));
-
+        dropOperationsBetween(instance5, List.of(instance2, instance3, instance4), F_ID, List.of(HEARTBEAT));
+        dropOperationsBetween(instance6, List.of(instance2, instance3, instance4), F_ID, List.of(HEARTBEAT));
 
         assertClusterSizeEventually(5, instance1, instance2, instance3, instance4, instance7);
         Set<Member> members = instance1.getCluster().getMembers();
@@ -834,10 +871,8 @@ public class MembershipFailureTest extends HazelcastTestSupport {
 
         Member member3 = instance3.getCluster().getLocalMember();
 
-
-        dropOperationsBetween(instance2, instance3, F_ID, singletonList(HEARTBEAT));
-        dropOperationsBetween(instance3, Arrays.asList(instance4, instance5), F_ID, singletonList(HEARTBEAT));
-
+        dropOperationsBetween(instance2, instance3, F_ID, List.of(HEARTBEAT));
+        dropOperationsBetween(instance3, List.of(instance4, instance5), F_ID, List.of(HEARTBEAT));
 
         assertClusterSizeEventually(4, instance1, instance2, instance4, instance5);
         Set<Member> members = instance1.getCluster().getMembers();
@@ -875,10 +910,8 @@ public class MembershipFailureTest extends HazelcastTestSupport {
 
         changeClusterStateEventually(instance1, clusterState);
 
-
-        dropOperationsBetween(instance2, instance4, F_ID, singletonList(HEARTBEAT));
-        dropOperationsBetween(instance3, instance4, F_ID, singletonList(HEARTBEAT));
-
+        dropOperationsBetween(instance2, instance4, F_ID, List.of(HEARTBEAT));
+        dropOperationsBetween(instance3, instance4, F_ID, List.of(HEARTBEAT));
 
         assertClusterSizeEventually(3, instance1);
         Set<Member> members = instance1.getCluster().getMembers();
@@ -898,7 +931,7 @@ public class MembershipFailureTest extends HazelcastTestSupport {
 
     private void terminateRandomInstancesConcurrently(int count) {
         List<HazelcastInstance> instances = new ArrayList<>(getAllHazelcastInstances());
-        assertThat(instances.size(), greaterThanOrEqualTo(count));
+        assertThat(instances.size()).isGreaterThanOrEqualTo(count);
 
         Collections.shuffle(instances);
         instances = instances.subList(0, count);
@@ -913,32 +946,35 @@ public class MembershipFailureTest extends HazelcastTestSupport {
         assertOpenEventually(latch);
     }
 
-    HazelcastInstance newHazelcastInstance() {
-        return newHazelcastInstance(smallInstanceConfig());
+    @Override
+    protected Config getConfig() {
+        return smallInstanceConfig();
     }
 
-    HazelcastInstance newHazelcastInstance(Config config) {
+    protected Config initConfig(Config config) {
         config.setProperty(ClusterProperty.HEARTBEAT_FAILURE_DETECTOR_TYPE.getName(), failureDetectorType.toString());
-        return factory.newHazelcastInstance(config);
+        return config;
     }
 
-    Collection<HazelcastInstance> getAllHazelcastInstances() {
+    private HazelcastInstance newHazelcastInstance() {
+        return newHazelcastInstance(getConfig());
+    }
+
+    private HazelcastInstance newHazelcastInstance(Config config) {
+        return factory.newHazelcastInstance(initConfig(config));
+    }
+
+    private Collection<HazelcastInstance> getAllHazelcastInstances() {
         return factory.getAllHazelcastInstances();
     }
 
-    private static class LatchService {
+    private record LatchService(CountDownLatch latch) {
         static final String SERVICE_NAME = "latch-service";
-
-        final CountDownLatch latch;
-
-        private LatchService(CountDownLatch latch) {
-            this.latch = latch;
-        }
     }
 
     private static class UrgentOperationAwaitOn extends Operation implements UrgentSystemOperation {
         @Override
-        public void run() throws Exception {
+        public void run() {
             LatchService service = getService();
             service.latch.countDown();
             getLogger().info("Count down on latch");

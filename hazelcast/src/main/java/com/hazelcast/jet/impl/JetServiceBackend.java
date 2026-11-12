@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,11 +19,13 @@ package com.hazelcast.jet.impl;
 import com.hazelcast.client.impl.ClientEngine;
 import com.hazelcast.client.impl.ClientEngineImpl;
 import com.hazelcast.client.impl.protocol.ClientExceptionFactory;
+import com.hazelcast.cluster.Address;
 import com.hazelcast.cluster.ClusterState;
 import com.hazelcast.config.Config;
 import com.hazelcast.config.MapConfig;
 import com.hazelcast.config.MergePolicyConfig;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.function.BiFunctionEx;
 import com.hazelcast.instance.impl.HazelcastBootstrap;
 import com.hazelcast.instance.impl.Node;
 import com.hazelcast.instance.impl.NodeState;
@@ -35,6 +37,7 @@ import com.hazelcast.internal.serialization.InternalSerializationService;
 import com.hazelcast.internal.services.ManagedService;
 import com.hazelcast.internal.services.MembershipAwareService;
 import com.hazelcast.internal.services.MembershipServiceEvent;
+import com.hazelcast.internal.util.InvocationUtil;
 import com.hazelcast.jet.JetException;
 import com.hazelcast.jet.JetService;
 import com.hazelcast.jet.config.JetConfig;
@@ -49,9 +52,11 @@ import com.hazelcast.jet.impl.submitjob.memberside.JobMetaDataParameterObject;
 import com.hazelcast.jet.impl.submitjob.memberside.JobMultiPartParameterObject;
 import com.hazelcast.jet.impl.submitjob.memberside.JobUploadStatus;
 import com.hazelcast.jet.impl.submitjob.memberside.JobUploadStore;
-import com.hazelcast.jet.impl.submitjob.memberside.validator.JobMetaDataParameterObjectValidator;
-import com.hazelcast.jet.impl.util.ExceptionUtil;
+import com.hazelcast.jet.impl.submitjob.memberside.validator.JarOnClientValidator;
+import com.hazelcast.jet.impl.submitjob.memberside.validator.JarOnMemberValidator;
+import com.hazelcast.jet.impl.util.JetExceptionUtil;
 import com.hazelcast.logging.ILogger;
+import com.hazelcast.map.IMap;
 import com.hazelcast.spi.impl.NodeEngine;
 import com.hazelcast.spi.impl.NodeEngineImpl;
 import com.hazelcast.spi.impl.operationservice.LiveOperations;
@@ -61,10 +66,15 @@ import com.hazelcast.spi.merge.DiscardMergePolicy;
 import com.hazelcast.spi.merge.LatestUpdateMergePolicy;
 import com.hazelcast.spi.properties.HazelcastProperties;
 
+import javax.annotation.Nonnull;
 import java.io.IOException;
+import java.security.AccessControlException;
+import java.security.Permission;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -74,12 +84,12 @@ import java.util.function.Supplier;
 
 import static com.hazelcast.cluster.ClusterState.PASSIVE;
 import static com.hazelcast.config.MapConfig.DISABLED_TTL_SECONDS;
-import static com.hazelcast.internal.util.ExceptionUtil.rethrow;
+import static com.hazelcast.internal.util.ExceptionUtil.sneakyThrow;
 import static com.hazelcast.jet.impl.JobRepository.INTERNAL_JET_OBJECTS_PREFIX;
 import static com.hazelcast.jet.impl.JobRepository.JOB_METRICS_MAP_NAME;
 import static com.hazelcast.jet.impl.JobRepository.JOB_RESULTS_MAP_NAME;
-import static com.hazelcast.jet.impl.util.ExceptionUtil.sneakyThrow;
-import static com.hazelcast.jet.impl.util.Util.memoizeConcurrent;
+import static com.hazelcast.jet.impl.util.JetExceptionUtil.rethrow;
+import static com.hazelcast.internal.util.Memoizers.memoizeConcurrent;
 import static com.hazelcast.spi.properties.ClusterProperty.JOB_RESULTS_TTL_SECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
@@ -112,6 +122,7 @@ public class JetServiceBackend implements ManagedService, MembershipAwareService
     private final AtomicInteger numConcurrentAsyncOps = new AtomicInteger();
     private final Supplier<int[]> sharedPartitionKeys = memoizeConcurrent(this::computeSharedPartitionKeys);
     private final JobUploadStore jobUploadStore = new JobUploadStore();
+    private final ConcurrentMap<String, Long> connectorInitializeCounts = new ConcurrentHashMap<>();
     private ScheduledFuture<?> jobUploadStoreCheckerFuture;
 
     public JetServiceBackend(Node node) {
@@ -134,18 +145,19 @@ public class JetServiceBackend implements ManagedService, MembershipAwareService
         jobExecutionService = new JobExecutionService(nodeEngine, taskletExecutionService, jobClassLoaderService);
 
         MetricsService metricsService = nodeEngine.getService(MetricsService.SERVICE_NAME);
-        metricsService.registerPublisher(nodeEngine -> new JobMetricsPublisher(jobExecutionService,
-                nodeEngine.getLocalMember()));
+        metricsService.registerPublisher(nodeEngine ->
+                new JobMetricsPublisher(jobExecutionService, nodeEngine.getLocalMember()));
+        nodeEngine.getMetricsRegistry().registerDynamicMetricsProvider(jobCoordinationService);
         nodeEngine.getMetricsRegistry().registerDynamicMetricsProvider(jobExecutionService);
         networking = new Networking(engine, jobExecutionService, jetConfig.getFlowControlPeriodMs());
 
         ClientEngine clientEngine = engine.getService(ClientEngineImpl.SERVICE_NAME);
         ClientExceptionFactory clientExceptionFactory = clientEngine.getExceptionFactory();
         if (clientExceptionFactory != null) {
-            ExceptionUtil.registerJetExceptions(clientExceptionFactory);
+            JetExceptionUtil.registerJetExceptions(clientExceptionFactory);
         } else {
-            logger.fine("Jet exceptions are not registered to the ClientExceptionFactory" +
-                        " since the ClientExceptionFactory is not accessible.");
+            logger.fine("Jet exceptions are not registered to the ClientExceptionFactory%s",
+                    " since the ClientExceptionFactory is not accessible.");
         }
         logger.info("Setting number of cooperative threads and default parallelism to "
                     + jetConfig.getCooperativeThreadCount());
@@ -155,12 +167,18 @@ public class JetServiceBackend implements ManagedService, MembershipAwareService
                 jobUploadStore::cleanExpiredUploads, 0, JOB_UPLOAD_STORE_PERIOD, SECONDS);
     }
 
+    public ConcurrentMap<String, Long> getConnectorInitializeCounts() {
+        return connectorInitializeCounts;
+    }
+
     public void configureJetInternalObjects(Config config, HazelcastProperties properties) {
         JetConfig jetConfig = config.getJetConfig();
         MapConfig internalMapConfig = new MapConfig(INTERNAL_JET_OBJECTS_PREFIX + '*')
                 .setBackupCount(jetConfig.getBackupCount())
                 // we query creationTime of resources maps
-                .setStatisticsEnabled(true);
+                .setStatisticsEnabled(true)
+                // users cannot act on oversized entry warnings for internal maps
+                .setOversizedEntryThresholdBytes(0);
 
         internalMapConfig.getMergePolicyConfig().setPolicy(DiscardMergePolicy.class.getName());
 
@@ -180,15 +198,16 @@ public class JetServiceBackend implements ManagedService, MembershipAwareService
 
     // visible for tests
     static MapConfig createSqlCatalogConfig() {
-        // TODO HZ-1743 when implemented properly align this with the chosen
-        //  approach that HZ-1743 follows
+        // TODO HZOLD-1743 when implemented properly align this with the chosen
+        //  approach that HZOLD-1743 follows
         return new MapConfig(SQL_CATALOG_MAP_NAME)
                 .setBackupCount(MapConfig.MAX_BACKUP_COUNT)
                 .setAsyncBackupCount(MapConfig.MIN_BACKUP_COUNT)
                 .setTimeToLiveSeconds(DISABLED_TTL_SECONDS)
                 .setReadBackupData(true)
                 .setMergePolicyConfig(new MergePolicyConfig().setPolicy(LatestUpdateMergePolicy.class.getName()))
-                .setPerEntryStatsEnabled(true);
+                .setPerEntryStatsEnabled(true)
+                .setOversizedEntryThresholdBytes(0);
     }
 
     /**
@@ -197,7 +216,7 @@ public class JetServiceBackend implements ManagedService, MembershipAwareService
      */
     public void shutDownJobs() {
         if (shutdownFuture.compareAndSet(null, new CompletableFuture<>())) {
-            notifyMasterWeAreShuttingDown(shutdownFuture.get());
+            notifyAllMembersWeAreShuttingDown(shutdownFuture.get());
         }
         try {
             CompletableFuture<Void> future = shutdownFuture.get();
@@ -211,10 +230,42 @@ public class JetServiceBackend implements ManagedService, MembershipAwareService
         }
     }
 
-    private void notifyMasterWeAreShuttingDown(CompletableFuture<Void> future) {
+    private void notifyNonMasterMembersWeAreShuttingDown(Address masterAddress) {
+        Supplier<Operation> operationSupplier = NotifyMemberShutdownOperation::new;
+        var localAddress = nodeEngine.getThisAddress();
+        InvocationUtil.invokeOnStableClusterParallel(
+                nodeEngine,
+                operationSupplier,
+                0,
+                member -> !member.getAddress().equals(masterAddress) && !member.getAddress().equals(localAddress)
+        ).whenComplete((r, t) -> {
+            if (t != null) {
+                logger.warning(
+                        "Some non-master members encountered errors during the notification process about the shutdown member "
+                                + nodeEngine.getNode().getThisUuid(),
+                        t
+                );
+            } else {
+                logger.fine("All non-master members were informed about the shutdown of member %s",
+                        nodeEngine.getNode().getThisUuid());
+            }
+        });
+    }
+
+    private void notifyAllMembersWeAreShuttingDown(CompletableFuture<Void> future) {
+        var fixedMasterAddress = nodeEngine.getMasterAddress();
+        // we not guarantee the delivery of information to non-master members
+        // in order not to delay shutdown of this member. If the notification is lost
+        // some light jobs coordinated by those members can fail.
+        notifyNonMasterMembersWeAreShuttingDown(fixedMasterAddress);
+        // we guarantee delivery of information to the master
+        notifyMasterWeAreShuttingDown(future, fixedMasterAddress);
+    }
+
+    private void notifyMasterWeAreShuttingDown(CompletableFuture<Void> future, Address masterAddress) {
         Operation op = new NotifyMemberShutdownOperation();
         nodeEngine.getOperationService()
-                .invokeOnTarget(JetServiceBackend.SERVICE_NAME, op, nodeEngine.getClusterService().getMasterAddress())
+                .invokeOnTarget(JetServiceBackend.SERVICE_NAME, op, masterAddress)
                 .whenCompleteAsync((response, throwable) -> {
                     // if there is an error and the node is still ACTIVE, try again. If the node isn't ACTIVE, log & ignore.
                     NodeState nodeState = nodeEngine.getNode().getState();
@@ -223,7 +274,10 @@ public class JetServiceBackend implements ManagedService, MembershipAwareService
                                 " will retry in " + NOTIFY_MEMBER_SHUTDOWN_DELAY + " seconds", throwable);
                         // recursive call
                         nodeEngine.getExecutionService().schedule(
-                                () -> notifyMasterWeAreShuttingDown(future), NOTIFY_MEMBER_SHUTDOWN_DELAY, SECONDS);
+                                () -> notifyMasterWeAreShuttingDown(future, nodeEngine.getMasterAddress()),
+                                NOTIFY_MEMBER_SHUTDOWN_DELAY,
+                                SECONDS
+                        );
                     } else {
                         if (throwable != null) {
                             logger.warning("Failed to notify master member that this member is shutting down," +
@@ -238,12 +292,22 @@ public class JetServiceBackend implements ManagedService, MembershipAwareService
     @Override
     public void shutdown(boolean forceful) {
         // Cancel timer
-        jobUploadStoreCheckerFuture.cancel(true);
+        if (jobUploadStoreCheckerFuture != null) {
+            jobUploadStoreCheckerFuture.cancel(true);
+        }
 
-        jobExecutionService.shutdown();
-        taskletExecutionService.shutdown();
-        taskletExecutionService.awaitWorkerTermination();
-        networking.shutdown();
+        if (jobExecutionService != null) {
+            jobExecutionService.shutdown();
+        }
+
+        if (taskletExecutionService != null) {
+            taskletExecutionService.shutdown();
+            taskletExecutionService.awaitWorkerTermination();
+        }
+
+        if (networking != null) {
+            networking.shutdown();
+        }
     }
 
     @Override
@@ -277,6 +341,15 @@ public class JetServiceBackend implements ManagedService, MembershipAwareService
 
     public JobRepository getJobRepository() {
         return jobRepository;
+    }
+
+    public static boolean isNamespaceReferencedInActiveJobs(NodeEngine nodeEngine, String namespace) {
+        JetServiceBackend jet = nodeEngine.getServiceOrNull(JetServiceBackend.SERVICE_NAME);
+        return jet != null && jet.isNamespaceReferencedInActiveJobs(namespace);
+    }
+
+    public boolean isNamespaceReferencedInActiveJobs(String namespace) {
+        return false;
     }
 
     public NodeEngineImpl getNodeEngine() {
@@ -384,8 +457,8 @@ public class JetServiceBackend implements ManagedService, MembershipAwareService
     public void beforeClusterStateChange(ClusterState requestedState) {
         if (requestedState == PASSIVE) {
             try {
-                nodeEngine.getOperationService().createInvocationBuilder(JetServiceBackend.SERVICE_NAME,
-                                new PrepareForPassiveClusterOperation(), nodeEngine.getMasterAddress())
+                nodeEngine.getOperationService().createMasterInvocationBuilder(JetServiceBackend.SERVICE_NAME,
+                                new PrepareForPassiveClusterOperation())
                         .invoke().get();
             } catch (InterruptedException | ExecutionException e) {
                 throw rethrow(e);
@@ -401,15 +474,20 @@ public class JetServiceBackend implements ManagedService, MembershipAwareService
      * Execute the given jar
      */
     public void jarOnMember(JobMetaDataParameterObject jobMetaDataParameterObject) {
-        JobMetaDataParameterObjectValidator.validateJarOnMember(jobMetaDataParameterObject);
+        // Performs validations before processing the request
+        JarOnMemberValidator.validate(jobMetaDataParameterObject);
+
         executeJar(jobMetaDataParameterObject);
     }
 
     /**
      * Store the metadata about the jar that is uploaded from client side
      */
-    public void storeJobMetaData(JobMetaDataParameterObject jobMetaDataParameterObject) {
+    public void jarOnClient(JobMetaDataParameterObject jobMetaDataParameterObject) {
+        // Performs validations before processing the request
         checkResourceUploadEnabled();
+        JarOnClientValidator.validate(jobMetaDataParameterObject);
+
         try {
             // Delegate processing to store
             jobUploadStore.processJobMetaData(jobMetaDataParameterObject);
@@ -450,6 +528,16 @@ public class JetServiceBackend implements ManagedService, MembershipAwareService
         }
     }
 
+    /**
+     * Used to collect phone home data about jet connector initialization.
+     * Sets count to 1 if it's absent in the map, otherwise increment it by 1.
+     * @param connectorName Name of the connector.
+     */
+    public void onConnectorInitialize(String connectorName) {
+        BiFunctionEx<String, Long, Long> incrementFn = (k, v) -> v == null ? 1L : v + 1L;
+        connectorInitializeCounts.compute(connectorName, incrementFn);
+    }
+
     private void throwJetExceptionFromJobMetaData(JobMetaDataParameterObject jobMetaDataParameterObject, Exception exception) {
         // Enrich exception with metadata
         String exceptionString = jobMetaDataParameterObject.exceptionString();
@@ -467,7 +555,7 @@ public class JetServiceBackend implements ManagedService, MembershipAwareService
         // Exception is not JetException
         if (!(exception instanceof JetException)) {
             // Get the root cause and wrap it with JetException
-            ExceptionUtil.rethrow(exception);
+            throw rethrow(exception);
         } else {
             // Just throw the JetException as is
             sneakyThrow(exception);
@@ -516,5 +604,26 @@ public class JetServiceBackend implements ManagedService, MembershipAwareService
 
     private HazelcastInstance getHazelcastInstance() {
         return getNodeEngine().getHazelcastInstance();
+    }
+
+    /**
+     * Add permission checks to given IMap if needed.
+     * Should check permissions except create and read permissions
+     * which are checked by the {@link com.hazelcast.jet.pipeline.ServiceFactory} itself.
+     *
+     * @param imap              IMap to wrap
+     * @param permissionChecker consumer that will check if given permission is granted
+     *                          and throw {@link AccessControlException} if it is not
+     * @param <K>               key type
+     * @param <V>               value type
+     * @return wrapped IMap
+     *
+     * @see com.hazelcast.jet.pipeline.ServiceFactory
+     * @see com.hazelcast.security.SecureCallable
+     */
+    @Nonnull
+    public <K, V> IMap<K, V> wrapInPermissions(@Nonnull IMap<K, V> imap, @Nonnull Consumer<Permission> permissionChecker) {
+        // security is not enabled - do not wrap
+        return imap;
     }
 }

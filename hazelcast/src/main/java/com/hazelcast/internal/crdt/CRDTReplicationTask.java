@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,7 +57,7 @@ class CRDTReplicationTask implements Runnable {
         }
         try {
             final Collection<Member> viableTargets = getNonLocalReplicaAddresses();
-            if (viableTargets.size() == 0) {
+            if (viableTargets.isEmpty()) {
                 return;
             }
             final Member[] targets = pickTargets(viableTargets, lastTargetIndex, maxTargets);
@@ -78,7 +78,7 @@ class CRDTReplicationTask implements Runnable {
      */
     private List<Member> getNonLocalReplicaAddresses() {
         final Collection<Member> dataMembers = nodeEngine.getClusterService().getMembers(DATA_MEMBER_SELECTOR);
-        final ArrayList<Member> nonLocalDataMembers = new ArrayList<Member>(dataMembers);
+        final ArrayList<Member> nonLocalDataMembers = new ArrayList<>(dataMembers);
         nonLocalDataMembers.remove(nodeEngine.getLocalMember());
         return nonLocalDataMembers;
     }
@@ -105,11 +105,11 @@ class CRDTReplicationTask implements Runnable {
                 service.prepareReplicationOperation(lastSuccessfullyReplicatedClocks, targetIndex);
 
         if (replicationOperation == null) {
-            logger.finest("Skipping replication of " + service.getName() + " for target " + target);
+            logger.finest("Skipping replication of %s for target %s", service.getName(), target);
             return;
         }
         try {
-            logger.finest("Replicating " + service.getName() + " to " + target);
+            logger.finest("Replicating %s to %s", service.getName(), target);
             operationService.invokeOnTarget(null, replicationOperation.getOperation(), target.getAddress()).joinInternal();
             replicationMigrationService.setReplicatedVectorClocks(service.getName(), target.getUuid(),
                     replicationOperation.getVectorClocks());

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -72,6 +72,13 @@ public interface Job {
      * Joining a suspended job will block until that job is resumed and
      * completes.
      * <p>
+     * The exception thrown by this method if the job completed with an error
+     * may differ depending on the moment when this method is invoked.
+     * If it is invoked after the job has already finished, the original
+     * exception stacktrace may be flattened and reported as exception message
+     * text, whereas in other cases it will be returned as ordinary exception
+     * chain.
+     * <p>
      * Shorthand for <code>job.getFuture().join()</code>.
      *
      * @throws CancellationException if the job was cancelled
@@ -143,6 +150,9 @@ public interface Job {
      * status from the job coordinator. For light jobs it returns only {@link
      * JobStatus#RUNNING RUNNING}, {@link JobStatus#COMPLETED COMPLETED} or
      * {@link JobStatus#FAILED FAILED}.
+     * {@link JobStatus#RUNNING RUNNING} for light jobs may indicate either
+     * that the job is running or that it is still in the process of starting.
+     *
      */
     @Nonnull
     JobStatus getStatus();
@@ -164,6 +174,7 @@ public interface Job {
      *
      * @return The registration id
      * @throws UnsupportedOperationException if the cluster version is less than 5.3
+     * @throws IllegalStateException if the job is completed or failed
      * @since 5.3
      */
     UUID addStatusListener(@Nonnull JobStatusListener listener);
@@ -248,7 +259,7 @@ public interface Job {
      * JobConfig#setAutoScaling auto scaling} is disabled. Only a running job
      * can be restarted; a suspended job must be {@linkplain #resume() resumed}.
      * <p>
-     * Conceptually this call is equivalent to {@link #suspend()} & {@link
+     * Conceptually this call is equivalent to {@link #suspend()} &amp; {@link
      * #resume()}. Not supported for light jobs.
      *
      * @throws IllegalStateException if the job is not running, for example it

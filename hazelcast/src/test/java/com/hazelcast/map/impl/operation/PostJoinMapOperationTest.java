@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import com.hazelcast.config.Config;
 import com.hazelcast.config.IndexType;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.map.IMap;
-import com.hazelcast.map.MapInterceptor;
+import com.hazelcast.map.MapInterceptorAdaptor;
 import com.hazelcast.map.impl.MapContainer;
 import com.hazelcast.map.impl.MapService;
 import com.hazelcast.query.impl.Comparison;
@@ -39,6 +39,7 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
+import java.io.Serial;
 import java.io.Serializable;
 import java.util.Collection;
 import java.util.Map;
@@ -46,8 +47,11 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static com.hazelcast.instance.impl.TestUtil.terminateInstance;
 import static com.hazelcast.test.Accessors.getNodeEngineImpl;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 
 /**
  * Verify that maps created on a member joining the cluster, do
@@ -112,13 +116,13 @@ public class PostJoinMapOperationTest extends HazelcastTestSupport {
         HazelcastInstance hz2 = hzFactory.newHazelcastInstance(config);
         waitAllForSafeState(hz1, hz2);
 
-        hzFactory.terminate(hz1);
+        terminateInstance(hz1);
         waitAllForSafeState(hz2);
 
         // then: once all migrations are committed, the query is executed *with* the index and
         // returns the expected results.
         IMap<String, Person> mapOnNode2 = hz2.getMap("map");
-        AtomicInteger invocationCounter = new AtomicInteger(0);
+        AtomicInteger invocationCounter = new AtomicInteger();
 
         // eventually index should be created after join
         assertTrueEventually(() -> {
@@ -149,7 +153,7 @@ public class PostJoinMapOperationTest extends HazelcastTestSupport {
         MapService mapService = getNodeEngineImpl(hz2).getService(MapService.SERVICE_NAME);
         MapContainer mapContainerOnNode2 = mapService.getMapServiceContext().getMapContainer("map");
 
-        assertEquals(1, mapContainerOnNode2.getIndexes().getIndexes().length);
+        assertEquals(1, mapContainerOnNode2.getGlobalIndexRegistry().getIndexes().length);
         assertEquals(1, mapContainerOnNode2.getInterceptorRegistry().getInterceptors().size());
         assertEquals(Person.class,
                 mapContainerOnNode2.getInterceptorRegistry().getInterceptors().get(0).interceptGet("anything").getClass());
@@ -159,6 +163,26 @@ public class PostJoinMapOperationTest extends HazelcastTestSupport {
         // also verify via user API
         IMap<String, Person> mapOnNode2 = hz2.getMap("map");
         assertEquals(RETURNED_FROM_INTERCEPTOR, mapOnNode2.get("whatever"));
+    }
+
+    @Test
+    public void testPostJoinMapOperation_whenMapHasNoInterceptorAndLiteMemberJoins() {
+        Config config = getConfig();
+        TestHazelcastInstanceFactory hzFactory = createHazelcastInstanceFactory(2);
+
+        // given: a single node HazelcastInstance with a map configured without interceptor
+        HazelcastInstance hz1 = hzFactory.newHazelcastInstance(config);
+        IMap<String, Person> map = hz1.getMap("map");
+        assertNull(map.get("whatever")); // to trigger MapContainer initialization
+
+        // when: another node joins the cluster as a lite member
+        config.setLiteMember(true);
+        HazelcastInstance hz2 = hzFactory.newHazelcastInstance(config);
+        waitAllForSafeState(hz1, hz2);
+
+        // then: MapContainer does not exist on the lite member that joined the cluster
+        MapService mapService = getNodeEngineImpl(hz2).getService(MapService.SERVICE_NAME);
+        assertFalse(mapService.getMapServiceContext().getMapContainers().containsKey("map"));
     }
 
     private static class Person implements Serializable {
@@ -183,11 +207,9 @@ public class PostJoinMapOperationTest extends HazelcastTestSupport {
             if (this == o) {
                 return true;
             }
-            if (!(o instanceof Person)) {
+            if (!(o instanceof Person person)) {
                 return false;
             }
-
-            Person person = (Person) o;
 
             if (age != person.age) {
                 return false;
@@ -206,7 +228,9 @@ public class PostJoinMapOperationTest extends HazelcastTestSupport {
 
     private static final Person RETURNED_FROM_INTERCEPTOR = new Person("THE_PERSON", 100);
 
-    public static class FixedReturnInterceptor implements MapInterceptor {
+    public static class FixedReturnInterceptor extends MapInterceptorAdaptor {
+        @Serial
+        private static final long serialVersionUID = 1L;
 
         @Override
         public Object interceptGet(Object value) {
@@ -214,29 +238,8 @@ public class PostJoinMapOperationTest extends HazelcastTestSupport {
         }
 
         @Override
-        public void afterGet(Object value) {
-
-        }
-
-        @Override
-        public Object interceptPut(Object oldValue, Object newValue) {
-            // allow put operations to proceed
-            return null;
-        }
-
-        @Override
-        public void afterPut(Object value) {
-
-        }
-
-        @Override
         public Object interceptRemove(Object removedValue) {
             return RETURNED_FROM_INTERCEPTOR;
-        }
-
-        @Override
-        public void afterRemove(Object value) {
-
         }
     }
 

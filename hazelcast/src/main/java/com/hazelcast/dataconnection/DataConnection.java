@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 package com.hazelcast.dataconnection;
 
 import com.hazelcast.config.DataConnectionConfig;
-import com.hazelcast.spi.annotation.Beta;
 
 import javax.annotation.Nonnull;
 import java.util.Collection;
@@ -32,11 +31,13 @@ import java.util.Map;
  * might be an instance of {@link java.sql.Connection}, or of a driver or client to a
  * 3rd party system etc.
  * <p>
- * Every connection obtained from a DataConnection must be closed. Otherwise, the data
- * link cannot be closed and the connection will leak.
+ * Every connection obtained from a DataConnection must be  released via
+ * {@link #release()}. Otherwise, the data connection cannot be closed and the
+ * connection will leak.
  * <p>
- * DataConnection is supposed to be used in Jet jobs or SQL mappings where the
- * same connection metadata, or even the same connection is to be reused.
+ * DataConnection is supposed to be used in Jet jobs, SQL mappings and other
+ * places where the same connection metadata, or even the same connection
+ * is to be reused.
  * <p>
  * DataConnection is closely related to Jet connectors (sources and sinks) and
  * to {@code SqlConnector}s. While the DataConnection handles initialization,
@@ -68,16 +69,17 @@ import java.util.Map;
  * </ul>
  * However, the connector might implement any other appropriate strategy.
  * <p>
- * When a DataConnection is closed, connections obtained from should continue to be
- * functional, until all connections are returned. Replacing of a DataConnection is
- * handled as remove+create.
+ * When a DataConnection is released, connections obtained from it should
+ * continue to be functional, until all connections are returned.
+ * Replacing of a DataConnection is handled as remove+create.
  * <p>
  * Implementations of DataConnection must provide a constructor with a single argument
- * of type {@link DataConnectionConfig}.
+ * of type {@link DataConnectionConfig}. The constructor must not throw an exception
+ * under any circumstances. Any resource allocation should be done either asynchronously
+ * or lazily when the underlying instance is requested.
  *
  * @since 5.3
  */
-@Beta
 public interface DataConnection {
 
     /**
@@ -107,6 +109,14 @@ public interface DataConnection {
     Collection<DataConnectionResource> listResources();
 
     /**
+     * Returns the list of possible values for {@link DataConnectionResource#type()},
+     * that will be returned when {@link #listResources()} is called. Returned values are case-insensitive,
+     * e.g. {@link DataConnectionResource#type()} may return {@code MY_RES} and this method {@code my_res}.
+     */
+    @Nonnull
+    Collection<String> resourceTypes();
+
+    /**
      * Returns the configuration of this DataConnection.
      */
     @Nonnull
@@ -133,7 +143,7 @@ public interface DataConnection {
      * allows the processor to avoid concurrent close while it is using the
      * connection.
      *
-     * @throws IllegalStateException fi the data connection is already closed
+     * @throws IllegalStateException if the data connection is already closed
      */
     void retain();
 

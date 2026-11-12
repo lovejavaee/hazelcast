@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ import com.hazelcast.logging.Logger;
 import java.io.IOException;
 import java.util.concurrent.Callable;
 
-import static com.hazelcast.jet.impl.util.ExceptionUtil.sneakyThrow;
+import static com.hazelcast.internal.util.ExceptionUtil.sneakyThrow;
 
 /**
  * Static utility class to retry operations related to connecting to AWS Services.
@@ -62,8 +62,8 @@ public final class RetryUtils {
                         throw sneakyThrow(e);
                     }
                     long waitIntervalMs = Math.min(MAX_BACKOFF_MS, MS_IN_SECOND * (1 << retryCount));
-                    LOGGER.fine(String.format("Couldn't connect to Elastic, [%s] retrying in %s seconds...", retryCount,
-                            waitIntervalMs / MS_IN_SECOND));
+                    LOGGER.fine("Couldn't connect to Elastic, [%s] retrying in %s seconds...", retryCount,
+                            waitIntervalMs / MS_IN_SECOND);
                     sleep(waitIntervalMs);
                 } else {
                     throw sneakyThrow(e);
@@ -76,6 +76,9 @@ public final class RetryUtils {
         for (Class<? extends Exception> exception : exceptions) {
             if (exception.isAssignableFrom(e.getClass())) {
                 return true;
+            }
+            if (e.getCause() != null && e.getCause() instanceof Exception cause && e.getCause() != e) {
+                return anyOf(cause, exceptions);
             }
         }
         return false;

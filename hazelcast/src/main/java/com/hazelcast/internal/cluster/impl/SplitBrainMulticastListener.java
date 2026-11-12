@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import com.hazelcast.cluster.Address;
 import java.util.concurrent.BlockingDeque;
 
 /**
- * Listens for {@code SplitBrainJoinMessage}s and adds them for processing by split brain handler. Each messages is added
+ * Listens for {@code SplitBrainJoinMessage}s and adds them for processing by split brain handler. Each message is added
  * to the head of a {@code BlockingDeque}, so that polling the {@code BlockingDeque} will return the message received last
  * (thus operating as a stack).
  */
@@ -36,9 +36,9 @@ public class SplitBrainMulticastListener implements MulticastListener {
         this.deque = deque;
     }
 
+    @Override
     public void onMessage(Object msg) {
-        if (msg instanceof SplitBrainJoinMessage) {
-            SplitBrainJoinMessage joinRequest = (SplitBrainJoinMessage) msg;
+        if (msg instanceof SplitBrainJoinMessage joinRequest) {
             Address thisAddress = node.getThisAddress();
             // only master nodes execute the SplitBrainHandler that processes SplitBrainJoinMessages
             if (!thisAddress.equals(joinRequest.getAddress()) && node.isMaster()) {

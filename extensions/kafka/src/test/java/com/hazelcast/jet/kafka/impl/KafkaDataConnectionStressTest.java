@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Hazelcast Inc.
+ * Copyright 2026 Hazelcast Inc.
  *
  * Licensed under the Hazelcast Community License (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,23 +23,22 @@ import com.hazelcast.jet.kafka.KafkaSinks;
 import com.hazelcast.jet.pipeline.DataConnectionRef;
 import com.hazelcast.jet.pipeline.Sink;
 import com.hazelcast.map.IMap;
-import com.hazelcast.test.HazelcastParametrizedRunner;
+import com.hazelcast.test.SerialTest;
+import com.hazelcast.test.annotation.NightlyTest;
 import com.hazelcast.test.annotation.ParallelJVMTest;
-import com.hazelcast.test.annotation.QuickTest;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.IntegerSerializer;
 import org.apache.kafka.common.serialization.StringSerializer;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
-import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized.Parameter;
-import org.junit.runners.Parameterized.Parameters;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.Parameter;
+import org.junit.jupiter.params.ParameterizedClass;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -50,15 +49,18 @@ import java.util.Properties;
 import static com.hazelcast.jet.kafka.impl.KafkaTestSupport.KAFKA_MAX_BLOCK_MS;
 import static java.util.Arrays.asList;
 
-@RunWith(HazelcastParametrizedRunner.class)
-@Category({QuickTest.class, ParallelJVMTest.class})
+@SerialTest
+@ParallelJVMTest
+@NightlyTest
+@ParameterizedClass(name = "shared:{0}, exactlyOnce:{1}, graceful:{2}")
+@MethodSource("parameters")
 public class KafkaDataConnectionStressTest extends SimpleTestInClusterSupport {
 
     private static final int PARTITION_COUNT = 20;
 
     private static KafkaTestSupport kafkaTestSupport;
 
-    @Parameter
+    @Parameter(0)
     public boolean shared;
 
     @Parameter(1)
@@ -73,14 +75,13 @@ public class KafkaDataConnectionStressTest extends SimpleTestInClusterSupport {
     private String dataConnectionName;
     private IMap<Integer, String> sourceIMap;
 
-    @BeforeClass
+    @BeforeAll
     public static void beforeClass() throws IOException {
         kafkaTestSupport = KafkaTestSupport.create();
         kafkaTestSupport.createKafkaCluster();
         initialize(2, null);
     }
 
-    @Parameters(name = "shared:{0}, exactlyOnce:{1}, graceful:{2}")
     public static Iterable<Object[]> parameters() {
         return asList(new Object[][]{
                 // shared = false
@@ -95,7 +96,7 @@ public class KafkaDataConnectionStressTest extends SimpleTestInClusterSupport {
         });
     }
 
-    @Before
+    @BeforeEach
     public void before() {
         properties = new Properties();
         properties.setProperty("bootstrap.servers", kafkaTestSupport.getBrokerConnectionString());
@@ -120,7 +121,7 @@ public class KafkaDataConnectionStressTest extends SimpleTestInClusterSupport {
         );
     }
 
-    @AfterClass
+    @AfterAll
     public static void afterClass() {
         if (kafkaTestSupport != null) {
             kafkaTestSupport.shutdownKafkaCluster();

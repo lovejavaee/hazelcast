@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,8 @@
 
 package com.hazelcast.cp.internal.raft.impl.state;
 
-import com.hazelcast.internal.util.BiTuple;
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
+import com.hazelcast.internal.util.BiTuple;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
 
 import java.util.ArrayList;
@@ -25,8 +25,6 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-
-import static com.hazelcast.internal.util.Preconditions.checkTrue;
 
 /**
  * This class is used to keep the queries until a heartbeat round is performed
@@ -105,12 +103,14 @@ public class QueryState {
     public boolean tryAck(long queryRound, RaftEndpoint follower) {
         // If there is no query waiting to be executed or the received ack
         // belongs to an earlier query round, we ignore it.
-        if (queryCount() == 0  || this.queryRound > queryRound) {
+        if (queryCount() == 0 || this.queryRound > queryRound) {
             return false;
         }
 
-        checkTrue(queryRound == this.queryRound, this + ", acked query round: "
-                + queryRound + ", follower: " + follower);
+        if (queryRound != this.queryRound) {
+            throw new IllegalArgumentException(this + ", acked query round: "
+                    + queryRound + ", follower: " + follower);
+        }
 
         return acks.add(follower);
     }
@@ -163,6 +163,18 @@ public class QueryState {
      */
     public Collection<BiTuple<Object, InternalCompletableFuture>> operations() {
         return operations;
+    }
+
+    /**
+     * Completes the queries that are waiting for a heartbeat round exceptionally
+     * with the given failure, and clears the waiting queries and the collected
+     * acknowledgements.
+     */
+    public void fail(Throwable failure) {
+        for (BiTuple<Object, InternalCompletableFuture> operation : operations) {
+            operation.element2.completeExceptionally(failure);
+        }
+        reset();
     }
 
     /**

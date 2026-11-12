@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,13 +23,17 @@ import com.hazelcast.jet.impl.pipeline.Planner.PlannerVertex;
 
 import javax.annotation.Nonnull;
 
+import java.io.Serial;
+
 import static com.hazelcast.function.FunctionEx.identity;
 import static com.hazelcast.jet.core.Vertex.LOCAL_PARALLELISM_USE_DEFAULT;
 import static com.hazelcast.jet.core.processor.Processors.mapP;
 import static java.util.Arrays.asList;
 
+@SuppressWarnings("unused")
 public class MergeTransform<T> extends AbstractTransform {
 
+    @Serial
     private static final long serialVersionUID = 1L;
 
     public MergeTransform(@Nonnull Transform upstream1, @Nonnull Transform upstream2) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -71,11 +71,10 @@ public class QueryCacheEventPublisher {
             return;
         }
 
-        if (!(eventData instanceof EntryEventData)) {
+        if (!(eventData instanceof EntryEventData entryEvenData)) {
             return;
         }
 
-        EntryEventData entryEvenData = (EntryEventData) eventData;
         Data dataKey = entryEvenData.getDataKey();
         Data dataNewValue = entryEvenData.getDataNewValue();
         Data dataOldValue = entryEvenData.getDataOldValue();
@@ -104,7 +103,7 @@ public class QueryCacheEventPublisher {
             Accumulator accumulator = accumulatorRegistry.getOrCreate(partitionId);
 
             QueryCacheEventData singleEventData = newQueryCacheEventDataBuilder(false).withPartitionId(partitionId)
-                    .withEventType(eventType.getType()).build();
+                    .withEventType(eventType.getType()).withMapName(mapName).build();
 
             accumulator.accumulate(singleEventData);
         }
@@ -140,7 +139,9 @@ public class QueryCacheEventPublisher {
                 .withDataNewValue(dataNewValue)
                 .withEventType(eventType.getType())
                 .withDataOldValue(dataOldValue)
-                .withSerializationService((serializationService)).build();
+                .withSerializationService(serializationService)
+                .withMapName(mapName)
+                .build();
     }
 
     // this method processes UPDATED events and may morph them into ADDED/REMOVED events

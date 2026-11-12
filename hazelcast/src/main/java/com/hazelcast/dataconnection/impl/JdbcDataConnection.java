@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,8 @@ import com.hazelcast.core.HazelcastException;
 import com.hazelcast.dataconnection.DataConnection;
 import com.hazelcast.dataconnection.DataConnectionBase;
 import com.hazelcast.dataconnection.DataConnectionResource;
-import com.hazelcast.spi.annotation.Beta;
+import com.hazelcast.dataconnection.impl.jdbcproperties.HikariTranslator;
+import com.hazelcast.internal.util.concurrent.ConcurrentMemoizingSupplier;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 
@@ -29,13 +30,19 @@ import javax.annotation.Nonnull;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
-import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+
+import static com.hazelcast.dataconnection.impl.DatabaseDialect.resolveDialect;
+import static com.hazelcast.dataconnection.impl.jdbcproperties.DataConnectionProperties.JDBC_URL;
+import static com.hazelcast.dataconnection.impl.jdbcproperties.DriverManagerTranslator.translate;
+import static com.hazelcast.internal.util.Memoizers.memoizeConcurrent;
+import static java.util.Locale.ROOT;
 
 /**
  * {@link DataConnection} implementation for JDBC.
@@ -46,75 +53,129 @@ import java.util.function.Supplier;
  *
  * @since 5.3
  */
-@Beta
 public class JdbcDataConnection extends DataConnectionBase {
 
-    private static final AtomicInteger DATA_SOURCE_COUNTER = new AtomicInteger();
+    public static final String OBJECT_TYPE_TABLE = "Table";
 
-    private HikariDataSource pooledDataSource;
-    private Supplier<Connection> singleUseConnectionSup;
+    private static final List<String> H2_SYSTEM_SCHEMA_LIST = List.of("INFORMATION_SCHEMA");
+
+    private static final List<String> MYSQL_SYSTEM_CATALOG_LIST = List.of("SYS");
+
+    private static final List<String> MSSQL_SYSTEM_SCHEMA_LIST = List.of("sys", "INFORMATION_SCHEMA");
+    private static final List<String> MSSQL_SYSTEM_TABLE_LIST = List.of("MSreplication_options", "spt_fallback_db",
+            "spt_fallback_dev", "spt_fallback_usg", "spt_monitor", "spt_values");
+
+    private static final AtomicInteger DATA_SOURCE_COUNTER = new AtomicInteger();
+    private volatile ConcurrentMemoizingSupplier<HikariDataSource> pooledDataSourceSup;
+    private volatile Supplier<Connection> singleUseConnectionSup;
 
     public JdbcDataConnection(DataConnectionConfig config) {
         super(config);
         if (config.isShared()) {
-            this.pooledDataSource = createHikariDataSource();
+            this.pooledDataSourceSup = memoizeConcurrent(this::createHikariDataSource);
         } else {
             this.singleUseConnectionSup = createSingleConnectionSup();
         }
     }
 
     protected HikariDataSource createHikariDataSource() {
-        Properties properties = new Properties();
-        properties.putAll(getConfig().getProperties());
-        if (!properties.containsKey("poolName")) {
-            int cnt = DATA_SOURCE_COUNTER.getAndIncrement();
-            properties.put("poolName", "HikariPool-" + cnt + "-" + getName());
+        try {
+            validate(getConfig());
+            Properties properties = getConfig().getProperties();
+
+            HikariTranslator translator = new HikariTranslator(DATA_SOURCE_COUNTER, getName());
+            Properties translatedProperties = translator.translate(properties);
+
+            HikariConfig dataSourceConfig = new HikariConfig(translatedProperties);
+
+            return new HikariDataSource(dataSourceConfig);
+        } catch (Exception e) {
+            throw new HazelcastException("Could not create pool for data connection '" + getName() + "'", e);
         }
-        HikariConfig dataSourceConfig = new HikariConfig(properties);
-        return new HikariDataSource(dataSourceConfig);
     }
 
     private Supplier<Connection> createSingleConnectionSup() {
+        validate(getConfig());
         Properties properties = getConfig().getProperties();
-        String jdbcUrl = properties.getProperty("jdbcUrl");
-        Properties connectionProps = new Properties();
-        properties.entrySet().stream().filter(e -> !"jdbcUrl".equals(e.getKey()))
-                  .forEach(e -> connectionProps.put(e.getKey(), e.getValue()));
+
+        Properties translatedProperties = translate(properties);
 
         return () -> {
             try {
-                return DriverManager.getConnection(jdbcUrl, connectionProps);
+                String jdbcUrl = properties.getProperty(JDBC_URL);
+                return DriverManager.getConnection(jdbcUrl, translatedProperties);
             } catch (SQLException e) {
                 throw new HazelcastException("Could not create a new connection: " + e, e);
             }
         };
     }
 
+    private void validate(DataConnectionConfig config) {
+        Properties properties = config.getProperties();
+        if (properties.get(JDBC_URL) == null) {
+            throw new HazelcastException(JDBC_URL + " property is not defined for data connection '" + getName() + "'");
+        }
+    }
+
+    @Nonnull
+    @Override
+    public Collection<String> resourceTypes() {
+        return Collections.singleton(OBJECT_TYPE_TABLE);
+    }
+
     @Nonnull
     @Override
     public List<DataConnectionResource> listResources() {
-        try (Connection connection = getConnection()) {
-            DatabaseMetaData metaData = connection.getMetaData();
-            //Retrieving the columns in the database
-            ResultSet tables = metaData.getTables(null, null, "%", null);
-            List<DataConnectionResource> result = new ArrayList<>();
-            while (tables.next()) {
-                result.add(new DataConnectionResource(
-                        "TABLE",
-                        // TODO quoting? Using String[]?
-                        tables.getString("TABLE_SCHEM") + "." + tables.getString("TABLE_NAME")
-                ));
+        try {
+            try (Connection connection = getConnection()) {
+                DatabaseMetaData databaseMetaData = connection.getMetaData();
+
+                ResourceReader reader = new ResourceReader();
+                switch (resolveDialect(databaseMetaData)) {
+                    case H2:
+                        reader.withCatalog(connection.getCatalog())
+                                .exclude(
+                                        (catalog, schema, table) ->
+                                                H2_SYSTEM_SCHEMA_LIST.contains(schema)
+                                );
+                        break;
+
+                    case POSTGRESQL:
+                        reader.withCatalog(connection.getCatalog());
+                        break;
+
+                    case MYSQL:
+                        reader.exclude(
+                                (catalog, schema, table) ->
+                                        catalog != null && MYSQL_SYSTEM_CATALOG_LIST.contains(catalog.toUpperCase(ROOT))
+                        );
+                        break;
+
+                    case MICROSOFT_SQL_SERVER:
+                        reader
+                                .withCatalog(connection.getCatalog())
+                                .exclude(
+                                        (catalog, schema, table) ->
+                                                MSSQL_SYSTEM_SCHEMA_LIST.contains(schema)
+                                                || MSSQL_SYSTEM_TABLE_LIST.contains(table)
+                                );
+                        break;
+
+                    default:
+                        // Nothing to do
+                }
+
+                return reader.listResources(connection);
             }
-            return result;
-        } catch (Exception e) {
-            throw new HazelcastException("Could not read resources for DataConnection " + getName());
+        } catch (Exception exception) {
+            throw new HazelcastException("Could not read resources for DataConnection " + getName(), exception);
         }
     }
 
     private Connection pooledConnection() {
         retain();
         try {
-            return new ConnectionDelegate(pooledDataSource.getConnection()) {
+            return new ConnectionDelegate(pooledDataSourceSup.get().getConnection()) {
                 @Override
                 public void close() {
                     try {
@@ -145,10 +206,9 @@ public class JdbcDataConnection extends DataConnectionBase {
      * - shared=false -> a Connection is obtained from a pool, returned back to
      * the pool, when it is closed
      * <p>
-     * The caller must close the Connection when finished to allow correct
-     * release of the underlying resources. In case of a single-use connection, the
-     * connection is closed immediately. For pooled connections the connection is
-     * returned to the pool.
+     * When finished, the caller must close the Connection to ensure the proper release of the underlying resources.
+     * If the connection is for single use, it is closed immediately.
+     * For pooled connections, the connection is returned back to the pool.
      */
     public Connection getConnection() {
         return getConfig().isShared() ? pooledConnection() : singleUseConnection();
@@ -156,22 +216,25 @@ public class JdbcDataConnection extends DataConnectionBase {
 
     @Override
     public void destroy() {
-        if (pooledDataSource != null) {
-            try {
-                pooledDataSource.close();
-            } catch (Exception e) {
-                throw new HazelcastException("Could not close connection pool", e);
+        ConcurrentMemoizingSupplier<HikariDataSource> localPooledDataSourceSup = pooledDataSourceSup;
+        if (localPooledDataSourceSup != null) {
+            HikariDataSource dataSource = localPooledDataSourceSup.remembered();
+            pooledDataSourceSup = null;
+            if (dataSource != null) {
+                try {
+                    dataSource.close();
+                } catch (Exception e) {
+                    throw new HazelcastException("Could not close connection pool", e);
+                }
             }
-            pooledDataSource = null;
-        } else {
-            singleUseConnectionSup = null;
         }
+        singleUseConnectionSup = null;
     }
 
     /**
      * For tests only
      */
     HikariDataSource pooledDataSource() {
-        return pooledDataSource;
+        return pooledDataSourceSup.get();
     }
 }

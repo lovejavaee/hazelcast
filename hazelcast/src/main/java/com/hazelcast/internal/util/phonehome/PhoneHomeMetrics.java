@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package com.hazelcast.internal.util.phonehome;
 /**
  * Enumeration of phone home metric types
  */
-public enum PhoneHomeMetrics {
+public enum PhoneHomeMetrics implements Metric {
     //BUILD INFO METRICS
     HAZELCAST_DOWNLOAD_ID("p"),
     CLIENT_ENDPOINT_COUNT("cssz"),
@@ -63,6 +63,9 @@ public enum PhoneHomeMetrics {
     PYTHON_CLIENT_VERSIONS("cpycv"),
     GO_CLIENT_VERSIONS("cgocv"),
     CL_CLIENT_VERSIONS("cclcv"),
+    ALL_MEMBERS_CLIENTS_COUNT("allmembersclients"),
+    SINGLE_MEMBER_CLIENTS_COUNT("singlememberclients"),
+    MULTI_MEMBER_CLIENTS_COUNT("multimemberclients"),
 
     //CLUSTER INFO METRICS
     UUID_OF_CLUSTER("m"),
@@ -71,7 +74,7 @@ public enum PhoneHomeMetrics {
      * Maintained for backward-compatibility (in PhoneHome reports), but otherwise deprecated, please use
      * {@link #EXACT_CLUSTER_SIZE} instead.
      */
-    @Deprecated
+    @Deprecated(since = "5.0", forRemoval = true)
     CLUSTER_SIZE("crsz"),
     EXACT_CLUSTER_SIZE("ecrsz"),
     TIME_TAKEN_TO_CLUSTER_UP("cuptm"),
@@ -100,6 +103,9 @@ public enum PhoneHomeMetrics {
     AVERAGE_PUT_LATENCY_OF_MAPS_WITHOUT_MAPSTORE("mpptla"),
     AVERAGE_GET_LATENCY_OF_MAPS_USING_MAPSTORE("mpgtlams"),
     AVERAGE_GET_LATENCY_OF_MAPS_WITHOUT_MAPSTORE("mpgtla"),
+    TOTAL_MAP_VALUES_CALLS("mpvaluesct"),
+    TOTAL_MAP_ENTRYSET_CALLS("mpentriesct"),
+    TOTAL_MAP_QUERY_SIZE_LIMITER_HITS("mpqslh"),
 
     //CACHE METRICS
     COUNT_OF_CACHES("cact"),
@@ -151,6 +157,7 @@ public enum PhoneHomeMetrics {
     JET_ENABLED("jet"),
     JET_RESOURCE_UPLOAD_ENABLED("jetrsup"),
     JET_JOBS_SUBMITTED("jetjobss"),
+    JET_CONNECTOR_COUNTS("jetcc"),
 
     // SQL METRICS
     SQL_QUERIES_SUBMITTED("sqlqs"),
@@ -166,16 +173,6 @@ public enum PhoneHomeMetrics {
     MEMORY_USED_NATIVE_SIZE("muns"),
     TIERED_STORAGE_ENABLED("tse"),
     DATA_MEMORY_COST("dmc"),
-
-    //CP SUBSYSTEM METRICS
-    CP_SUBSYSTEM_ENABLED("cp"),
-    CP_MEMBERS_COUNT("cpmc"),
-    CP_GROUPS_COUNT("cpgct"),
-    CP_SEMAPHORES_COUNT("cpsect"),
-    CP_COUNTDOWN_LATCHES_COUNT("cpclct"),
-    CP_FENCED_LOCKS_COUNT("cpflct"),
-    CP_ATOMIC_LONGS_COUNT("cpalct"),
-    CP_ATOMIC_REFS_COUNT("cparct"),
 
     // REST API metrics
     REST_ENABLED("restenabled"),
@@ -203,14 +200,23 @@ public enum PhoneHomeMetrics {
     REST_CONFIG_RELOAD_FAILURE("restconfigreloadfail"),
 
     REST_REQUEST_COUNT("restrequestct"),
-    REST_UNIQUE_REQUEST_COUNT("restuniqrequestct");
+    REST_UNIQUE_REQUEST_COUNT("restuniqrequestct"),
+
+    UCN_ENABLED("ucnenabled"),
+    UCN_NAMESPACE_COUNT("ucncount"),
+    V_CPU_COUNT("vcpuct"),
+
+    DIAGNOSTICS_DYNAMIC_ENABLED_COUNT("diagdenbct"),
+    DIAGNOSTICS_DYNAMIC_AUTO_OFF_COUNT("diagdoffct");
+
     private final String query;
 
     PhoneHomeMetrics(String query) {
         this.query = query;
     }
 
-    String getRequestParameterName() {
+    @Override
+    public String getQueryParameter() {
         return query;
     }
 }

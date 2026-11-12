@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package com.hazelcast.cp.internal;
 
 import com.hazelcast.cp.internal.raft.impl.RaftEndpoint;
+import com.hazelcast.internal.serialization.impl.SerializationUtil;
 import com.hazelcast.cp.CPGroup;
 import com.hazelcast.cp.CPGroupId;
 import com.hazelcast.cp.CPMember;
@@ -81,14 +82,8 @@ public class CPGroupSummary implements CPGroup, IdentifiedDataSerializable {
     @Override
     public void writeData(ObjectDataOutput out) throws IOException {
         out.writeObject(id);
-        out.writeInt(initialMembers.size());
-        for (RaftEndpoint member : initialMembers) {
-            out.writeObject(member);
-        }
-        out.writeInt(members.size());
-        for (CPMember member : members) {
-            out.writeObject(member);
-        }
+        SerializationUtil.writeCollection(initialMembers, out);
+        SerializationUtil.writeCollection(members, out);
         out.writeString(status.toString());
     }
 
@@ -96,7 +91,7 @@ public class CPGroupSummary implements CPGroup, IdentifiedDataSerializable {
     public void readData(ObjectDataInput in) throws IOException {
         id = in.readObject();
         int initialMemberCount = in.readInt();
-        Set<RaftEndpoint> initialMembers = new LinkedHashSet<RaftEndpoint>();
+        Set<RaftEndpoint> initialMembers = new LinkedHashSet<>();
         for (int i = 0; i < initialMemberCount; i++) {
             RaftEndpoint member = in.readObject();
             initialMembers.add(member);
@@ -104,7 +99,7 @@ public class CPGroupSummary implements CPGroup, IdentifiedDataSerializable {
         this.initialMembers = unmodifiableSet(initialMembers);
 
         int memberCount = in.readInt();
-        members = new LinkedHashSet<CPMember>(memberCount);
+        members = new LinkedHashSet<>(memberCount);
         for (int i = 0; i < memberCount; i++) {
             CPMember member = in.readObject();
             members.add(member);

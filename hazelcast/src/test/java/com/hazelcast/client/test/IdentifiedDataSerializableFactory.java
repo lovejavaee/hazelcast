@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ import com.hazelcast.client.test.ringbuffer.filter.StartsWithStringFilter;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.core.HazelcastInstanceAware;
 import com.hazelcast.map.EntryProcessor;
-import com.hazelcast.map.MapInterceptor;
+import com.hazelcast.map.MapInterceptorAdaptor;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.DataSerializableFactory;
@@ -34,6 +34,7 @@ import com.hazelcast.nio.serialization.PortableReader;
 import com.hazelcast.nio.serialization.PortableWriter;
 
 import java.io.IOException;
+import java.io.Serial;
 import java.util.Comparator;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -49,21 +50,26 @@ public class IdentifiedDataSerializableFactory implements DataSerializableFactor
         SampleFailingTask() {
         }
 
+        @Override
         public int getFactoryId() {
             return FACTORY_ID;
         }
 
+        @Override
         public int getClassId() {
             return 1;
         }
 
+        @Override
         public String call() throws Exception {
             throw new IllegalStateException();
         }
 
+        @Override
         public void writeData(ObjectDataOutput out) throws IOException {
         }
 
+        @Override
         public void readData(ObjectDataInput in) throws IOException {
         }
     }
@@ -75,22 +81,27 @@ public class IdentifiedDataSerializableFactory implements DataSerializableFactor
         SampleRunnableTask() {
         }
 
+        @Override
         public void run() {
             System.out.println("Running " + name);
         }
 
+        @Override
         public int getFactoryId() {
             return FACTORY_ID;
         }
 
+        @Override
         public int getClassId() {
             return 1;
         }
 
+        @Override
         public void writePortable(PortableWriter writer) throws IOException {
             writer.writeString("n", name);
         }
 
+        @Override
         public void readPortable(PortableReader reader) throws IOException {
             name = reader.readString("n");
         }
@@ -103,22 +114,27 @@ public class IdentifiedDataSerializableFactory implements DataSerializableFactor
         SampleCallableTask() {
         }
 
+        @Override
         public Object call() throws Exception {
             return param + ":result";
         }
 
+        @Override
         public int getFactoryId() {
             return FACTORY_ID;
         }
 
+        @Override
         public int getClassId() {
             return 2;
         }
 
+        @Override
         public void writeData(ObjectDataOutput out) throws IOException {
             out.writeString(param);
         }
 
+        @Override
         public void readData(ObjectDataInput in) throws IOException {
             param = in.readString();
         }
@@ -261,7 +277,6 @@ public class IdentifiedDataSerializableFactory implements DataSerializableFactor
      * Compares based on the employee age
      */
     class EmployeeEntryComparator implements IdentifiedDataSerializable, Comparator<Map.Entry<Integer, Employee>> {
-        private int multiplier;
 
         @Override
         public int getFactoryId() {
@@ -299,15 +314,8 @@ public class IdentifiedDataSerializableFactory implements DataSerializableFactor
                 int leftKey = lhs.getKey();
                 int rightKey = rhs.getKey();
 
-                if (leftKey == rightKey) {
-                    return 0;
-                }
+                return Integer.compare(leftKey, rightKey);
 
-                if (leftKey < rightKey) {
-                    return -1;
-                }
-
-                return 1;
             }
 
             if (null == lv) {
@@ -344,15 +352,8 @@ public class IdentifiedDataSerializableFactory implements DataSerializableFactor
                 return 1;
             }
 
-            if (key1 == key2) {
-                return 0;
-            }
+            return key1.compareTo(key2);
 
-            if (key1 < key2) {
-                return -1;
-            }
-
-            return 1;
         }
     }
 
@@ -389,7 +390,10 @@ public class IdentifiedDataSerializableFactory implements DataSerializableFactor
         }
     }
 
-    class MapGetInterceptor implements MapInterceptor, IdentifiedDataSerializable {
+    class MapGetInterceptor extends MapInterceptorAdaptor implements IdentifiedDataSerializable {
+        @Serial
+        private static final long serialVersionUID = 1L;
+
         private String prefix;
 
         @Override
@@ -400,28 +404,6 @@ public class IdentifiedDataSerializableFactory implements DataSerializableFactor
 
             String val = (String) value;
             return prefix + val;
-        }
-
-        @Override
-        public void afterGet(Object value) {
-        }
-
-        @Override
-        public Object interceptPut(Object oldValue, Object newValue) {
-            return null;
-        }
-
-        @Override
-        public void afterPut(Object value) {
-        }
-
-        @Override
-        public Object interceptRemove(Object removedValue) {
-            return null;
-        }
-
-        @Override
-        public void afterRemove(Object value) {
         }
 
         @Override
@@ -483,7 +465,7 @@ public class IdentifiedDataSerializableFactory implements DataSerializableFactor
         }
     }
 
-    public static class CallableSignalsRunAndSleep implements Callable, IdentifiedDataSerializable, HazelcastInstanceAware {
+    public static class CallableSignalsRunAndSleep implements Callable<Boolean>, IdentifiedDataSerializable, HazelcastInstanceAware {
 
         private transient HazelcastInstance hazelcastInstance;
         private String startSignalLatchName;
@@ -497,8 +479,8 @@ public class IdentifiedDataSerializableFactory implements DataSerializableFactor
         }
 
         @Override
-        public Object call() {
-            hazelcastInstance.getCPSubsystem().getCountDownLatch("callableStartedLatch").countDown();
+        public Boolean call() {
+            hazelcastInstance.<String, Boolean>getMap("coordination").put(startSignalLatchName, true);
             try {
                 Thread.sleep(Long.MAX_VALUE);
             } catch (InterruptedException e) {
@@ -535,38 +517,23 @@ public class IdentifiedDataSerializableFactory implements DataSerializableFactor
 
     @Override
     public IdentifiedDataSerializable create(int typeId) {
-        switch (typeId) {
-            case 1:
-                return new SampleFailingTask();
-            case 2:
-                return new SampleCallableTask();
-            case 3:
-                return new KeyMultiplier();
-            case 4:
-                return new EmployeeEntryComparator();
-            case 5:
-                return new EmployeeEntryKeyComparator();
-            case 6:
-                return new MapGetInterceptor();
-            case 7:
-                return new KeyMultiplierWithNullableResult();
-            case 8:
-                return new WaitMultiplierProcessor();
-            case 9:
-                return new UTFValueValidatorProcessor();
-            case 10:
-                return new BaseDataSerializable();
-            case 11:
-                return new Derived1DataSerializable();
-            case 12:
-                return new Derived2DataSerializable();
-            case 13:
-                return new CallableSignalsRunAndSleep();
-            case StartsWithStringFilter.CLASS_ID:
-                return new StartsWithStringFilter();
-            default:
-                return null;
-        }
+        return switch (typeId) {
+            case 1 -> new SampleFailingTask();
+            case 2 -> new SampleCallableTask();
+            case 3 -> new KeyMultiplier();
+            case 4 -> new EmployeeEntryComparator();
+            case 5 -> new EmployeeEntryKeyComparator();
+            case 6 -> new MapGetInterceptor();
+            case 7 -> new KeyMultiplierWithNullableResult();
+            case 8 -> new WaitMultiplierProcessor();
+            case 9 -> new UTFValueValidatorProcessor();
+            case 10 -> new BaseDataSerializable();
+            case 11 -> new Derived1DataSerializable();
+            case 12 -> new Derived2DataSerializable();
+            case 13 -> new CallableSignalsRunAndSleep();
+            case StartsWithStringFilter.CLASS_ID -> new StartsWithStringFilter();
+            default -> null;
+        };
     }
 
     @Override
@@ -575,5 +542,10 @@ public class IdentifiedDataSerializableFactory implements DataSerializableFactor
             return true;
         }
         return o != null && getClass() == o.getClass();
+    }
+
+    @Override
+    public int hashCode() {
+        return 0;
     }
 }

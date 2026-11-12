@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -61,9 +61,9 @@ class AwsEcsApi {
     }
 
     List<String> listTaskPrivateAddresses(String cluster, AwsCredentials credentials) {
-        LOGGER.fine(String.format("Listing tasks from cluster: '%s'", cluster));
+        LOGGER.fine("Listing tasks from cluster: '%s'", cluster);
         List<String> taskArns = listTasks(cluster, credentials);
-        LOGGER.fine(String.format("AWS ECS ListTasks found the following tasks: %s", taskArns));
+        LOGGER.fine("AWS ECS ListTasks found the following tasks: %s", taskArns);
         if (!taskArns.isEmpty()) {
             List<Task> tasks = describeTasks(cluster, taskArns, credentials);
             if (!tasks.isEmpty()) {
@@ -125,6 +125,7 @@ class AwsEcsApi {
 
     private List<Task> parseDescribeTasks(String response) {
         return toStream(toJson(response).get("tasks"))
+                .filter(this::isLastStatusRunning)
                 .filter(this::filterByTags)
                 .flatMap(e -> toTask(e).map(Stream::of).orElseGet(Stream::empty))
                 .collect(Collectors.toList());
@@ -179,6 +180,11 @@ class AwsEcsApi {
 
     private static Stream<JsonValue> toStream(JsonValue json) {
         return StreamSupport.stream(json.asArray().spliterator(), false);
+    }
+
+    private boolean isLastStatusRunning(JsonValue taskJson) {
+        String lastStatus = taskJson.asObject().getString("lastStatus", "");
+        return "RUNNING".equals(lastStatus);
     }
 
     private boolean filterByTags(JsonValue taskJson) {

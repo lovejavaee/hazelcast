@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.hazelcast.client.impl.protocol.task.cache;
 
 import com.hazelcast.cache.impl.CacheContext;
 import com.hazelcast.cache.impl.CacheService;
+import com.hazelcast.cache.impl.ICacheService;
 import com.hazelcast.client.impl.ClientEndpoint;
 import com.hazelcast.client.impl.protocol.ClientMessage;
 import com.hazelcast.client.impl.protocol.codec.CacheAddNearCacheInvalidationListenerCodec;
@@ -26,6 +27,9 @@ import com.hazelcast.instance.impl.Node;
 import com.hazelcast.internal.nearcache.impl.invalidation.Invalidation;
 import com.hazelcast.internal.nio.Connection;
 import com.hazelcast.internal.serialization.Data;
+import com.hazelcast.security.permission.ActionConstants;
+import com.hazelcast.security.permission.CachePermission;
+import com.hazelcast.security.SecurityInterceptorConstants;
 
 import java.security.Permission;
 import java.util.List;
@@ -43,7 +47,7 @@ public class CacheAddNearCacheInvalidationListenerTask
 
     @Override
     protected CompletableFuture<UUID> processInternal() {
-        CacheService cacheService = getService(CacheService.SERVICE_NAME);
+        CacheService cacheService = getService(ICacheService.SERVICE_NAME);
         CacheContext cacheContext = cacheService.getOrCreateCacheContext(parameters.name);
         NearCacheInvalidationListener listener
                 = new NearCacheInvalidationListener(endpoint, cacheContext,
@@ -103,7 +107,7 @@ public class CacheAddNearCacheInvalidationListenerTask
 
     @Override
     public String getMethodName() {
-        return null;
+        return SecurityInterceptorConstants.ADD_NEAR_CACHE_INVALIDATION_LISTENER;
     }
 
     @Override
@@ -113,12 +117,16 @@ public class CacheAddNearCacheInvalidationListenerTask
 
     @Override
     public String getServiceName() {
-        return CacheService.SERVICE_NAME;
+        return ICacheService.SERVICE_NAME;
     }
 
     @Override
     public Permission getRequiredPermission() {
-        return null;
+        return new CachePermission(parameters.name, ActionConstants.ACTION_LISTEN);
     }
 
+    @Override
+    protected String getUserCodeNamespace() {
+        return CacheService.lookupNamespace(nodeEngine, parameters.name);
+    }
 }

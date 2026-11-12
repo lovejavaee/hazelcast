@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,12 +18,13 @@ package com.hazelcast.client.impl.protocol.task.cache;
 
 import com.hazelcast.cache.impl.CacheClearResponse;
 import com.hazelcast.cache.impl.CacheOperationProvider;
-import com.hazelcast.cache.impl.CacheService;
+import com.hazelcast.cache.impl.ICacheService;
 import com.hazelcast.cache.impl.operation.CacheClearOperationFactory;
 import com.hazelcast.client.impl.protocol.ClientMessage;
 import com.hazelcast.client.impl.protocol.codec.CacheClearCodec;
 import com.hazelcast.instance.impl.Node;
 import com.hazelcast.internal.nio.Connection;
+import com.hazelcast.security.SecurityInterceptorConstants;
 import com.hazelcast.security.permission.ActionConstants;
 import com.hazelcast.security.permission.CachePermission;
 import com.hazelcast.spi.impl.operationservice.OperationFactory;
@@ -69,8 +70,8 @@ public class CacheClearMessageTask
             }
             final CacheClearResponse cacheClearResponse = nodeEngine.toObject(entry.getValue());
             final Object response = cacheClearResponse.getResponse();
-            if (response instanceof CacheException) {
-                throw (CacheException) response;
+            if (response instanceof CacheException exception) {
+                throw exception;
             }
         }
 
@@ -84,7 +85,7 @@ public class CacheClearMessageTask
 
     @Override
     public String getServiceName() {
-        return CacheService.SERVICE_NAME;
+        return ICacheService.SERVICE_NAME;
     }
 
     @Override
@@ -99,7 +100,7 @@ public class CacheClearMessageTask
 
     @Override
     public String getMethodName() {
-        return "clear";
+        return SecurityInterceptorConstants.CLEAR;
     }
 
 }

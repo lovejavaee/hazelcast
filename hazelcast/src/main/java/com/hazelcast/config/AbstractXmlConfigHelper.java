@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,11 +40,10 @@ import javax.xml.validation.Validator;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.net.URL;
+import java.net.URI;
 import java.util.ArrayList;
 
 import static com.hazelcast.internal.nio.IOUtil.closeResource;
-import static com.hazelcast.internal.util.StringUtil.LINE_SEPARATOR;
 
 /**
  * Contains Hazelcast XML Configuration helper methods and variables.
@@ -58,7 +57,11 @@ public abstract class AbstractXmlConfigHelper extends AbstractConfigBuilder {
 
     final String xmlns = "http://www.hazelcast.com/schema/" + getNamespaceType();
 
-    private final String hazelcastSchemaLocation = getConfigType().name + "-config-" + getReleaseVersion() + ".xsd";
+    private final String hazelcastSchemaLocation;
+
+    {
+        hazelcastSchemaLocation = getConfigType().name + "-config-" + getReleaseVersion() + ".xsd";
+    }
 
     public String getNamespaceType() {
         return getConfigType().name.equals("hazelcast") ? "config" : "client-config";
@@ -81,8 +84,8 @@ public abstract class AbstractXmlConfigHelper extends AbstractConfigBuilder {
             if (xsdLocation.isEmpty()) {
                 continue;
             }
-            String namespace = xsdLocation.split('[' + LINE_SEPARATOR + " ]+")[0];
-            String uri = xsdLocation.split('[' + LINE_SEPARATOR + " ]+")[1];
+            String namespace = xsdLocation.split('[' + System.lineSeparator() + " ]+")[0];
+            String uri = xsdLocation.split('[' + System.lineSeparator() + " ]+")[1];
 
             // if this is hazelcast namespace but location is different log only warning
             if (namespace.equals(xmlns) && !uri.endsWith(hazelcastSchemaLocation)) {
@@ -132,7 +135,7 @@ public abstract class AbstractXmlConfigHelper extends AbstractConfigBuilder {
         // is URL
         if (inputStream == null) {
             try {
-                inputStream = new URL(schemaLocation).openStream();
+                inputStream = URI.create(schemaLocation).toURL().openStream();
             } catch (Exception e) {
                 throw new InvalidConfigurationException("Your xsd schema couldn't be loaded");
             }

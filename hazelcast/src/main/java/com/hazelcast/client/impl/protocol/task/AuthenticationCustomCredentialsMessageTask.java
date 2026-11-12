@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,16 +16,18 @@
 
 package com.hazelcast.client.impl.protocol.task;
 
+import com.hazelcast.client.impl.TpcToken;
 import com.hazelcast.client.impl.protocol.ClientMessage;
 import com.hazelcast.client.impl.protocol.codec.ClientAuthenticationCustomCodec;
 import com.hazelcast.instance.impl.Node;
 import com.hazelcast.cluster.Address;
+import com.hazelcast.internal.cluster.MemberInfo;
 import com.hazelcast.internal.nio.Connection;
 import com.hazelcast.security.SimpleTokenCredentials;
 
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -50,21 +52,38 @@ public class AuthenticationCustomCredentialsMessageTask
         clientSerializationVersion = parameters.serializationVersion;
         clientVersion = parameters.clientHazelcastVersion;
         clientName = parameters.clientName;
-        labels = Collections.unmodifiableSet(new HashSet<>(parameters.labels));
+        labels = Set.copyOf(parameters.labels);
+        routingMode = parameters.isRoutingModeExists ? parameters.routingMode : -1;
+        cpDirectToLeaderRouting = parameters.isCpDirectToLeaderRoutingExists && parameters.cpDirectToLeaderRouting;
         return parameters;
     }
 
     @Override
     @SuppressWarnings("checkstyle:ParameterNumber")
-    protected ClientMessage encodeAuth(byte status, Address thisAddress, UUID uuid, byte serializationVersion,
-                                       String serverVersion, int partitionCount, UUID clusterId,
-                                       boolean clientFailoverSupported, List<Integer> tpcPorts) {
+    protected ClientMessage encodeAuthenticationResponse(byte status, Address thisAddress, UUID uuid, byte serializationVersion,
+                                                         String serverVersion, int partitionCount, UUID clusterId,
+                                                         boolean clientFailoverSupported, List<Integer> tpcPorts, byte[] tpcToken,
+                                                         int memberListVersion, List<MemberInfo> members,
+                                                         int partitionsVersion, List<Map.Entry<UUID, List<Integer>>> partitions,
+                                                         Map<String, String> keyValuePairs) {
         return ClientAuthenticationCustomCodec.encodeResponse(status, thisAddress, uuid, serializationVersion,
-                serverVersion, partitionCount, clusterId, clientFailoverSupported);
+                serverVersion, partitionCount, clusterId, clientFailoverSupported, tpcPorts, tpcToken,
+                memberListVersion, members, partitionsVersion, partitions, keyValuePairs);
+    }
+
+    @Override
+    protected void setTpcTokenToEndpoint() {
+        if (!nodeEngine.getTpcServerBootstrap().isEnabled()) {
+            return;
+        }
+
+        TpcToken token = new TpcToken();
+        endpoint.setTpcToken(token);
     }
 
     @Override
     protected String getClientType() {
         return parameters.clientType;
     }
+
 }

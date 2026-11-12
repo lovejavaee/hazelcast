@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,8 +37,6 @@ import java.util.LinkedList;
 import java.util.List;
 
 import static com.hazelcast.internal.diagnostics.AbstractDiagnosticsPluginTest.cleanupDiagnosticFiles;
-import static com.hazelcast.internal.nio.IOUtil.closeResource;
-import static com.hazelcast.internal.util.StringUtil.LINE_SEPARATOR;
 import static com.hazelcast.test.Accessors.getMetricsRegistry;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -59,7 +57,7 @@ public class DiagnosticsLogTest extends HazelcastTestSupport {
 
     @Test
     public void testLogFileContent() {
-        setup("10");
+        setup(10);
         assertTrueEventually(() -> {
             String content = loadLogfile(diagnosticsLogFile.file);
             assertNotNull(content);
@@ -73,7 +71,8 @@ public class DiagnosticsLogTest extends HazelcastTestSupport {
 
     @Test
     public void testRollover() {
-        setup("0.2");
+        // 200KB
+        setup(0.2f);
         // we register 50 probes to quickly fill up the diagnostics log file
         String id = generateRandomString(10000);
         LongProbeFunction<Object> probe = source -> 0;
@@ -104,12 +103,12 @@ public class DiagnosticsLogTest extends HazelcastTestSupport {
         });
     }
 
-    private void setup(String maxFileSize) {
-        Config config = new Config()
-                .setProperty(Diagnostics.ENABLED.getName(), "true")
-                .setProperty(Diagnostics.MAX_ROLLED_FILE_SIZE_MB.getName(), maxFileSize)
-                .setProperty(Diagnostics.MAX_ROLLED_FILE_COUNT.getName(), "3")
-                .setProperty(MetricsPlugin.PERIOD_SECONDS.getName(), "1");
+    private void setup(float maxFileSizeMB) {
+        Config config = new Config();
+        config.setProperty(Diagnostics.ENABLED.getName(), "true");
+        config.setProperty(Diagnostics.MAX_ROLLED_FILE_COUNT.getName(), "3");
+        config.setProperty(Diagnostics.MAX_ROLLED_FILE_SIZE_MB.getName(), String.valueOf(maxFileSizeMB));
+        config.setProperty(MetricsPlugin.PERIOD_SECONDS.getName(), "1");
 
         HazelcastInstance hz = createHazelcastInstance(config);
 
@@ -118,27 +117,24 @@ public class DiagnosticsLogTest extends HazelcastTestSupport {
         metricsRegistry = getMetricsRegistry(hz);
     }
 
+
     private static String loadLogfile(File file) {
         if (file == null || !file.exists()) {
             return null;
         }
 
-        BufferedReader br = null;
-        try {
-            br = new BufferedReader(new FileReader(file));
+        try (BufferedReader br = new BufferedReader(new FileReader(file))) {
             StringBuilder sb = new StringBuilder();
             String line = br.readLine();
 
             while (line != null) {
                 sb.append(line);
-                sb.append(LINE_SEPARATOR);
+                sb.append(System.lineSeparator());
                 line = br.readLine();
             }
             return sb.toString();
         } catch (IOException e) {
             throw new RuntimeException(e);
-        } finally {
-            closeResource(br);
         }
     }
 

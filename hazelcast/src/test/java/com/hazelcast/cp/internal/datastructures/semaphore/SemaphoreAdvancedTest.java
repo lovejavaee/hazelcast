@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2023, Hazelcast, Inc. All Rights Reserved.
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,10 +26,12 @@ import com.hazelcast.cp.internal.RaftOp;
 import com.hazelcast.cp.internal.datastructures.spi.blocking.ResourceRegistry;
 import com.hazelcast.cp.internal.raft.impl.RaftNodeImpl;
 import com.hazelcast.cp.internal.raft.impl.log.LogEntry;
+import com.hazelcast.cp.internal.raft.impl.log.SnapshotChunk;
+import com.hazelcast.cp.internal.raft.impl.log.SnapshotEntry;
 import com.hazelcast.cp.internal.raftop.snapshot.RestoreSnapshotOp;
+import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.internal.util.RandomPicker;
 import com.hazelcast.spi.impl.InternalCompletableFuture;
-import com.hazelcast.test.HazelcastParallelClassRunner;
 import com.hazelcast.test.annotation.ParallelJVMTest;
 import com.hazelcast.test.annotation.QuickTest;
 import org.junit.Test;
@@ -40,7 +42,6 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 
 import static com.hazelcast.cp.internal.raft.impl.RaftUtil.getSnapshotEntry;
-import static com.hazelcast.test.Accessors.getNodeEngineImpl;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -103,14 +104,25 @@ public class SemaphoreAdvancedTest extends AbstractSemaphoreAdvancedTest {
                 assertNotNull(raftNode);
                 LogEntry snapshotEntry = getSnapshotEntry(raftNode);
                 assertTrue(snapshotEntry.index() > 0);
-                List<RestoreSnapshotOp> ops = (List<RestoreSnapshotOp>) snapshotEntry.operation();
-                for (RestoreSnapshotOp op : ops) {
-                    if (op.getServiceName().equals(SemaphoreService.SERVICE_NAME)) {
-                        ResourceRegistry registry = (ResourceRegistry) op.getSnapshot();
-                        assertFalse(registry.getWaitTimeouts().isEmpty());
-                        return;
+
+                Object operation = snapshotEntry.operation();
+                if (!(operation instanceof List<?>)) {
+                    // eventually sets list of chunk operations
+                    continue;
+                }
+                List<SnapshotChunk> chunks = ((SnapshotEntry) snapshotEntry).snapshotChunks();
+                for (SnapshotChunk chunk : chunks) {
+                    List<Object> chunkOps = (List<Object>) chunk.operation();
+                    for (Object chunkOp : chunkOps) {
+                        RestoreSnapshotOp restoreSnapshotOp = (RestoreSnapshotOp) chunkOp;
+                        if (restoreSnapshotOp.getServiceName().equals(SemaphoreService.SERVICE_NAME)) {
+                            ResourceRegistry registry = (ResourceRegistry) restoreSnapshotOp.getSnapshot();
+                            assertFalse(registry.getWaitTimeouts().isEmpty());
+                            return;
+                        }
                     }
                 }
+
                 fail();
             }
         });
